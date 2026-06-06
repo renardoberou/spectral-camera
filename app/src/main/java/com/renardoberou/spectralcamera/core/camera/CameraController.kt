@@ -201,7 +201,18 @@ class CameraController(context: Context) {
     }
 
     private fun decodeCapturedBitmap(file: File): Bitmap {
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+
+        // Keep the post-capture decode safely below full sensor resolution so capture
+        // can succeed on memory-constrained devices.
+        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 1280, 1280)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
             ?: throw IllegalStateException("Failed to decode captured image")
         val exif = ExifInterface(file.absolutePath)
         val rotationDegrees = when (
@@ -216,6 +227,16 @@ class CameraController(context: Context) {
             else -> 0
         }
         return rotateBitmap(bitmap, rotationDegrees)
+    }
+
+    private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+        var sample = 1
+        var halfHeight = height / 2
+        var halfWidth = width / 2
+        while (halfHeight / sample >= reqHeight && halfWidth / sample >= reqWidth) {
+            sample *= 2
+        }
+        return sample.coerceAtLeast(1)
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap {
