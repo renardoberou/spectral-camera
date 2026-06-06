@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="spectral_black">#050507</color>
+    <color name="spectral_surface">#0D0A12</color>
+    <color name="spectral_surface_variant">#171321</color>
+    <color name="spectral_primary">#A66BFF</color>
+    <color name="spectral_secondary">#67D7C4</color>
+    <color name="spectral_tertiary">#E9B94E</color>
+    <color name="spectral_error">#F16A78</color>
+</resources>

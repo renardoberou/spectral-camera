@@ -1,0 +1,22 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+captures/
+
+# IDE / editor
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Kotlin / Java
+*.class
+out/
+
+# Logs / temp
+*.log
+*.tmp
+*.swp
+.DS_Store
