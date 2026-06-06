@@ -173,6 +173,8 @@ class CameraController(context: Context) {
             }
 
         val capture = ImageCapture.Builder()
+            // Keep captures within a safe memory budget on constrained Android devices.
+            .setTargetResolution(Size(1280, 720))
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
 
