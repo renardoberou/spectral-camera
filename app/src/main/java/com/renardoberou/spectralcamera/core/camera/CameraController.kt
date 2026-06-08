@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.os.SystemClock
 import android.util.Size
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
@@ -17,7 +18,6 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
@@ -25,7 +25,6 @@ import com.renardoberou.spectralcamera.core.filters.SpectralFilterEngine
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -50,6 +49,8 @@ class CameraController(context: Context) {
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
     @Volatile
     private var analysisEnabled: Boolean = false
+    @Volatile
+    private var lastPreviewFrameAt = 0L
 
     fun updateSettings(settings: CameraSettings) {
         currentSettings = settings
@@ -104,32 +105,24 @@ class CameraController(context: Context) {
                 return@suspendCancellableCoroutine
             }
 
-            val tempFile = File.createTempFile("spectral_capture_", ".jpg", appContext.cacheDir)
-            continuation.invokeOnCancellation {
-                tempFile.delete()
-            }
-
-            val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
             capture.takePicture(
-                outputOptions,
                 captureExecutor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
                         try {
                             if (!continuation.isActive) return
-                            val bitmap = decodeCapturedBitmap(tempFile)
+                            val bitmap = capturedImageToBitmap(image)
                             continuation.resume(bitmap)
                         } catch (t: Throwable) {
                             if (continuation.isActive) {
                                 continuation.resumeWithException(t)
                             }
                         } finally {
-                            tempFile.delete()
+                            image.close()
                         }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
-                        tempFile.delete()
                         if (continuation.isActive) {
                             continuation.resumeWithException(exception)
                         }
@@ -155,13 +148,22 @@ class CameraController(context: Context) {
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setTargetResolution(Size(640, 360))
+            .setTargetResolution(Size(480, 270))
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .build()
             .also { useCase ->
                 useCase.setAnalyzer(analyzerExecutor) { proxy ->
                     try {
-                        if (analysisEnabled) {
+                        val shouldAnalyze = analysisEnabled && run {
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastPreviewFrameAt < 60L) {
+                                false
+                            } else {
+                                lastPreviewFrameAt = now
+                                true
+                            }
+                        }
+                        if (shouldAnalyze) {
                             val raw = imageProxyToBitmap(proxy)
                             val processed = filterEngine.processPreview(raw, currentSettings)
                             onFrame?.invoke(processed)
@@ -173,9 +175,9 @@ class CameraController(context: Context) {
             }
 
         val capture = ImageCapture.Builder()
-            // Keep captures within a safe memory budget on constrained Android devices.
-            .setTargetResolution(Size(1280, 720))
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            // Prefer a high-quality 4:3 still capture while keeping memory bounded.
+            .setTargetResolution(Size(2560, 1920))
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .build()
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
@@ -200,51 +202,50 @@ class CameraController(context: Context) {
         )
     }
 
-    private fun decodeCapturedBitmap(file: File): Bitmap {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, bounds)
+    private fun capturedImageToBitmap(image: ImageProxy): Bitmap {
+        val decoded = decodeCompressedImage(image)
+        return rotateBitmap(decoded, image.imageInfo.rotationDegrees)
+    }
 
-        // Keep the post-capture decode safely below full sensor resolution so capture
-        // can succeed on memory-constrained devices.
-        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 1280, 1280)
+    private fun decodeCompressedImage(image: ImageProxy): Bitmap {
+        val buffer = image.planes.firstOrNull()?.buffer
+            ?: throw IllegalStateException("Captured image has no data plane")
+        buffer.rewind()
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 2560, 1920)
         val options = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
 
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             ?: throw IllegalStateException("Failed to decode captured image")
-        val exif = ExifInterface(file.absolutePath)
-        val rotationDegrees = when (
-            exif.getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_UNDEFINED,
-            )
-        ) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270
-            else -> 0
-        }
-        return rotateBitmap(bitmap, rotationDegrees)
     }
 
     private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+        if (width <= reqWidth && height <= reqHeight) return 1
         var sample = 1
-        var halfHeight = height / 2
-        var halfWidth = width / 2
-        while (halfHeight / sample >= reqHeight && halfWidth / sample >= reqWidth) {
+        while (width / sample > reqWidth || height / sample > reqHeight) {
             sample *= 2
         }
         return sample.coerceAtLeast(1)
     }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap {
+        val bitmap = rgbaImageProxyToBitmap(image)
+        return rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
+    }
+
+    private fun rgbaImageProxyToBitmap(image: ImageProxy): Bitmap {
         val buffer: ByteBuffer = image.planes[0].buffer
         buffer.rewind()
         val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(buffer)
-        return rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
+        return bitmap
     }
 
     private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {

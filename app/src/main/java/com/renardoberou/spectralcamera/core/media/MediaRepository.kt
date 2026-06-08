@@ -103,7 +103,7 @@ class MediaRepository(private val context: Context) {
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore item")
         resolver.openOutputStream(uri)?.use { stream ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 96, stream)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
                 throw IOException("Failed to compress bitmap")
             }
         } ?: throw IOException("Failed to open output stream")
