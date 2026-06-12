@@ -537,7 +537,6 @@ class SpectralRenderer(
             var fx = 1f
             if (settings.frontFacing) fx = -1f
             Matrix.scaleM(posMatrix, 0, fx, 1f, 1f)
-            Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
             return
         }
         val rotated = srcRotation == 90 || srcRotation == 270
@@ -555,9 +554,8 @@ class SpectralRenderer(
         if (settings.frontFacing) sx = -sx
 
         Matrix.scaleM(posMatrix, 0, sx, sy, 1f)
-        // CameraX reports clockwise rotation degrees; OpenGL's positive Z rotation
-        // turns counter-clockwise, so the renderer must negate the value here.
-        Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
+        // The SurfaceTexture transform already carries the camera orientation,
+        // so the quad only needs aspect scaling and optional mirroring here.
     }
 
     private fun drawQuad(
