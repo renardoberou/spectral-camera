@@ -98,14 +98,25 @@ class CameraController(context: Context) {
         val resolution = request.resolution
         sourceResolution = resolution
         texture.setDefaultBufferSize(resolution.width, resolution.height)
-        // Deliver size and rotation atomically, with the rotation obtained
-        // synchronously from CameraInfo: frames cannot start flowing without the
-        // renderer knowing the correct geometry first.
-        sourceRotation = currentRelativeRotation()
-        glView?.configureSource(resolution.width, resolution.height, sourceRotation)
+
+        // Seed the renderer with the best synchronous estimate we have, then
+        // let CameraX overwrite it with the authoritative transformation info
+        // as soon as that becomes available.
+        updateSourceGeometry(currentRelativeRotation())
+        request.setTransformationInfoListener(mainExecutor) { info ->
+            updateSourceGeometry(info.rotationDegrees)
+        }
+
         val surface = Surface(texture)
         request.provideSurface(surface, mainExecutor) { surface.release() }
         pendingRequest = null
+    }
+
+    private fun updateSourceGeometry(rotationDegrees: Int) {
+        sourceRotation = rotationDegrees
+        sourceResolution?.let { resolution ->
+            glView?.configureSource(resolution.width, resolution.height, sourceRotation)
+        }
     }
 
     /**
@@ -272,6 +283,10 @@ class CameraController(context: Context) {
             provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase)
         }
         imageCapture = captureUseCase
+        sourceResolution?.let { resolution ->
+            sourceRotation = currentRelativeRotation()
+            glView?.configureSource(resolution.width, resolution.height, sourceRotation)
+        }
         updateCapabilities()
     }
 
