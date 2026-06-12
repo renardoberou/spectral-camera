@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,7 +30,28 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build debug and release APKs
-        run: ./gradlew assembleDebug assembleRelease
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee build.log
+
+      - name: Publish failure log to ci-log branch
+        if: failure()
+        run: |
+          {
+            echo "=== ERRORS (grep) ==="
+            grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong|> Task .* FAILED" -A 2 build.log | head -c 120000 || true
+            echo
+            echo "=== TAIL ==="
+            tail -c 120000 build.log
+          } > /tmp/build-failure.log
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-log
+          git rm -rf --cached . > /dev/null 2>&1 || true
+          cp /tmp/build-failure.log build-failure.log
+          git add build-failure.log
+          git commit -qm "CI failure log, run ${{ github.run_number }}"
+          git push -f origin ci-log
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
