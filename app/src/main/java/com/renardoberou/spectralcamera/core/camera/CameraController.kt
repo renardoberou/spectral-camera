@@ -156,8 +156,7 @@ class CameraController(context: Context) {
         val fullW = contentW * scale
         val fullH = contentH * scale
 
-        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        val factory = DisplayOrientedMeteringPointFactory(display, selector, fullW, fullH)
+        val factory = DisplayOrientedMeteringPointFactory(display, camera.cameraInfo, fullW, fullH)
         val point = factory.createPoint(x + (fullW - viewWidth) / 2f, y + (fullH - viewHeight) / 2f)
         val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
             .build()
