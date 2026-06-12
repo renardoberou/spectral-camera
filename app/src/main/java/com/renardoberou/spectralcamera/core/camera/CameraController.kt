@@ -225,6 +225,8 @@ class CameraController(context: Context) {
     private fun bindUseCases(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         provider.unbindAll()
 
+        val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0
+
         val previewUseCase = Preview.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
@@ -237,6 +239,7 @@ class CameraController(context: Context) {
                     )
                     .build(),
             )
+            .setTargetRotation(targetRotation)
             .build()
             .also { it.setSurfaceProvider(surfaceProvider) }
         preview = previewUseCase
@@ -253,13 +256,14 @@ class CameraController(context: Context) {
                     )
                     .build(),
             )
+            .setTargetRotation(targetRotation)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setJpegQuality(95)
             .build()
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         camera = try {
-            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase, buildAnalysis())
+            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase, buildAnalysis(targetRotation))
         } catch (t: Exception) {
             // Some LEGACY-level devices refuse three concurrent use cases. Drop the
             // analysis stream (only the hardware-test screen loses live data).
@@ -271,7 +275,7 @@ class CameraController(context: Context) {
         updateCapabilities()
     }
 
-    private fun buildAnalysis(): ImageAnalysis =
+    private fun buildAnalysis(targetRotation: Int): ImageAnalysis =
         ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setResolutionSelector(
@@ -284,6 +288,7 @@ class CameraController(context: Context) {
                     )
                     .build(),
             )
+            .setTargetRotation(targetRotation)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .build()
             .also { useCase ->
