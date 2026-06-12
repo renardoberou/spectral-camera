@@ -24,6 +24,7 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * GPU spectral pipeline.
@@ -77,6 +78,7 @@ uniform float uHueCos;
 uniform float uHueSin;
 uniform float uSaturation;
 uniform int uSwapMode;
+uniform vec2 uSkyUp;
 
 float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
@@ -112,7 +114,7 @@ vec3 thermal(float v) {
 // hot magenta/crimson foliage, deep cyan-blue skies, white clouds, dark
 // water, waxy pale-green skin, red paint turning yellow-green.
 // gold = 1.0 selects the orange-filter variant (warmer foliage, teal skies).
-vec3 aerochrome(vec3 c, float gold) {
+vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT) {
     float r = c.r;
     float g = c.g;
     float b = c.b;
@@ -146,10 +148,19 @@ vec3 aerochrome(vec3 c, float gold) {
     // baked-in reversal-film saturation
     float il = lumaOf(ir);
     ir = clamp(vec3(il) + (ir - vec3(il)) * 1.28, 0.0, 1.0);
+
+    // EIR sky: deep graded blue (teal on the gold variant), regardless of
+    // whether the source sky was blue or blown-out overcast white. Source
+    // luminance variation modulates the result so cloud structure survives.
+    vec3 zen = mix(vec3(0.05, 0.11, 0.48), vec3(0.04, 0.24, 0.40), gold);
+    vec3 hor = mix(vec3(0.38, 0.50, 0.80), vec3(0.32, 0.55, 0.62), gold);
+    vec3 skyCol = mix(hor, zen, smoothstep(0.45, 1.0, skyT));
+    skyCol *= 0.62 + 0.50 * luma;
+    ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.92);
     return ir;
 }
 
-vec3 presetColor(vec3 src) {
+vec3 presetColor(vec3 src, float skyMask, float skyT) {
     float r = src.r;
     float g = src.g;
     float b = src.b;
@@ -161,28 +172,33 @@ vec3 presetColor(vec3 src) {
 
     if (uPreset == 0) {
         float m = tone(luma + foliage * 0.42 - sky * 0.26, 1.55);
+        // Wood effect: IR-dark sky with cloud structure preserved
+        m = mix(m, pow(m, 3.0) * 0.34, skyMask);
         return vec3(m);
     }
     if (uPreset == 1) {
         float m = tone(luma + foliage * 0.48 - sky * 0.32, 1.95);
+        m = mix(m, pow(m, 3.5) * 0.26, skyMask);
         return vec3(m);
     }
     if (uPreset == 2) {
         float m = tone(luma + foliage * 0.78 - sky * 0.42, 1.75);
+        m = mix(m, pow(m, 3.0) * 0.32, skyMask);
         return vec3(m);
     }
     if (uPreset == 3) {
-        return aerochrome(src, 0.0);
+        return aerochrome(src, 0.0, skyMask, skyT);
     }
     if (uPreset == 4) {
-        return aerochrome(src, 1.0);
+        return aerochrome(src, 1.0, skyMask, skyT);
     }
     if (uPreset == 5) {
-        return vec3(
+        vec3 red720 = vec3(
             tone(luma + foliage * 0.88, 1.32),
             tone(luma * 0.34 + foliage * 0.12 - sky * 0.08, 1.0),
             tone(luma * 0.08 - sky * 0.08, 0.88)
         );
+        return red720 * (1.0 - skyMask * 0.70);
     }
     if (uPreset == 6) {
         return vec3(
@@ -200,7 +216,38 @@ vec3 presetColor(vec3 src) {
 
 void main() {
     vec3 src = texture2D(uTexture, vTexCoord).rgb;
-    vec3 c = presetColor(src);
+
+    // ---- sky detection -------------------------------------------------
+    // Two signals: clear blue sky (blue dominance) and overcast/blown sky
+    // (very bright, desaturated, locally smooth). Both are weighted by a
+    // positional prior along uSkyUp, the image-up direction in texcoord
+    // space, so bright walls low in the frame stay untouched.
+    float srcLuma = lumaOf(src);
+    float maxc = max(src.r, max(src.g, src.b));
+    float minc = min(src.r, min(src.g, src.b));
+    float sat = (maxc - minc) / max(maxc, 0.001);
+
+    float n1 = lumaOf(texture2D(uTexture, vTexCoord + vec2(uTexelSize.x, 0.0)).rgb);
+    float n2 = lumaOf(texture2D(uTexture, vTexCoord - vec2(uTexelSize.x, 0.0)).rgb);
+    float n3 = lumaOf(texture2D(uTexture, vTexCoord + vec2(0.0, uTexelSize.y)).rgb);
+    float n4 = lumaOf(texture2D(uTexture, vTexCoord - vec2(0.0, uTexelSize.y)).rgb);
+    float nsum = n1 + n2 + n3 + n4;
+    float locVar = abs(n1 - srcLuma) + abs(n2 - srcLuma) + abs(n3 - srcLuma) + abs(n4 - srcLuma);
+    float smoothness = 1.0 - smoothstep(0.015, 0.07, locVar);
+
+    float skyT = clamp(dot(vTexCoord - vec2(0.5), uSkyUp) + 0.5, 0.0, 1.0);
+    float skyPrior = smoothstep(0.30, 0.62, skyT);
+
+    float blueSky = smoothstep(0.015, 0.14, src.b - max(src.r, src.g * 0.97))
+        * smoothstep(0.25, 0.50, srcLuma);
+    float flatSky = smoothstep(0.78, 0.90, srcLuma)
+        * (1.0 - smoothstep(0.05, 0.16, sat))
+        * smoothness;
+    float skyMask = clamp(blueSky * (0.30 + 0.70 * skyPrior) + flatSky * skyPrior, 0.0, 1.0);
+    skyMask = clamp(skyMask * (1.0 + uSkySuppress * 0.8), 0.0, 1.0);
+    // ---------------------------------------------------------------------
+
+    vec3 c = presetColor(src, skyMask, skyT);
 
     // exposure (digital gain, stops)
     c *= exp2(clamp(uExposure, -3.0, 3.0));
@@ -245,14 +292,9 @@ void main() {
         Y - 1.106 * I2 + 1.703 * Q2
     );
 
-    // unsharp mask on the source luma (4-tap cross)
+    // unsharp mask on the source luma (reuses the sky-detection taps)
     if (uSharpness > 0.001) {
-        float c0 = lumaOf(src);
-        float n = lumaOf(texture2D(uTexture, vTexCoord + vec2(uTexelSize.x, 0.0)).rgb)
-            + lumaOf(texture2D(uTexture, vTexCoord - vec2(uTexelSize.x, 0.0)).rgb)
-            + lumaOf(texture2D(uTexture, vTexCoord + vec2(0.0, uTexelSize.y)).rgb)
-            + lumaOf(texture2D(uTexture, vTexCoord - vec2(0.0, uTexelSize.y)).rgb);
-        c += (c0 - n * 0.25) * uSharpness * 0.5;
+        c += (srcLuma - nsum * 0.25) * uSharpness * 0.5;
     }
 
     // highlight bloom / halation
@@ -434,6 +476,18 @@ class SpectralRenderer(
 
         val width = if (srcWidth > 0) srcWidth else viewWidth
         val height = if (srcHeight > 0) srcHeight else viewHeight
+        // Image-up in texcoord space = the texture matrix image of the attr
+        // up axis (column 1); the position matrix is scale/mirror only.
+        var skyUpX = stMatrix[4]
+        var skyUpY = stMatrix[5]
+        val skyLen = sqrt(skyUpX * skyUpX + skyUpY * skyUpY)
+        if (skyLen < 1e-3f) {
+            skyUpX = 0f
+            skyUpY = -1f
+        } else {
+            skyUpX /= skyLen
+            skyUpY /= skyLen
+        }
         drawQuad(
             program = program,
             currentSettings = settings,
@@ -444,6 +498,8 @@ class SpectralRenderer(
             texWidth = width,
             texHeight = height,
             grainSeed = frameIndex.toFloat(),
+            skyUpX = skyUpX,
+            skyUpY = skyUpY,
         )
     }
 
@@ -506,11 +562,16 @@ class SpectralRenderer(
                 currentSettings = captureSettings,
                 textureTarget = GLES20.GL_TEXTURE_2D,
                 textureId = sourceTexture,
-                positionMatrix = flipYMatrix,
+                // No Y flip: the bitmap-upload and readPixels conventions already
+                // cancel; an extra flip is what made captures come out upside down.
+                positionMatrix = identityMatrix,
                 textureMatrix = identityMatrix,
                 texWidth = width,
                 texHeight = height,
                 grainSeed = (System.currentTimeMillis() % 997L).toFloat(),
+                // Rendered content is NDC-inverted here, so image-up is -v.
+                skyUpX = 0f,
+                skyUpY = -1f,
             )
 
             val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -568,6 +629,8 @@ class SpectralRenderer(
         texWidth: Int,
         texHeight: Int,
         grainSeed: Float,
+        skyUpX: Float,
+        skyUpY: Float,
     ) {
         val adj = currentSettings.adjustments
         GLES20.glUseProgram(program.id)
@@ -592,6 +655,7 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uBloom, adj.bloom)
         GLES20.glUniform1f(program.uGrain, adj.grain)
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
+        GLES20.glUniform2f(program.uSkyUp, skyUpX, skyUpY)
         GLES20.glUniform1f(program.uSharpness, adj.sharpness)
         GLES20.glUniform1f(program.uRedWeight, adj.redChannelWeight)
         GLES20.glUniform1f(program.uFoliageLift, adj.greenFoliageLift)
@@ -643,6 +707,7 @@ class SpectralRenderer(
         val uBloom = GLES20.glGetUniformLocation(id, "uBloom")
         val uGrain = GLES20.glGetUniformLocation(id, "uGrain")
         val uGrainSeed = GLES20.glGetUniformLocation(id, "uGrainSeed")
+        val uSkyUp = GLES20.glGetUniformLocation(id, "uSkyUp")
         val uSharpness = GLES20.glGetUniformLocation(id, "uSharpness")
         val uRedWeight = GLES20.glGetUniformLocation(id, "uRedWeight")
         val uFoliageLift = GLES20.glGetUniformLocation(id, "uFoliageLift")
