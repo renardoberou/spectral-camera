@@ -1,6 +1,5 @@
 package com.renardoberou.spectralcamera.ui.screens
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +46,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,15 +54,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.SpectralPreset
@@ -80,11 +76,11 @@ fun LiveCameraScreen(
     settings: CameraSettings,
     capabilities: CameraCapabilities?,
     galleryCount: Int,
+    onCapture: suspend () -> CaptureResult,
     onOpenGallery: () -> Unit,
     onOpenHardware: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val previewFrame by viewModel.livePreviewFrame.collectAsStateWithLifecycle()
     var showPresets by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
@@ -96,25 +92,21 @@ fun LiveCameraScreen(
             .fillMaxSize()
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    cameraController.focusAt(offset.x, offset.y)
+                    cameraController.focusAt(
+                        offset.x,
+                        offset.y,
+                        size.width.toFloat(),
+                        size.height.toFloat(),
+                    )
                 }
             },
     ) {
-        previewFrame?.let { frame ->
-            Image(
-                bitmap = frame.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xB0000000), Color.Transparent, Color(0xDD030208)),
+                        colors = listOf(Color(0x59000000), Color.Transparent, Color(0x8C030208)),
                     ),
                 ),
         )
@@ -166,9 +158,9 @@ fun LiveCameraScreen(
                         Column(Modifier.padding(14.dp)) {
                             Text("Exposure compensation", style = MaterialTheme.typography.labelLarge)
                             Slider(
-                                value = settings.adjustments.exposureCompensation,
+                                value = settings.hardwareEv,
                                 onValueChange = { value ->
-                                    viewModel.updateAdjustments { it.copy(exposureCompensation = value) }
+                                    viewModel.setHardwareEv(value)
                                     cameraController.setExposureCompensation(value.roundToInt())
                                 },
                                 valueRange = capabilities.exposureRange.first.toFloat()..capabilities.exposureRange.last.toFloat(),
@@ -201,7 +193,7 @@ fun LiveCameraScreen(
                                 onClick = {
                                     scope.launch {
                                         captureLabel = "Capturing…"
-                                        runCatching { viewModel.captureAndSave(cameraController) }
+                                        runCatching { onCapture() }
                                             .onSuccess {
                                                 captureLabel = "Saved ${it.displayName}"
                                                 viewModel.refreshGallery()
@@ -360,7 +352,7 @@ private fun AdjustmentsSheet(
         )
 
         AdjustmentSlider("Contrast", current.contrast, 0.5f..2.0f) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
-        AdjustmentSlider("Exposure", current.exposureCompensation, -2f..2f) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
+        AdjustmentSlider("Digital exposure", current.exposureCompensation, -2f..2f) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
         AdjustmentSlider("Blacks", current.blacks, -1f..1f) { value -> onAdjustmentsChange(current.copy(blacks = value)) }
         AdjustmentSlider("Whites", current.whites, -1f..1f) { value -> onAdjustmentsChange(current.copy(whites = value)) }
         AdjustmentSlider("Bloom", current.bloom, 0f..1.2f) { value -> onAdjustmentsChange(current.copy(bloom = value)) }

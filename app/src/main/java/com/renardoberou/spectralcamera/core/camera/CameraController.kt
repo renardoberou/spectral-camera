@@ -4,24 +4,28 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.graphics.SurfaceTexture
 import android.os.SystemClock
 import android.util.Size
-import androidx.camera.core.AspectRatio
+import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DisplayOrientedMeteringPointFactory
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceRequest
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.renardoberou.spectralcamera.core.CameraCapabilities
-import com.renardoberou.spectralcamera.core.CameraSettings
-import com.renardoberou.spectralcamera.core.filters.SpectralFilterEngine
+import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,44 +35,88 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * Owns the CameraX session. The live preview is delivered straight into the GPU
+ * pipeline ([SpectralGlView]) through a SurfaceTexture, so no per-frame work
+ * happens on the CPU. A tiny RGBA analysis stream is kept only for the
+ * hardware-test screen and is gated by [setAnalysisEnabled].
+ */
 class CameraController(context: Context) {
     private val appContext = context.applicationContext
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
     private val analyzerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val captureExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val captureMutex = Mutex()
-    private val filterEngine = SpectralFilterEngine()
 
-    @Volatile
-    private var currentSettings: CameraSettings = CameraSettings()
-    private var previewView: PreviewView? = null
-    private var onFrame: ((Bitmap) -> Unit)? = null
+    private var glView: SpectralGlView? = null
     private var onCapabilities: ((CameraCapabilities) -> Unit)? = null
+    private var onAnalysisFrame: ((Bitmap) -> Unit)? = null
     private var camera: Camera? = null
+    private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+
     @Volatile
     private var analysisEnabled: Boolean = false
-    @Volatile
-    private var lastPreviewFrameAt = 0L
 
-    fun updateSettings(settings: CameraSettings) {
-        currentSettings = settings
+    @Volatile
+    private var lastAnalysisFrameAt = 0L
+
+    // Preview surface plumbing. All of these are touched on the main thread only.
+    private var surfaceTexture: SurfaceTexture? = null
+    private var pendingRequest: SurfaceRequest? = null
+    private var sourceRotation = 0
+    private var sourceResolution: Size? = null
+
+    private val surfaceProvider = Preview.SurfaceProvider { request ->
+        // Supersede any unanswered request from a previous configuration.
+        pendingRequest?.willNotProvideSurface()
+        pendingRequest = request
+        request.setTransformationInfoListener(mainExecutor) { info ->
+            sourceRotation = info.rotationDegrees
+            glView?.setSourceRotation(info.rotationDegrees)
+        }
+        tryFulfillRequest()
+    }
+
+    /**
+     * Called (on the main thread) whenever the GL surface is created or recreated
+     * and a fresh SurfaceTexture is ready to receive camera frames.
+     */
+    fun onSurfaceTextureAvailable(texture: SurfaceTexture) {
+        surfaceTexture = texture
+        if (pendingRequest != null) {
+            tryFulfillRequest()
+        } else {
+            // The camera may be streaming into a surface that died with the old GL
+            // context. Re-installing the provider forces a fresh SurfaceRequest.
+            preview?.setSurfaceProvider(surfaceProvider)
+        }
+    }
+
+    private fun tryFulfillRequest() {
+        val request = pendingRequest ?: return
+        val texture = surfaceTexture ?: return
+        val resolution = request.resolution
+        sourceResolution = resolution
+        texture.setDefaultBufferSize(resolution.width, resolution.height)
+        glView?.setSourceSize(resolution.width, resolution.height)
+        val surface = Surface(texture)
+        request.provideSurface(surface, mainExecutor) { surface.release() }
+        pendingRequest = null
     }
 
     fun bind(
         lifecycleOwner: LifecycleOwner,
-        previewView: PreviewView,
+        glView: SpectralGlView,
         lensFacing: Int,
-        settings: CameraSettings,
-        onPreviewFrame: (Bitmap) -> Unit,
         onCapabilities: (CameraCapabilities) -> Unit,
+        onAnalysisFrame: (Bitmap) -> Unit,
     ) {
-        this.previewView = previewView
-        this.onFrame = onPreviewFrame
-        this.onCapabilities = onCapabilities
+        this.glView = glView
         this.lensFacing = lensFacing
-        currentSettings = settings
+        this.onCapabilities = onCapabilities
+        this.onAnalysisFrame = onAnalysisFrame
 
         val providerFuture = ProcessCameraProvider.getInstance(appContext)
         providerFuture.addListener({
@@ -89,14 +137,34 @@ class CameraController(context: Context) {
         analysisEnabled = enabled
     }
 
-    fun focusAt(x: Float, y: Float) {
-        val view = previewView ?: return
-        val point = view.meteringPointFactory.createPoint(x, y)
+    /**
+     * Tap-to-focus. (x, y) are coordinates inside the on-screen preview of size
+     * viewWidth x viewHeight. The preview fill-crops the camera buffer, so the tap
+     * space is expanded to the uncropped content rect before mapping to the sensor.
+     */
+    fun focusAt(x: Float, y: Float, viewWidth: Float, viewHeight: Float) {
+        val camera = camera ?: return
+        val display = glView?.display ?: return
+        if (viewWidth <= 0f || viewHeight <= 0f) return
+
+        val resolution = sourceResolution
+        val rotated = sourceRotation == 90 || sourceRotation == 270
+        val contentW = (if (rotated) resolution?.height else resolution?.width)?.toFloat() ?: viewWidth
+        val contentH = (if (rotated) resolution?.width else resolution?.height)?.toFloat() ?: viewHeight
+        if (contentW <= 0f || contentH <= 0f) return
+        val scale = maxOf(viewWidth / contentW, viewHeight / contentH)
+        val fullW = contentW * scale
+        val fullH = contentH * scale
+
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        val factory = DisplayOrientedMeteringPointFactory(display, selector, fullW, fullH)
+        val point = factory.createPoint(x + (fullW - viewWidth) / 2f, y + (fullH - viewHeight) / 2f)
         val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
             .build()
-        camera?.cameraControl?.startFocusAndMetering(action)
+        camera.cameraControl.startFocusAndMetering(action)
     }
 
+    /** Captures a full-resolution still and returns it as an upright bitmap. */
     suspend fun capture(): Bitmap = captureMutex.withLock {
         suspendCancellableCoroutine { continuation ->
             val capture = imageCapture
@@ -133,58 +201,92 @@ class CameraController(context: Context) {
     }
 
     fun release() {
+        pendingRequest?.willNotProvideSurface()
+        pendingRequest = null
         analyzerExecutor.shutdownNow()
         captureExecutor.shutdownNow()
     }
 
     private fun bindUseCases(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
-        val previewView = previewView ?: return
         provider.unbindAll()
 
-        val preview = Preview.Builder()
-            .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+        val previewUseCase = Preview.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(1920, 1080),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
             .build()
-            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            .also { it.setSurfaceProvider(surfaceProvider) }
+        preview = previewUseCase
 
-        val analysis = ImageAnalysis.Builder()
+        val captureUseCase = ImageCapture.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(4000, 3000),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setJpegQuality(95)
+            .build()
+
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        camera = try {
+            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase, buildAnalysis())
+        } catch (t: Exception) {
+            // Some LEGACY-level devices refuse three concurrent use cases. Drop the
+            // analysis stream (only the hardware-test screen loses live data).
+            provider.unbindAll()
+            previewUseCase.setSurfaceProvider(surfaceProvider)
+            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase)
+        }
+        imageCapture = captureUseCase
+        updateCapabilities()
+    }
+
+    private fun buildAnalysis(): ImageAnalysis =
+        ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setTargetResolution(Size(480, 270))
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(320, 240),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .build()
             .also { useCase ->
                 useCase.setAnalyzer(analyzerExecutor) { proxy ->
                     try {
-                        val shouldAnalyze = analysisEnabled && run {
+                        if (analysisEnabled) {
                             val now = SystemClock.elapsedRealtime()
-                            if (now - lastPreviewFrameAt < 60L) {
-                                false
-                            } else {
-                                lastPreviewFrameAt = now
-                                true
+                            if (now - lastAnalysisFrameAt >= 150L) {
+                                lastAnalysisFrameAt = now
+                                val bitmap = rgbaProxyToBitmap(proxy)
+                                onAnalysisFrame?.invoke(bitmap)
                             }
-                        }
-                        if (shouldAnalyze) {
-                            val raw = imageProxyToBitmap(proxy)
-                            val processed = filterEngine.processPreview(raw, currentSettings)
-                            onFrame?.invoke(processed)
                         }
                     } finally {
                         proxy.close()
                     }
                 }
             }
-
-        val capture = ImageCapture.Builder()
-            // Prefer a high-quality 4:3 still capture while keeping memory bounded.
-            .setTargetResolution(Size(2560, 1920))
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .build()
-
-        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, analysis, capture)
-        imageCapture = capture
-        updateCapabilities()
-    }
 
     private fun updateCapabilities() {
         val camera = camera ?: return
@@ -214,37 +316,41 @@ class CameraController(context: Context) {
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
 
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 2560, 1920)
         val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             ?: throw IllegalStateException("Failed to decode captured image")
     }
 
-    private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
-        if (width <= reqWidth && height <= reqHeight) return 1
-        var sample = 1
-        while (width / sample > reqWidth || height / sample > reqHeight) {
-            sample *= 2
-        }
-        return sample.coerceAtLeast(1)
-    }
-
-    private fun imageProxyToBitmap(image: ImageProxy): Bitmap {
-        val bitmap = rgbaImageProxyToBitmap(image)
-        return rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
-    }
-
-    private fun rgbaImageProxyToBitmap(image: ImageProxy): Bitmap {
-        val buffer: ByteBuffer = image.planes[0].buffer
+    /** Converts an RGBA_8888 ImageProxy to a Bitmap, honouring the row stride. */
+    private fun rgbaProxyToBitmap(image: ImageProxy): Bitmap {
+        val plane = image.planes[0]
+        val buffer: ByteBuffer = plane.buffer
         buffer.rewind()
-        val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
-        bitmap.copyPixelsFromBuffer(buffer)
+        val width = image.width
+        val height = image.height
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+        val rowBytes = width * pixelStride
+
+        if (rowStride == rowBytes) {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            bitmap.copyPixelsFromBuffer(buffer)
+            return bitmap
+        }
+
+        val packed = ByteBuffer.allocateDirect(rowBytes * height)
+        val row = ByteArray(rowBytes)
+        for (y in 0 until height) {
+            buffer.position(y * rowStride)
+            val toRead = minOf(rowBytes, buffer.remaining())
+            buffer.get(row, 0, toRead)
+            packed.put(row, 0, rowBytes)
+        }
+        packed.rewind()
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.copyPixelsFromBuffer(packed)
         return bitmap
     }
 

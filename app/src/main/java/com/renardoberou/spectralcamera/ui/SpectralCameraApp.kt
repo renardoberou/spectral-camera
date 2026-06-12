@@ -7,7 +7,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,6 +35,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -46,11 +47,13 @@ import androidx.navigation.compose.rememberNavController
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.camera.CameraController
+import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
 import com.renardoberou.spectralcamera.ui.screens.HardwareTestScreen
 import com.renardoberou.spectralcamera.ui.screens.LiveCameraScreen
 import com.renardoberou.spectralcamera.ui.theme.SpectralCameraTheme
+import kotlin.math.roundToInt
 
 private sealed class Route(val route: String, val label: String) {
     data object Live : Route("live", "Live")
@@ -65,6 +68,11 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
         val lifecycleOwner = LocalLifecycleOwner.current
         val navController = rememberNavController()
         val cameraController = remember { CameraController(context) }
+        val glView = remember {
+            SpectralGlView(context).apply {
+                onSurfaceTextureReady = cameraController::onSurfaceTextureAvailable
+            }
+        }
         val settings by viewModel.settings.collectAsStateWithLifecycle()
         val gallery by viewModel.galleryItems.collectAsStateWithLifecycle()
         var capabilities by remember { mutableStateOf<CameraCapabilities?>(null) }
@@ -76,12 +84,30 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             permissionsGranted = granted.values.all { it }
         }
 
+        // Push every settings change straight into the GPU pipeline.
         LaunchedEffect(settings) {
-            cameraController.updateSettings(settings)
+            glView.updateSettings(settings)
         }
 
-        DisposableEffect(Unit) {
-            onDispose { cameraController.release() }
+        // Hardware exposure compensation lives on the camera itself.
+        LaunchedEffect(capabilities, settings.hardwareEv) {
+            cameraController.setExposureCompensation(settings.hardwareEv.roundToInt())
+        }
+
+        // GLSurfaceView needs explicit pause/resume to keep its render thread healthy.
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> glView.onResume()
+                    Lifecycle.Event.ON_PAUSE -> glView.onPause()
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                cameraController.release()
+            }
         }
 
         LaunchedEffect(Unit) {
@@ -93,6 +119,7 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
                 viewModel = viewModel,
                 navController = navController,
                 cameraController = cameraController,
+                glView = glView,
                 lifecycleOwner = lifecycleOwner,
                 settings = settings,
                 galleryCount = gallery.size,
@@ -110,20 +137,22 @@ private fun AppShell(
     viewModel: SpectralViewModel,
     navController: NavHostController,
     cameraController: CameraController,
+    glView: SpectralGlView,
     lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     settings: CameraSettings,
     galleryCount: Int,
     capabilities: CameraCapabilities?,
     onCapabilities: (CameraCapabilities) -> Unit,
 ) {
-        val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route ?: Route.Live.route
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route ?: Route.Live.route
 
-        LaunchedEffect(currentRoute) {
-            cameraController.setAnalysisEnabled(currentRoute != Route.Gallery.route)
-        }
+    // The small analysis stream only feeds the hardware-test screen.
+    LaunchedEffect(currentRoute) {
+        cameraController.setAnalysisEnabled(currentRoute == Route.Hardware.route)
+    }
 
-        Scaffold(
-            bottomBar = {
+    Scaffold(
+        bottomBar = {
             NavigationBar {
                 listOf(Route.Live, Route.Gallery, Route.Hardware).forEach { route ->
                     NavigationBarItem(
@@ -151,9 +180,10 @@ private fun AppShell(
         Box(Modifier.fillMaxSize().padding(padding)) {
             CameraSessionHost(
                 cameraController = cameraController,
+                glView = glView,
                 lifecycleOwner = lifecycleOwner,
                 settings = settings,
-                onFrame = viewModel::onPreviewFrame,
+                onAnalysisFrame = viewModel::onAnalysisFrame,
                 onCapabilities = onCapabilities,
             )
 
@@ -169,6 +199,11 @@ private fun AppShell(
                         settings = settings,
                         capabilities = capabilities,
                         galleryCount = galleryCount,
+                        onCapture = {
+                            viewModel.captureAndSave(cameraController) { raw, captureSettings ->
+                                glView.process(raw, captureSettings)
+                            }
+                        },
                         onOpenGallery = { navController.navigate(Route.Gallery.route) },
                         onOpenHardware = { navController.navigate(Route.Hardware.route) },
                     )
@@ -190,33 +225,24 @@ private fun AppShell(
 @Composable
 private fun CameraSessionHost(
     cameraController: CameraController,
+    glView: SpectralGlView,
     lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     settings: CameraSettings,
-    onFrame: (android.graphics.Bitmap) -> Unit,
+    onAnalysisFrame: (android.graphics.Bitmap) -> Unit,
     onCapabilities: (CameraCapabilities) -> Unit,
 ) {
-    val context = LocalContext.current
-    val previewView = remember {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-            alpha = 1f
-        }
-    }
-
     DisposableEffect(lifecycleOwner, settings.frontFacing) {
         cameraController.bind(
             lifecycleOwner = lifecycleOwner,
-            previewView = previewView,
+            glView = glView,
             lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,
-            settings = settings,
-            onPreviewFrame = onFrame,
             onCapabilities = onCapabilities,
+            onAnalysisFrame = onAnalysisFrame,
         )
         onDispose { }
     }
 
-    AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+    AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
 }
 
 @Composable

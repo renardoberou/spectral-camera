@@ -103,7 +103,7 @@ class MediaRepository(private val context: Context) {
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore item")
         resolver.openOutputStream(uri)?.use { stream ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)) {
                 throw IOException("Failed to compress bitmap")
             }
         } ?: throw IOException("Failed to open output stream")
@@ -126,7 +126,7 @@ class MediaRepository(private val context: Context) {
     )
 
     private fun parseName(displayName: String): ParsedName? {
-        val regex = Regex("^spectral_(raw|proc)_([A-Z0-9_]+)_([A-Z0-9_]+)_([0-9]{8}_[0-9]{6})\\.jpg$", RegexOption.IGNORE_CASE)
+        val regex = Regex("^spectral_(raw|proc)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_([0-9]{8}_[0-9]{6})\\.jpg$", RegexOption.IGNORE_CASE)
         val match = regex.find(displayName) ?: return null
         val mode = match.groupValues[1]
         val sensorModeName = match.groupValues[2].uppercase(Locale.US)

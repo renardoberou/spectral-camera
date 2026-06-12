@@ -41,6 +41,7 @@ class CameraSettingsRepository(context: Context) {
             saveOriginal = prefs[SAVE_ORIGINAL] ?: false,
             frontFacing = prefs[FRONT_FACING] ?: false,
             sensorMode = SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name),
+            hardwareEv = prefs[HARDWARE_EV] ?: 0f,
         )
     }
 
@@ -63,6 +64,7 @@ class CameraSettingsRepository(context: Context) {
             prefs[SAVE_ORIGINAL] = settings.saveOriginal
             prefs[FRONT_FACING] = settings.frontFacing
             prefs[SENSOR_MODE] = settings.sensorMode.name
+            prefs[HARDWARE_EV] = settings.hardwareEv
         }
     }
 
@@ -84,5 +86,6 @@ class CameraSettingsRepository(context: Context) {
         val SAVE_ORIGINAL = booleanPreferencesKey("save_original")
         val FRONT_FACING = booleanPreferencesKey("front_facing")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
+        val HARDWARE_EV = floatPreferencesKey("hardware_ev")
     }
 }

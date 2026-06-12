@@ -22,6 +22,10 @@ enum class SpectralPreset(
         label = "Aerochrome-Style False Colour",
         description = "Red foliage, cyan sky, filmic false-colour balance.",
     ),
+    AEROCHROME_GOLD(
+        label = "Aerochrome Gold (orange filter)",
+        description = "EIR with orange filter: golden foliage, teal sky.",
+    ),
     RED_720_STYLE(
         label = "Red 720nm-Style",
         description = "Warm red infrared look with strong foliage response.",
@@ -75,6 +79,8 @@ data class CameraSettings(
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
+    /** Hardware exposure compensation index applied to the camera itself. */
+    val hardwareEv: Float = 0f,
 )
 
 data class CameraCapabilities(
