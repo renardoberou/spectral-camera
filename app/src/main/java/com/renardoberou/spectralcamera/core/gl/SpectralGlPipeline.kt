@@ -537,7 +537,7 @@ class SpectralRenderer(
             var fx = 1f
             if (settings.frontFacing) fx = -1f
             Matrix.scaleM(posMatrix, 0, fx, 1f, 1f)
-            Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
+            Matrix.rotateM(posMatrix, 0, srcRotation.toFloat(), 0f, 0f, 1f)
             return
         }
         val rotated = srcRotation == 90 || srcRotation == 270
@@ -555,7 +555,10 @@ class SpectralRenderer(
         if (settings.frontFacing) sx = -sx
 
         Matrix.scaleM(posMatrix, 0, sx, sy, 1f)
-        Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
+        // Positive sensor degrees rotate the content counter-clockwise on screen:
+        // the SurfaceTexture vertical flip inverts rotation handedness, so this is
+        // +rotation, not -rotation (verified on device).
+        Matrix.rotateM(posMatrix, 0, srcRotation.toFloat(), 0f, 0f, 1f)
     }
 
     private fun drawQuad(

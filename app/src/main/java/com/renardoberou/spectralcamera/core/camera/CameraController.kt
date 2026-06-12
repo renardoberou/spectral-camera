@@ -72,10 +72,6 @@ class CameraController(context: Context) {
         // Supersede any unanswered request from a previous configuration.
         pendingRequest?.willNotProvideSurface()
         pendingRequest = request
-        request.setTransformationInfoListener(mainExecutor) { info ->
-            sourceRotation = info.rotationDegrees
-            glView?.setSourceRotation(info.rotationDegrees)
-        }
         tryFulfillRequest()
     }
 
