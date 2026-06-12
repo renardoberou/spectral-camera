@@ -89,7 +89,9 @@ class CameraController(context: Context) {
             tryFulfillRequest()
         } else {
             // The camera may be streaming into a surface that died with the old GL
-            // context. Re-installing the provider forces a fresh SurfaceRequest.
+            // context. Detach then re-attach the provider to guarantee CameraX
+            // issues a fresh SurfaceRequest for the new texture.
+            preview?.setSurfaceProvider(null)
             preview?.setSurfaceProvider(surfaceProvider)
         }
     }
@@ -100,10 +102,28 @@ class CameraController(context: Context) {
         val resolution = request.resolution
         sourceResolution = resolution
         texture.setDefaultBufferSize(resolution.width, resolution.height)
-        glView?.setSourceSize(resolution.width, resolution.height)
+        // Deliver size and rotation atomically, with the rotation obtained
+        // synchronously from CameraInfo: frames cannot start flowing without the
+        // renderer knowing the correct geometry first.
+        sourceRotation = currentRelativeRotation()
+        glView?.configureSource(resolution.width, resolution.height, sourceRotation)
         val surface = Surface(texture)
         request.provideSurface(surface, mainExecutor) { surface.release() }
         pendingRequest = null
+    }
+
+    /**
+     * Rotation needed to display the sensor buffer upright on the current display,
+     * fetched synchronously (no callback timing involved).
+     */
+    private fun currentRelativeRotation(): Int {
+        val info = camera?.cameraInfo ?: return sourceRotation
+        val displayRotation = glView?.display?.rotation ?: Surface.ROTATION_0
+        return try {
+            info.getSensorRotationDegrees(displayRotation)
+        } catch (t: Exception) {
+            sourceRotation
+        }
     }
 
     fun bind(

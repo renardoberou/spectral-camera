@@ -375,7 +375,22 @@ class SpectralRenderer(
         srcRotation = degrees
     }
 
+    /** Atomically configures the camera source geometry (size + upright rotation). */
+    fun configureSource(width: Int, height: Int, rotationDegrees: Int) {
+        srcWidth = width
+        srcHeight = height
+        srcRotation = rotationDegrees
+    }
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        // With preserveEGLContextOnPause the context (and therefore the OES texture
+        // and SurfaceTexture the camera streams into) usually survives surface
+        // recreation. In that case keep everything: the camera connection stays
+        // unbroken and no re-negotiation is needed.
+        val contextPreserved = oesProgram?.let { GLES20.glIsProgram(it.id) } == true &&
+            surfaceTexture != null
+        if (contextPreserved) return
+
         GLES20.glDisable(GLES20.GL_DEPTH_TEST)
         GLES20.glDisable(GLES20.GL_CULL_FACE)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
@@ -516,6 +531,15 @@ class SpectralRenderer(
 
     private fun computePreviewPosMatrix() {
         Matrix.setIdentityM(posMatrix, 0)
+        if (srcWidth <= 0 || srcHeight <= 0) {
+            // Source geometry not yet known: show the frame edge-to-edge without
+            // inventing an aspect ratio (never stretch on a fallback).
+            var fx = 1f
+            if (settings.frontFacing) fx = -1f
+            Matrix.scaleM(posMatrix, 0, fx, 1f, 1f)
+            Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
+            return
+        }
         val rotated = srcRotation == 90 || srcRotation == 270
         val contentW = (if (rotated) srcHeight else srcWidth).coerceAtLeast(1)
         val contentH = (if (rotated) srcWidth else srcHeight).coerceAtLeast(1)
@@ -695,6 +719,11 @@ class SpectralGlView(context: Context) : GLSurfaceView(context) {
 
     fun setSourceSize(width: Int, height: Int) {
         renderer.setSourceSize(width, height)
+        requestRender()
+    }
+
+    fun configureSource(width: Int, height: Int, rotationDegrees: Int) {
+        renderer.configureSource(width, height, rotationDegrees)
         requestRender()
     }
 
