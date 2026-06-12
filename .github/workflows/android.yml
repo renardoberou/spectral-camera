@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
@@ -34,24 +35,22 @@ jobs:
           set -o pipefail
           ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee build.log
 
-      - name: Publish failure log to ci-log branch
+      - name: Publish failure log as issue
         if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "=== ERRORS (grep) ==="
-            grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong|> Task .* FAILED" -A 2 build.log | head -c 120000 || true
+            echo '### Build failure, run ${{ github.run_number }}'
+            echo '```'
+            grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong" -A 2 build.log 2>/dev/null | head -c 30000
             echo
-            echo "=== TAIL ==="
-            tail -c 120000 build.log
-          } > /tmp/build-failure.log
-          git config user.name "ci"
-          git config user.email "ci@users.noreply.github.com"
-          git checkout --orphan ci-log
-          git rm -rf --cached . > /dev/null 2>&1 || true
-          cp /tmp/build-failure.log build-failure.log
-          git add build-failure.log
-          git commit -qm "CI failure log, run ${{ github.run_number }}"
-          git push -f origin ci-log
+            echo "=== LOG TAIL ==="
+            tail -c 25000 build.log 2>/dev/null
+            echo '```'
+          } > /tmp/body.md || true
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "CI failure: run ${{ github.run_number }}" --body-file /tmp/body.md
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
