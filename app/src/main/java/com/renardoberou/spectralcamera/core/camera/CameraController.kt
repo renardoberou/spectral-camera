@@ -23,7 +23,9 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
+import java.io.ByteArrayInputStream
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -340,22 +342,41 @@ class CameraController(context: Context) {
     }
 
     private fun capturedImageToBitmap(image: ImageProxy): Bitmap {
-        val decoded = decodeCompressedImage(image)
-        return rotateBitmap(decoded, image.imageInfo.rotationDegrees)
+        val bytes = decodeCompressedImageBytes(image)
+        val decoded = decodeCompressedImage(bytes)
+        return rotateBitmap(decoded, jpegRotationDegrees(bytes, image.imageInfo.rotationDegrees))
     }
 
-    private fun decodeCompressedImage(image: ImageProxy): Bitmap {
+    private fun decodeCompressedImageBytes(image: ImageProxy): ByteArray {
         val buffer = image.planes.firstOrNull()?.buffer
             ?: throw IllegalStateException("Captured image has no data plane")
         buffer.rewind()
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
+        return bytes
+    }
 
+    private fun decodeCompressedImage(bytes: ByteArray): Bitmap {
         val options = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             ?: throw IllegalStateException("Failed to decode captured image")
+    }
+
+    private fun jpegRotationDegrees(bytes: ByteArray, fallbackDegrees: Int): Int {
+        return runCatching {
+            ExifInterface(ByteArrayInputStream(bytes)).rotationDegreesOrNull()
+        }.getOrNull() ?: fallbackDegrees
+    }
+
+    private fun ExifInterface.rotationDegreesOrNull(): Int {
+        return when (getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            else -> 0
+        }
     }
 
     /** Converts an RGBA_8888 ImageProxy to a Bitmap, honouring the row stride. */
