@@ -149,14 +149,19 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT) {
     float il = lumaOf(ir);
     ir = clamp(vec3(il) + (ir - vec3(il)) * 1.28, 0.0, 1.0);
 
-    // EIR sky: deep graded blue (teal on the gold variant), regardless of
-    // whether the source sky was blue or blown-out overcast white. Source
-    // luminance variation modulates the result so cloud structure survives.
-    vec3 zen = mix(vec3(0.05, 0.11, 0.48), vec3(0.04, 0.24, 0.40), gold);
-    vec3 hor = mix(vec3(0.38, 0.50, 0.80), vec3(0.32, 0.55, 0.62), gold);
-    vec3 skyCol = mix(hor, zen, smoothstep(0.45, 1.0, skyT));
-    skyCol *= 0.40 + 0.85 * smoothstep(0.55, 1.0, luma);
-    ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.88);
+    // EIR sky: one coherent ramp keyed on position and source luminance.
+    // Dark cloud bands go slate-blue, open sky goes deep blue, bright clouds
+    // go pale white-cyan - all from the same ramp, so cloud boundaries are
+    // drawn by the photo's own gradients instead of mask edges.
+    vec3 zen = mix(vec3(0.04, 0.10, 0.45), vec3(0.03, 0.22, 0.38), gold);
+    vec3 hor = mix(vec3(0.42, 0.55, 0.82), vec3(0.36, 0.58, 0.66), gold);
+    vec3 deepCol = mix(hor, zen, smoothstep(0.40, 0.95, skyT));
+    float cloudLight = smoothstep(0.62, 1.0, luma) * 0.90;
+    vec3 cloudCol = mix(deepCol, vec3(0.90, 0.93, 0.98), 0.62);
+    vec3 skyCol = mix(deepCol * 0.60, cloudCol, cloudLight);
+    // let strong sunset glow blend through near the horizon
+    float warmKeep = smoothstep(0.06, 0.22, c.r - c.b) * (1.0 - smoothstep(0.55, 0.85, skyT));
+    ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.92 * (1.0 - warmKeep * 0.45));
     return ir;
 }
 
@@ -227,17 +232,27 @@ void main() {
     float srcLuma = lumaOf(src);
     vec2 pix0 = vTexCoord / max(uTexelSize, vec2(0.00001));
 
-    vec2 sr = vec2(0.045, 0.045);
+    vec2 r1 = vec2(0.016, 0.016);
+    vec2 r2 = vec2(0.032, 0.032);
+    vec2 r3 = vec2(0.050, 0.050);
     vec3 blur = src;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2( 1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2(-1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2( 0.0,  1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2( 0.0, -1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2( 0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2(-0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2( 0.7, -0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + sr * vec2(-0.7, -0.7)).rgb;
-    blur *= 0.111111;
+    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 1.0,  0.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r1 * vec2(-1.0,  0.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 0.0,  1.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 0.0, -1.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r2 * vec2( 0.7,  0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r2 * vec2(-0.7,  0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r2 * vec2( 0.7, -0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r2 * vec2(-0.7, -0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 1.0,  0.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-1.0,  0.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.0,  1.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.0, -1.0)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.7,  0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-0.7,  0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.7, -0.7)).rgb;
+    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-0.7, -0.7)).rgb;
+    blur *= 0.058824;
 
     float bLuma = lumaOf(blur);
     float bMax = max(blur.r, max(blur.g, blur.b));
@@ -249,17 +264,22 @@ void main() {
 
     float blueSky = smoothstep(0.0, 0.10, blur.b - max(blur.r, blur.g * 0.97))
         * smoothstep(0.22, 0.45, bLuma);
-    float flatSky = smoothstep(0.62, 0.80, bLuma)
-        * (1.0 - smoothstep(0.10, 0.26, bSat));
+    // saturation allowance widens with height: sunset glow near the horizon
+    // (yellow/green/orange) still counts as sky
+    float satHi = 0.26 + 0.34 * skyPrior;
+    float flatSky = smoothstep(0.60, 0.78, bLuma)
+        * (1.0 - smoothstep(satHi - 0.14, satHi, bSat));
     float skyMask = clamp(blueSky * (0.30 + 0.70 * skyPrior) + flatSky * skyPrior, 0.0, 1.0);
+    // saturate the mask inside the sky so partially-treated chalky fringes
+    // cannot appear around clouds; the soft edge lives only at the horizon
+    skyMask = smoothstep(0.12, 0.45, skyMask);
 
     float gate = max(
         smoothstep(0.40, 0.62, srcLuma),
         smoothstep(0.02, 0.10, src.b - max(src.r, src.g * 0.97)));
     skyMask *= gate;
     skyMask = clamp(skyMask * (1.0 + uSkySuppress * 0.8), 0.0, 1.0);
-    // soft dither on the mask hides 8-bit banding along wide transitions
-    skyMask = clamp(skyMask + hashNoise(pix0 * 0.31 + vec2(uGrainSeed)) * 0.02, 0.0, 1.0);
+    skyMask = clamp(skyMask + hashNoise(pix0 * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, skyMask, skyT);
