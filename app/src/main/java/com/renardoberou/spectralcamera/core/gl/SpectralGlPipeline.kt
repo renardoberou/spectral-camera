@@ -114,7 +114,7 @@ vec3 thermal(float v) {
 // hot magenta/crimson foliage, deep cyan-blue skies, white clouds, dark
 // water, waxy pale-green skin, red paint turning yellow-green.
 // gold = 1.0 selects the orange-filter variant (warmer foliage, teal skies).
-vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT) {
+vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma) {
     float r = c.r;
     float g = c.g;
     float b = c.b;
@@ -149,23 +149,28 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT) {
     float il = lumaOf(ir);
     ir = clamp(vec3(il) + (ir - vec3(il)) * 1.28, 0.0, 1.0);
 
-    // EIR sky: one coherent ramp keyed on position and source luminance.
-    // Dark cloud bands go slate-blue, open sky goes deep blue, bright clouds
-    // go pale white-cyan - all from the same ramp, so cloud boundaries are
-    // drawn by the photo's own gradients instead of mask edges.
-    vec3 zen = mix(vec3(0.04, 0.10, 0.45), vec3(0.03, 0.22, 0.38), gold);
-    vec3 hor = mix(vec3(0.42, 0.55, 0.82), vec3(0.36, 0.58, 0.66), gold);
-    vec3 deepCol = mix(hor, zen, smoothstep(0.40, 0.95, skyT));
-    float cloudLight = smoothstep(0.62, 1.0, luma) * 0.90;
-    vec3 cloudCol = mix(deepCol, vec3(0.90, 0.93, 0.98), 0.62);
-    vec3 skyCol = mix(deepCol * 0.60, cloudCol, cloudLight);
-    // let strong sunset glow blend through near the horizon
-    float warmKeep = smoothstep(0.06, 0.22, c.r - c.b) * (1.0 - smoothstep(0.55, 0.85, skyT));
-    ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.92 * (1.0 - warmKeep * 0.45));
+    // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
+    // keyed monotonically on source luminance. No hue rotation and a gentle
+    // slope, so 8-bit steps in blown-out gradients stay small, colourless,
+    // and dither away instead of becoming coloured contour bands.
+    vec3 deepCol = mix(
+        mix(vec3(0.10, 0.20, 0.55), vec3(0.03, 0.09, 0.42), smoothstep(0.35, 0.95, skyT)),
+        mix(vec3(0.07, 0.30, 0.48), vec3(0.02, 0.20, 0.36), smoothstep(0.35, 0.95, skyT)),
+        gold);
+    vec3 paleCol = mix(vec3(0.86, 0.90, 0.97), vec3(0.84, 0.92, 0.95), gold);
+    // Drive the colour ramp from the SMOOTHED luma so JPEG luma plateaus do not
+    // become colour plateaus (the source of the 8-bit banding). Fine per-pixel
+    // detail is added back as a brightness-only modulation - no hue steps - so
+    // clouds stay crisp. (Verified in simulation: peak adjacent-pixel colour
+    // step drops below the source's own.)
+    float lift = smoothstep(0.30, 1.0, smoothLuma);
+    vec3 skyCol = mix(deepCol, paleCol, lift);
+    skyCol = clamp(skyCol + (luma - smoothLuma) * 0.6, 0.0, 1.0);
+    ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.94);
     return ir;
 }
 
-vec3 presetColor(vec3 src, float skyMask, float skyT) {
+vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float r = src.r;
     float g = src.g;
     float b = src.b;
@@ -177,26 +182,27 @@ vec3 presetColor(vec3 src, float skyMask, float skyT) {
 
     if (uPreset == 0) {
         float m = tone(luma + foliage * 0.42 - sky * 0.26, 1.55);
-        // Wood effect: IR-dark sky, smooth curve, cloud structure preserved
-        float skyShade = m * mix(0.22, 0.62, smoothstep(0.60, 0.98, m));
+        // Wood effect: IR-dark sky; shade level keyed on smoothed luma so the
+        // sky tone does not band, fine texture (m) preserved inside the level
+        float skyShade = m * mix(0.22, 0.62, smoothstep(0.55, 0.98, smoothLuma));
         m = mix(m, skyShade, skyMask);
         return vec3(m);
     }
     if (uPreset == 1) {
         float m = tone(luma + foliage * 0.48 - sky * 0.32, 1.95);
-        m = mix(m, m * mix(0.16, 0.55, smoothstep(0.60, 0.98, m)), skyMask);
+        m = mix(m, m * mix(0.16, 0.55, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
         return vec3(m);
     }
     if (uPreset == 2) {
         float m = tone(luma + foliage * 0.78 - sky * 0.42, 1.75);
-        m = mix(m, m * mix(0.20, 0.58, smoothstep(0.60, 0.98, m)), skyMask);
+        m = mix(m, m * mix(0.20, 0.58, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
         return vec3(m);
     }
     if (uPreset == 3) {
-        return aerochrome(src, 0.0, skyMask, skyT);
+        return aerochrome(src, 0.0, skyMask, skyT, smoothLuma);
     }
     if (uPreset == 4) {
-        return aerochrome(src, 1.0, skyMask, skyT);
+        return aerochrome(src, 1.0, skyMask, skyT, smoothLuma);
     }
     if (uPreset == 5) {
         vec3 red720 = vec3(
@@ -235,24 +241,43 @@ void main() {
     vec2 r1 = vec2(0.016, 0.016);
     vec2 r2 = vec2(0.032, 0.032);
     vec2 r3 = vec2(0.050, 0.050);
-    vec3 blur = src;
-    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r1 * vec2(-1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 0.0,  1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r1 * vec2( 0.0, -1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r2 * vec2( 0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r2 * vec2(-0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r2 * vec2( 0.7, -0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r2 * vec2(-0.7, -0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-1.0,  0.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.0,  1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.0, -1.0)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-0.7,  0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2( 0.7, -0.7)).rgb;
-    blur += texture2D(uTexture, vTexCoord + r3 * vec2(-0.7, -0.7)).rgb;
-    blur *= 0.058824;
+    vec3 acc = src;
+    float wsum = 1.0;
+    vec3 tap;
+    float tw;
+    tap = texture2D(uTexture, vTexCoord + r1 * vec2( 1.0,  0.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r1 * vec2(-1.0,  0.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r1 * vec2( 0.0,  1.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r1 * vec2( 0.0, -1.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r2 * vec2( 0.7,  0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r2 * vec2(-0.7,  0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r2 * vec2( 0.7, -0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r2 * vec2(-0.7, -0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2( 1.0,  0.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2(-1.0,  0.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2( 0.0,  1.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2( 0.0, -1.0)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2( 0.7,  0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2(-0.7,  0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2( 0.7, -0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    tap = texture2D(uTexture, vTexCoord + r3 * vec2(-0.7, -0.7)).rgb;
+    tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
+    vec3 blur = acc / wsum;
 
     float bLuma = lumaOf(blur);
     float bMax = max(blur.r, max(blur.g, blur.b));
@@ -260,7 +285,7 @@ void main() {
     float bSat = (bMax - bMin) / max(bMax, 0.001);
 
     float skyT = clamp(dot(vTexCoord - vec2(0.5), uSkyUp) + 0.5, 0.0, 1.0);
-    float skyPrior = smoothstep(0.25, 0.55, skyT);
+    float skyPrior = smoothstep(0.18, 0.45, skyT);
 
     float blueSky = smoothstep(0.0, 0.10, blur.b - max(blur.r, blur.g * 0.97))
         * smoothstep(0.22, 0.45, bLuma);
@@ -282,7 +307,7 @@ void main() {
     skyMask = clamp(skyMask + hashNoise(pix0 * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
     // -----------------------------------------------------------------------
 
-    vec3 c = presetColor(src, skyMask, skyT);
+    vec3 c = presetColor(src, skyMask, skyT, bLuma);
 
     // exposure (digital gain, stops)
     c *= exp2(clamp(uExposure, -3.0, 3.0));
@@ -361,8 +386,10 @@ void main() {
         c = c.rbg;
     }
 
-    // sub-LSB dither: prevents 8-bit banding in smooth gradients
-    c += hashNoise(pix0 * 1.7 + vec2(uGrainSeed * 0.37)) * 0.004;
+    // sub-LSB dither: prevents 8-bit banding in smooth gradients; the sky
+    // gets a stronger decorrelated octave where ramps amplify source steps
+    c += hashNoise(pix0 * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
+    c += hashNoise(pix0 * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.010;
 
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
