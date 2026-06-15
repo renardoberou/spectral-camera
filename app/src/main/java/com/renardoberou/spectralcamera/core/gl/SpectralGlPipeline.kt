@@ -271,7 +271,11 @@ void main() {
     // down. A generous per-pixel gate then keeps the soft mask from bleeding
     // onto dark silhouettes (no matte lines on buildings or branches).
     float srcLuma = lumaOf(src);
+    // Resolution-normalized noise coordinate: grain/dither cells stay a
+    // constant FRACTION of the image regardless of capture size, so a 12MP
+    // print shows film-like grain rather than pixel-fine digital speckle.
     vec2 pix0 = vTexCoord / max(uTexelSize, vec2(0.00001));
+    vec2 grainUv = vTexCoord * 720.0;
 
     vec2 r1 = vec2(0.016, 0.016);
     vec2 r2 = vec2(0.032, 0.032);
@@ -324,22 +328,29 @@ void main() {
 
     float blueSky = smoothstep(0.0, 0.10, blur.b - max(blur.r, blur.g * 0.97))
         * smoothstep(0.22, 0.45, bLuma);
-    // saturation allowance widens with height: sunset glow near the horizon
-    // (yellow/green/orange) still counts as sky
+    // flat/overcast sky: bright + desaturated, but ONLY high in the frame.
+    // Bright desaturated skin highlights (forehead, nose) are NOT up there, so
+    // this no longer paints faces blue. Strong positional requirement.
+    float highInFrame = smoothstep(0.40, 0.70, skyT);
     float satHi = 0.26 + 0.34 * skyPrior;
     float flatSky = smoothstep(0.60, 0.78, bLuma)
-        * (1.0 - smoothstep(satHi - 0.14, satHi, bSat));
-    float skyMask = clamp(blueSky * (0.30 + 0.70 * skyPrior) + flatSky * skyPrior, 0.0, 1.0);
+        * (1.0 - smoothstep(satHi - 0.14, satHi, bSat))
+        * highInFrame;
+    float skyMask = clamp(blueSky * (0.30 + 0.70 * skyPrior) + flatSky, 0.0, 1.0);
     // saturate the mask inside the sky so partially-treated chalky fringes
     // cannot appear around clouds; the soft edge lives only at the horizon
     skyMask = smoothstep(0.12, 0.45, skyMask);
 
+    // Skin/warm guard: any pixel that is warm-toned (red >= green >= blue, the
+    // skin signature) is excluded from the sky mask outright. This is what
+    // removes the blue blotches on faces.
+    float warmSkin = smoothstep(0.0, 0.06, src.r - src.g) * smoothstep(-0.02, 0.06, src.g - src.b);
     float gate = max(
-        smoothstep(0.40, 0.62, srcLuma),
+        smoothstep(0.40, 0.62, srcLuma) * (1.0 - warmSkin),
         smoothstep(0.02, 0.10, src.b - max(src.r, src.g * 0.97)));
-    skyMask *= gate;
+    skyMask *= gate * (1.0 - warmSkin * 0.85);
     skyMask = clamp(skyMask * (1.0 + uSkySuppress * 0.8), 0.0, 1.0);
-    skyMask = clamp(skyMask + hashNoise(pix0 * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
+    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, skyMask, skyT, bLuma);
@@ -408,8 +419,7 @@ void main() {
 
     // film grain
     if (uGrain > 0.001) {
-        vec2 pix = vTexCoord / max(uTexelSize, vec2(0.00001));
-        c += hashNoise(pix * 0.73 + vec2(uGrainSeed)) * uGrain * 0.075;
+        c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * uGrain * 0.060;
     }
 
     // channel swap
@@ -423,8 +433,8 @@ void main() {
 
     // sub-LSB dither: prevents 8-bit banding in smooth gradients; the sky
     // gets a stronger decorrelated octave where ramps amplify source steps
-    c += hashNoise(pix0 * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
-    c += hashNoise(pix0 * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.010;
+    c += hashNoise(grainUv * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
+    c += hashNoise(grainUv * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.010;
 
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
@@ -543,7 +553,7 @@ class SpectralRenderer(
 
         val maxSize = IntArray(1)
         GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, maxSize, 0)
-        maxTextureSize = maxSize[0].coerceAtLeast(2048)
+        maxTextureSize = maxSize[0].coerceAtLeast(4096)
 
         oesProgram?.release()
         flatProgram?.release()
