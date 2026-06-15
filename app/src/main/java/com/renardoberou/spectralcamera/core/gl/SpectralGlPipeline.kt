@@ -132,31 +132,43 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     float mn = min(min(r, g), b);
     float sat = (mx - mn) / max(mx, 0.001);
     float notBlue = 1.0 - smoothstep(0.0, 0.22, b - max(r, g));
+    float blueness = smoothstep(0.02, 0.20, b - max(r, g * 0.95));
 
-    // vegetation/NIR proxy: greenness over blue, gated against true blue, with
-    // an extra lift for dark foliage (green leads red at low luma)
+    // NIR fires for GREEN-dominant pixels (foliage) and is suppressed on
+    // RED-dominant pixels (skin, red paint) - that gate is what keeps flesh
+    // from going red. Dark-foliage lift keeps shadowed canopy reading as veg.
+    float greenDom = smoothstep(-0.04, 0.10, g - r);
     float grn = smoothstep(-0.05, 0.20, g - b);
-    float veg = clamp(grn * notBlue, 0.0, 1.0);
-    float darkLeaf = smoothstep(0.0, 0.12, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * notBlue;
-    veg = clamp(veg + darkLeaf * 0.6, 0.0, 1.0);
-    float nir = clamp(veg * 0.95 + luma * 0.30 * notBlue, 0.0, 1.0);
+    float veg = clamp(grn * notBlue * greenDom, 0.0, 1.0);
+    float darkLeaf = smoothstep(0.0, 0.10, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * notBlue;
+    veg = clamp(veg + darkLeaf * 0.5, 0.0, 1.0);
+    float nir = clamp(veg * 0.98 + luma * 0.25 * notBlue * greenDom, 0.0, 1.0);
 
     float skyness = smoothstep(0.02, 0.22, b - max(r, g * 0.95));
 
-    // EIR channel remap (blue killed by the yellow filter)
-    vec3 ir;
-    ir.r = clamp(nir * 1.05, 0.0, 1.0);
-    ir.g = clamp(r * 0.75 + nir * 0.20, 0.0, 1.0);
-    ir.b = clamp(g * 0.70, 0.0, 1.0);
+    // Two-endpoint EIR remap (swatch-validated against Kodak's datasheet):
+    //  - FOLIAGE path (high NIR): deep crimson/magenta-red, the film's hero hue
+    //  - NON-FOLIAGE path (low NIR): warm subjects -> sallow YELLOW (flesh, lips
+    //    render yellow on real EIR); blue subjects suppressed here and recoloured
+    //    by the dedicated sky ramp downstream so the sky stays dark, not purple.
+    vec3 crimson = vec3(clamp(nir * 1.08, 0.0, 1.0),
+                        clamp(nir * 0.10, 0.0, 1.0),
+                        clamp(nir * 0.16, 0.0, 1.0));
+    float warmth = max(r, g);
+    vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
+                     clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
+                     clamp(b * 0.85, 0.0, 1.0));
+    base *= (1.0 - blueness * 0.85);
+    vec3 ir = mix(base, crimson, veg);
 
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
-    ir.g = clamp(ir.g + gold * veg * 0.12, 0.0, 1.0);
+    ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
     ir.b = clamp(ir.b - gold * 0.05, 0.0, 1.0);
 
     // neutral preservation: keep genuinely grey, bright-ish subjects (walls,
-    // clouds, concrete) pale-neutral instead of tinting them teal
-    float greyBright = (1.0 - smoothstep(0.04, 0.16, sat)) * smoothstep(0.30, 0.65, luma);
-    ir = mix(ir, vec3(luma), greyBright * 0.80);
+    // clouds, concrete) pale-neutral instead of tinting them
+    float greyBright = (1.0 - smoothstep(0.05, 0.17, sat)) * smoothstep(0.30, 0.65, luma);
+    ir = mix(ir, vec3(luma), greyBright * 0.82);
 
     // slide-film S-curve: crushed toe, rolled shoulder
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
@@ -164,7 +176,7 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
 
     // baked-in reversal-film saturation
     float il = lumaOf(ir);
-    ir = clamp(vec3(il) + (ir - vec3(il)) * 1.22, 0.0, 1.0);
+    ir = clamp(vec3(il) + (ir - vec3(il)) * 1.18, 0.0, 1.0);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
