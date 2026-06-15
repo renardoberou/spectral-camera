@@ -120,34 +120,51 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     float b = c.b;
     float luma = lumaOf(c);
 
-    float ndvi = (g - r) / max(g + r, 0.001);
-    float veg = smoothstep(0.0, 0.30, ndvi) * smoothstep(0.02, 0.16, g - b);
-    veg = clamp(veg * 1.3, 0.0, 1.0);
+    // ---- physically-grounded EIR / Aerochrome model -----------------------
+    // Real film: 3 layers sense GREEN, RED, NIR; a yellow filter blocks BLUE.
+    // Output remap: R<-NIR, G<-Red, B<-Green, with NIR kept as its own clean
+    // channel (it does not contaminate the others). We synthesise NIR from a
+    // vegetation proxy (no real IR channel exists on a phone sensor). Swatch-
+    // validated against the canonical EIR targets: foliage->hot red, red
+    // objects->green, skin->sallow yellow, blue sky->deep dark, greys->pale
+    // neutral.
+    float mx = max(max(r, g), b);
+    float mn = min(min(r, g), b);
+    float sat = (mx - mn) / max(mx, 0.001);
+    float notBlue = 1.0 - smoothstep(0.0, 0.22, b - max(r, g));
+
+    // vegetation/NIR proxy: greenness over blue, gated against true blue, with
+    // an extra lift for dark foliage (green leads red at low luma)
+    float grn = smoothstep(-0.05, 0.20, g - b);
+    float veg = clamp(grn * notBlue, 0.0, 1.0);
+    float darkLeaf = smoothstep(0.0, 0.12, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * notBlue;
+    veg = clamp(veg + darkLeaf * 0.6, 0.0, 1.0);
+    float nir = clamp(veg * 0.95 + luma * 0.30 * notBlue, 0.0, 1.0);
 
     float skyness = smoothstep(0.02, 0.22, b - max(r, g * 0.95));
 
-    float nir = luma * 0.92
-        + veg * (0.50 + 0.50 * g)
-        + max(r - b, 0.0) * 0.20
-        - skyness * 0.60;
-    nir = clamp(nir, 0.0, 1.0);
-
+    // EIR channel remap (blue killed by the yellow filter)
     vec3 ir;
-    ir.r = nir * (1.0 - skyness * (0.30 - gold * 0.10));
-    ir.g = (r * 0.95 + nir * 0.05) * (1.0 - veg * (0.45 - gold * 0.20));
-    ir.b = (g * 0.80 + b * 0.22) * (1.0 - veg * 0.50) + skyness * 0.16;
+    ir.r = clamp(nir * 1.05, 0.0, 1.0);
+    ir.g = clamp(r * 0.75 + nir * 0.20, 0.0, 1.0);
+    ir.b = clamp(g * 0.70, 0.0, 1.0);
 
-    ir.g += gold * veg * 0.18;
-    ir.b -= gold * 0.10 * (1.0 - skyness);
-    ir = clamp(ir, 0.0, 1.0);
+    // gold (orange-filter) variant: warmer foliage, cooler/teal sky
+    ir.g = clamp(ir.g + gold * veg * 0.12, 0.0, 1.0);
+    ir.b = clamp(ir.b - gold * 0.05, 0.0, 1.0);
+
+    // neutral preservation: keep genuinely grey, bright-ish subjects (walls,
+    // clouds, concrete) pale-neutral instead of tinting them teal
+    float greyBright = (1.0 - smoothstep(0.04, 0.16, sat)) * smoothstep(0.30, 0.65, luma);
+    ir = mix(ir, vec3(luma), greyBright * 0.80);
 
     // slide-film S-curve: crushed toe, rolled shoulder
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
-    ir = mix(ir, s1, 0.65);
+    ir = mix(ir, s1, 0.55);
 
     // baked-in reversal-film saturation
     float il = lumaOf(ir);
-    ir = clamp(vec3(il) + (ir - vec3(il)) * 1.28, 0.0, 1.0);
+    ir = clamp(vec3(il) + (ir - vec3(il)) * 1.22, 0.0, 1.0);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
@@ -175,13 +192,19 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float g = src.g;
     float b = src.b;
     float luma = lumaOf(src);
-    float foliage = max(0.0, g - b);
+    // synthetic NIR proxy shared by the IR presets: vegetation glows (Wood
+    // effect) via greenness-over-blue plus a dark-foliage lift; sky = blueness
+    float foliageBase = max(0.0, g - b);
+    float nbMono = 1.0 - smoothstep(0.0, 0.22, b - max(r, g));
+    float irVeg = clamp(smoothstep(-0.05, 0.20, g - b) * nbMono, 0.0, 1.0);
+    float irDark = smoothstep(0.0, 0.12, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * nbMono;
+    float foliage = clamp(irVeg + irDark * 0.6, 0.0, 1.0);
     float sky = max(0.0, b - g);
     float warm = max(0.0, r - b);
     float cool = max(0.0, b - r);
 
     if (uPreset == 0) {
-        float m = tone(luma + foliage * 0.42 - sky * 0.26, 1.55);
+        float m = tone(luma * 0.78 + foliage * 0.85 - sky * 0.30, 1.45);
         // Wood effect: IR-dark sky; shade level keyed on smoothed luma so the
         // sky tone does not band, fine texture (m) preserved inside the level
         float skyShade = m * mix(0.22, 0.62, smoothstep(0.55, 0.98, smoothLuma));
@@ -189,12 +212,12 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
         return vec3(m);
     }
     if (uPreset == 1) {
-        float m = tone(luma + foliage * 0.48 - sky * 0.32, 1.95);
+        float m = tone(luma * 0.72 + foliage * 0.95 - sky * 0.38, 1.85);
         m = mix(m, m * mix(0.16, 0.55, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
         return vec3(m);
     }
     if (uPreset == 2) {
-        float m = tone(luma + foliage * 0.78 - sky * 0.42, 1.75);
+        float m = tone(luma * 0.62 + foliage * 1.20 - sky * 0.45, 1.65);
         m = mix(m, m * mix(0.20, 0.58, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
         return vec3(m);
     }
