@@ -262,8 +262,11 @@ class CameraController(context: Context) {
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
+                        // Ask for the sensor's full-resolution mode (50MP class on
+                        // the Edge 60 Fusion). If the HAL only exposes the binned
+                        // 12.5MP stream, the fallback rule picks that gracefully.
                         ResolutionStrategy(
-                            Size(4000, 3000),
+                            Size(8160, 6144),
                             ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                         ),
                     )

@@ -128,9 +128,6 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     // validated against the canonical EIR targets: foliage->hot red, red
     // objects->green, skin->sallow yellow, blue sky->deep dark, greys->pale
     // neutral.
-    float mx = max(max(r, g), b);
-    float mn = min(min(r, g), b);
-    float sat = (mx - mn) / max(mx, 0.001);
 
     // NIR fires for GREEN-dominant pixels (foliage) and is suppressed on
     // RED-dominant pixels (skin, red paint) - that gate is what keeps flesh
@@ -149,32 +146,42 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     float grn = smoothstep(-0.01, 0.08, ng - nb);
     float notBlueC = 1.0 - smoothstep(0.0, 0.06, nb - max(nr, ng));
     float veg = clamp(grn * notBlueC * greenDom, 0.0, 1.0);
-    float blueC = smoothstep(0.015, 0.09, nb - max(nr, ng));
 
-    // ---- hue-locked endpoints: exposure sets brightness, never hue --------
-    // Real film keeps its colour into shadow (IR reflectance is a material
-    // property). Foliage is crimson at any brightness; water is deep blue with
-    // ZERO red at any brightness (this is what kills the purple pool).
-    float folBright = clamp(luma * 1.9 + 0.12, 0.0, 1.0);
-    vec3 crimson = vec3(1.0, 0.09, 0.15) * folBright;
-    float blueBright = clamp(luma * 1.6 + 0.12, 0.0, 1.0);
+    // Blue requires STRONG chromaticity (daylight shadows on white walls are
+    // weakly blue and must NOT light up), and dim blues stay dark - real EIR
+    // renders blue dark. Cyan (high g+b, low r) routes to blue as well, which
+    // is what the film's yellow filter does and what kills the pink-pool bug.
+    float blueC = smoothstep(0.035, 0.10, nb - max(nr, ng));
+    float cyanC = smoothstep(0.02, 0.08, min(ng, nb) - nr);
+    float blueMix = clamp(blueC + cyanC * 0.8, 0.0, 1.0);
+    float blueBright = clamp(luma * 1.35 + 0.02, 0.0, 1.0) * smoothstep(0.10, 0.35, luma);
     vec3 blueOut = vec3(0.03, 0.16, 0.85) * blueBright;
 
-    float warmth = max(r, g);
+    // Foliage: soft film shoulder instead of a hard clip - sunlit leaves roll
+    // off toward pink-white exactly like overexposed Aerochrome, so highlight
+    // detail survives instead of flattening into solid max-red.
+    float folBright = 1.0 - exp(-luma * 3.2);
+    float hiRoll = smoothstep(0.55, 0.95, luma) * 0.55;
+    vec3 folCol = mix(vec3(1.0, 0.09, 0.15), vec3(1.0, 0.60, 0.64), hiRoll) * folBright;
+
+    // warmth requires actual RED participation (cyan can no longer read warm)
+    float warmth = clamp(r * 0.72 + max(r, g) * 0.28, 0.0, 1.0);
     vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
-    vec3 ir = mix(base, crimson, veg);
-    ir = mix(ir, blueOut, blueC * (1.0 - veg));
+    vec3 ir = mix(base, folCol, veg);
+    ir = mix(ir, blueOut, blueMix * (1.0 - veg));
 
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
     ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
     ir.b = clamp(ir.b - gold * 0.05, 0.0, 1.0);
 
-    // neutral preservation: keep genuinely grey, bright-ish subjects (walls,
-    // clouds, concrete) pale-neutral instead of tinting them
-    float greyBright = (1.0 - smoothstep(0.05, 0.17, sat)) * smoothstep(0.30, 0.65, luma);
-    ir = mix(ir, vec3(luma), greyBright * 0.82);
+    // neutral preservation on CHROMATICITY: slightly-warm sunlit grey still
+    // counts as grey and renders the film's pale cream instead of hard yellow
+    float chromaDist = max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333));
+    float greyC = (1.0 - smoothstep(0.020, 0.075, chromaDist)) * smoothstep(0.25, 0.60, luma);
+    vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
+    ir = mix(ir, cream, greyC * 0.85);
 
     // slide-film S-curve: crushed toe, rolled shoulder
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
