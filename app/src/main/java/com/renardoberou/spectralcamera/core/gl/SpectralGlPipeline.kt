@@ -131,35 +131,41 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     float mx = max(max(r, g), b);
     float mn = min(min(r, g), b);
     float sat = (mx - mn) / max(mx, 0.001);
-    float notBlue = 1.0 - smoothstep(0.0, 0.22, b - max(r, g));
-    float blueness = smoothstep(0.02, 0.20, b - max(r, g * 0.95));
 
     // NIR fires for GREEN-dominant pixels (foliage) and is suppressed on
     // RED-dominant pixels (skin, red paint) - that gate is what keeps flesh
     // from going red. Dark-foliage lift keeps shadowed canopy reading as veg.
-    float greenDom = smoothstep(-0.04, 0.10, g - r);
-    float grn = smoothstep(-0.05, 0.20, g - b);
-    float veg = clamp(grn * notBlue * greenDom, 0.0, 1.0);
-    float darkLeaf = smoothstep(0.0, 0.10, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * notBlue;
-    veg = clamp(veg + darkLeaf * 0.5, 0.0, 1.0);
-    float nir = clamp(veg * 0.98 + luma * 0.25 * notBlue * greenDom, 0.0, 1.0);
+    // ---- exposure-invariant classification via chromaticity ---------------
+    // Raw channel differences shrink as exposure drops, which made shadowed
+    // foliage go muddy brown and let red leak into blue water (purple pools).
+    // Chromaticity (each channel's share of r+g+b) is invariant to exposure,
+    // so a leaf classifies as a leaf whether sunlit or in shadow.
+    float total = r + g + b + 0.001;
+    float nr = r / total;
+    float ng = g / total;
+    float nb = b / total;
 
-    float skyness = smoothstep(0.02, 0.22, b - max(r, g * 0.95));
+    float greenDom = smoothstep(0.0, 0.05, ng - nr);
+    float grn = smoothstep(-0.01, 0.08, ng - nb);
+    float notBlueC = 1.0 - smoothstep(0.0, 0.06, nb - max(nr, ng));
+    float veg = clamp(grn * notBlueC * greenDom, 0.0, 1.0);
+    float blueC = smoothstep(0.015, 0.09, nb - max(nr, ng));
 
-    // Two-endpoint EIR remap (swatch-validated against Kodak's datasheet):
-    //  - FOLIAGE path (high NIR): deep crimson/magenta-red, the film's hero hue
-    //  - NON-FOLIAGE path (low NIR): warm subjects -> sallow YELLOW (flesh, lips
-    //    render yellow on real EIR); blue subjects suppressed here and recoloured
-    //    by the dedicated sky ramp downstream so the sky stays dark, not purple.
-    vec3 crimson = vec3(clamp(nir * 1.08, 0.0, 1.0),
-                        clamp(nir * 0.10, 0.0, 1.0),
-                        clamp(nir * 0.16, 0.0, 1.0));
+    // ---- hue-locked endpoints: exposure sets brightness, never hue --------
+    // Real film keeps its colour into shadow (IR reflectance is a material
+    // property). Foliage is crimson at any brightness; water is deep blue with
+    // ZERO red at any brightness (this is what kills the purple pool).
+    float folBright = clamp(luma * 1.9 + 0.12, 0.0, 1.0);
+    vec3 crimson = vec3(1.0, 0.09, 0.15) * folBright;
+    float blueBright = clamp(luma * 1.6 + 0.12, 0.0, 1.0);
+    vec3 blueOut = vec3(0.03, 0.16, 0.85) * blueBright;
+
     float warmth = max(r, g);
     vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
-    base *= (1.0 - blueness * 0.85);
     vec3 ir = mix(base, crimson, veg);
+    ir = mix(ir, blueOut, blueC * (1.0 - veg));
 
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
     ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
