@@ -147,15 +147,21 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     float notBlueC = 1.0 - smoothstep(0.0, 0.06, nb - max(nr, ng));
     float veg = clamp(grn * notBlueC * greenDom, 0.0, 1.0);
 
-    // Blue requires STRONG chromaticity (daylight shadows on white walls are
-    // weakly blue and must NOT light up), and dim blues stay dark - real EIR
-    // renders blue dark. Cyan (high g+b, low r) routes to blue as well, which
-    // is what the film's yellow filter does and what kills the pink-pool bug.
-    float blueC = smoothstep(0.035, 0.10, nb - max(nr, ng));
-    float cyanC = smoothstep(0.02, 0.08, min(ng, nb) - nr);
-    float blueMix = clamp(blueC + cyanC * 0.8, 0.0, 1.0);
+    // Water/glass is CYAN-LEANING blue (green share well above red) and keeps
+    // the vivid indigo rendering. Skylight-lit shadow on walls is NEUTRAL-
+    // leaning blue and goes DARK - which is what the film's yellow filter
+    // actually does to blue light. This split removes the blue wash on shaded
+    // building faces without touching the pool.
+    float blueC = smoothstep(0.030, 0.10, nb - max(nr, ng));
+    float waterC = smoothstep(0.05, 0.14, ng - nr) * smoothstep(0.02, 0.08, nb - nr);
+    float cyanC = smoothstep(0.025, 0.09, min(ng, nb) - nr);
+    float vividBlue = clamp(waterC * max(blueC, smoothstep(0.02, 0.08, nb - nr)) + cyanC * 0.6, 0.0, 1.0);
+    float plainBlue = clamp(blueC * (1.0 - waterC), 0.0, 1.0);
     float blueBright = clamp(luma * 1.35 + 0.02, 0.0, 1.0) * smoothstep(0.10, 0.35, luma);
-    vec3 blueOut = vec3(0.03, 0.16, 0.85) * blueBright;
+    // bright sky-gaps through the canopy render pale sky-blue, not cobalt blobs
+    float paleGap = smoothstep(0.55, 0.85, luma) * 0.5;
+    vec3 blueHue = mix(vec3(0.03, 0.08 + ng * 0.35, 0.85), vec3(0.42, 0.58, 0.95), paleGap);
+    vec3 blueOut = blueHue * blueBright;
 
     // Foliage: soft film shoulder instead of a hard clip - sunlit leaves roll
     // off toward pink-white exactly like overexposed Aerochrome, so highlight
@@ -170,7 +176,10 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
     vec3 ir = mix(base, folCol, veg);
-    ir = mix(ir, blueOut, blueMix * (1.0 - veg));
+    ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - veg));
+    // skylight shadow: film-correct darkening, faintly cool
+    vec3 shadowCol = vec3(luma * 0.55, luma * 0.58, luma * 0.72);
+    ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue));
 
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
     ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
@@ -219,11 +228,18 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float luma = lumaOf(src);
     // synthetic NIR proxy shared by the IR presets: vegetation glows (Wood
     // effect) via greenness-over-blue plus a dark-foliage lift; sky = blueness
-    float foliageBase = max(0.0, g - b);
-    float nbMono = 1.0 - smoothstep(0.0, 0.22, b - max(r, g));
-    float irVeg = clamp(smoothstep(-0.05, 0.20, g - b) * nbMono, 0.0, 1.0);
-    float irDark = smoothstep(0.0, 0.12, g - r) * (1.0 - smoothstep(0.0, 0.35, luma)) * nbMono;
-    float foliage = clamp(irVeg + irDark * 0.6, 0.0, 1.0);
+    // B&W IR model, separate from Aerochrome: exposure-invariant chromaticity
+    // vegetation drives the Wood-effect glow, so foliage classifies the same
+    // in sun or shadow (no more muddy shaded canopy in the mono presets).
+    float totM = r + g + b + 0.001;
+    float nrM = r / totM;
+    float ngM = g / totM;
+    float nbM = b / totM;
+    float foliage = clamp(
+        smoothstep(-0.01, 0.08, ngM - nbM)
+            * smoothstep(0.0, 0.05, ngM - nrM)
+            * (1.0 - smoothstep(0.0, 0.06, nbM - max(nrM, ngM))),
+        0.0, 1.0);
     float sky = max(0.0, b - g);
     float warm = max(0.0, r - b);
     float cool = max(0.0, b - r);
