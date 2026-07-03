@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
@@ -155,15 +157,26 @@ fun LiveCameraScreen(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
                         shape = MaterialTheme.shapes.large,
                     ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text("Exposure compensation", style = MaterialTheme.typography.labelLarge)
-                            Slider(
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val stopOptions = listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f)
+                                .filter { it >= capabilities.minStops - 0.01f && it <= capabilities.maxStops + 0.01f }
+                                .map { formatStops(it) to it }
+                            SteppedControl(
+                                label = "Exposure compensation (stops)",
+                                options = stopOptions,
                                 value = settings.hardwareEv,
-                                onValueChange = { value ->
-                                    viewModel.setHardwareEv(value)
-                                    cameraController.setExposureCompensation(value.roundToInt())
+                            ) { stops ->
+                                viewModel.setHardwareEv(stops)
+                                cameraController.setExposureCompensation(capabilities.stopsToIndex(stops))
+                            }
+                            Text(
+                                buildString {
+                                    append("ISO auto")
+                                    capabilities.aperture?.let { append("  ·  f/" + String.format("%.1f", it)) }
+                                    append("  ·  fixed lens")
                                 },
-                                valueRange = capabilities.exposureRange.first.toFloat()..capabilities.exposureRange.last.toFloat(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary,
                             )
                         }
                     }
@@ -351,18 +364,18 @@ private fun AdjustmentsSheet(
             style = MaterialTheme.typography.bodySmall,
         )
 
-        AdjustmentSlider("Contrast", current.contrast, 0.5f..2.0f) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
-        AdjustmentSlider("Digital exposure", current.exposureCompensation, -2f..2f) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
-        AdjustmentSlider("Blacks", current.blacks, -1f..1f) { value -> onAdjustmentsChange(current.copy(blacks = value)) }
-        AdjustmentSlider("Whites", current.whites, -1f..1f) { value -> onAdjustmentsChange(current.copy(whites = value)) }
-        AdjustmentSlider("Bloom", current.bloom, 0f..1.2f) { value -> onAdjustmentsChange(current.copy(bloom = value)) }
-        AdjustmentSlider("Grain", current.grain, 0f..1f) { value -> onAdjustmentsChange(current.copy(grain = value)) }
-        AdjustmentSlider("Sharpness", current.sharpness, 0f..1.5f) { value -> onAdjustmentsChange(current.copy(sharpness = value)) }
-        AdjustmentSlider("Red channel weight", current.redChannelWeight, 0.5f..2.2f) { value -> onAdjustmentsChange(current.copy(redChannelWeight = value)) }
-        AdjustmentSlider("Green foliage lift", current.greenFoliageLift, 0f..1f) { value -> onAdjustmentsChange(current.copy(greenFoliageLift = value)) }
-        AdjustmentSlider("Blue sky suppression", current.blueSkySuppression, 0f..1f) { value -> onAdjustmentsChange(current.copy(blueSkySuppression = value)) }
-        AdjustmentSlider("Hue rotation", current.hueRotation, -180f..180f) { value -> onAdjustmentsChange(current.copy(hueRotation = value)) }
-        AdjustmentSlider("Saturation", current.saturation, 0f..2f) { value -> onAdjustmentsChange(current.copy(saturation = value)) }
+        SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
+        SteppedControl("Digital exposure (stops)", listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f).map { formatStops(it) to it }, current.exposureCompensation) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
+        SteppedControl("Blacks", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.blacks) { value -> onAdjustmentsChange(current.copy(blacks = value)) }
+        SteppedControl("Whites", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.whites) { value -> onAdjustmentsChange(current.copy(whites = value)) }
+        SteppedControl("Bloom", listOf("Off" to 0f, "Low" to 0.3f, "Medium" to 0.6f, "High" to 1.0f), current.bloom) { value -> onAdjustmentsChange(current.copy(bloom = value)) }
+        SteppedControl("Film grain", listOf("Off" to 0f, "Fine" to 0.25f, "Medium" to 0.5f, "Coarse" to 0.85f), current.grain) { value -> onAdjustmentsChange(current.copy(grain = value)) }
+        SteppedControl("Sharpness", listOf("Off" to 0f, "Low" to 0.4f, "Medium" to 0.8f, "High" to 1.2f), current.sharpness) { value -> onAdjustmentsChange(current.copy(sharpness = value)) }
+        SteppedControl("Red channel weight", listOf("Low" to 0.7f, "Normal" to 1.0f, "High" to 1.5f, "Max" to 2.0f), current.redChannelWeight) { value -> onAdjustmentsChange(current.copy(redChannelWeight = value)) }
+        SteppedControl("Green foliage lift", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.greenFoliageLift) { value -> onAdjustmentsChange(current.copy(greenFoliageLift = value)) }
+        SteppedControl("Blue sky suppression", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.blueSkySuppression) { value -> onAdjustmentsChange(current.copy(blueSkySuppression = value)) }
+        SteppedControl("Hue rotation", listOf("-90\u00b0" to -90f, "-45\u00b0" to -45f, "-15\u00b0" to -15f, "0\u00b0" to 0f, "+15\u00b0" to 15f, "+45\u00b0" to 45f, "+90\u00b0" to 90f), current.hueRotation) { value -> onAdjustmentsChange(current.copy(hueRotation = value)) }
+        SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation) { value -> onAdjustmentsChange(current.copy(saturation = value)) }
 
         Text("RGB channel swap", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -397,17 +410,38 @@ private fun AdjustmentsSheet(
 }
 
 @Composable
-private fun AdjustmentSlider(
+private fun SteppedControl(
     label: String,
+    options: List<Pair<String, Float>>,
     value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onChange: (Float) -> Unit,
+    onSelect: (Float) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.labelLarge)
-            Text(String.format("%.2f", value), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val nearest = options.minByOrNull { abs(it.second - value) }?.second
+            options.forEach { option ->
+                FilterChip(
+                    selected = option.second == nearest,
+                    onClick = { onSelect(option.second) },
+                    label = { Text(option.first) },
+                )
+            }
         }
-        Slider(value = value, onValueChange = onChange, valueRange = range)
+    }
+}
+
+private fun formatStops(stops: Float): String {
+    if (stops == 0f) return "0"
+    val sign = if (stops > 0f) "+" else ""
+    return if (stops == stops.toInt().toFloat()) {
+        sign + stops.toInt()
+    } else {
+        sign + String.format("%.1f", stops)
     }
 }

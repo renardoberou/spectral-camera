@@ -89,7 +89,19 @@ data class CameraCapabilities(
     val exposureRange: IntRange,
     val exposureStep: Float,
     val zoomRange: ClosedFloatingPointRange<Float>,
+    /** Fixed lens aperture (phones have no iris), for display only. */
+    val aperture: Float? = null,
+    /** Sensor ISO range, for display; exposure remains metered (auto ISO). */
+    val isoRange: IntRange? = null,
 ) {
+    val minStops: Float get() = exposureRange.first * safeStep
+    val maxStops: Float get() = exposureRange.last * safeStep
+    private val safeStep: Float get() = if (exposureStep > 0f) exposureStep else 1f / 3f
+
+    /** Converts photographic stops to the camera's exposure compensation index. */
+    fun stopsToIndex(stops: Float): Int =
+        Math.round(stops / safeStep).coerceIn(exposureRange.first, exposureRange.last)
+
     val exposureSupported: Boolean get() = exposureRange.first != exposureRange.last
 }
 

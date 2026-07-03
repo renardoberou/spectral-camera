@@ -91,7 +91,9 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
 
         // Hardware exposure compensation lives on the camera itself.
         LaunchedEffect(capabilities, settings.hardwareEv) {
-            cameraController.setExposureCompensation(settings.hardwareEv.roundToInt())
+            val index = capabilities?.stopsToIndex(settings.hardwareEv)
+                ?: settings.hardwareEv.roundToInt()
+            cameraController.setExposureCompensation(index)
         }
 
         // GLSurfaceView needs explicit pause/resume to keep its render thread healthy.

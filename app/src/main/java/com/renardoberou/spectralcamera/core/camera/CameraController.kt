@@ -18,6 +18,9 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
+import android.hardware.camera2.CameraCharacteristics
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -328,18 +331,42 @@ class CameraController(context: Context) {
                 }
             }
 
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private fun updateCapabilities() {
         val camera = camera ?: return
         val info = camera.cameraInfo
         val exposureRange = info.exposureState.exposureCompensationRange
+        // The camera reports its true EV step (usually 1/3 or 1/6 stop); this was
+        // previously hardcoded to 1f, so the EV control was never calibrated.
+        val stepRational = info.exposureState.exposureCompensationStep
+        val exposureStep = if (stepRational.denominator != 0) {
+            stepRational.numerator.toFloat() / stepRational.denominator.toFloat()
+        } else {
+            1f / 3f
+        }
         val zoomState = info.zoomState.value
+        var aperture: Float? = null
+        var isoRange: IntRange? = null
+        try {
+            val camera2Info = Camera2CameraInfo.from(info)
+            aperture = camera2Info
+                .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
+                ?.firstOrNull()
+            val iso = camera2Info
+                .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            if (iso != null) isoRange = iso.lower..iso.upper
+        } catch (t: Exception) {
+            // interop is best-effort; display-only data
+        }
         onCapabilities?.invoke(
             CameraCapabilities(
                 hasFlash = info.hasFlashUnit(),
                 canFocus = true,
                 exposureRange = exposureRange.lower..exposureRange.upper,
-                exposureStep = 1f,
+                exposureStep = exposureStep,
                 zoomRange = 1f..(zoomState?.maxZoomRatio ?: 1f),
+                aperture = aperture,
+                isoRange = isoRange,
             ),
         )
     }
