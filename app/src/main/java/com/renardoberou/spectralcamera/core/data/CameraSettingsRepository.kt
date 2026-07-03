@@ -41,7 +41,13 @@ class CameraSettingsRepository(context: Context) {
             saveOriginal = prefs[SAVE_ORIGINAL] ?: false,
             frontFacing = prefs[FRONT_FACING] ?: false,
             sensorMode = SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name),
-            hardwareEv = prefs[HARDWARE_EV] ?: 0f,
+            // Migration guard: hardwareEv was stored as a raw camera index before
+            // v1.6.0 and is stops now. A magnitude beyond 2 is clearly a legacy
+            // index and would pin the camera at max EV (chronic overexposure) -
+            // reset it; otherwise clamp to the photographic range.
+            hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
+                if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
+            },
         )
     }
 
