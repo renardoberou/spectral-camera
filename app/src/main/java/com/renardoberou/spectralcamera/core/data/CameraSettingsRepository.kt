@@ -48,6 +48,9 @@ class CameraSettingsRepository(context: Context) {
             hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
                 if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
             },
+            manualMode = prefs[MANUAL_MODE] ?: false,
+            manualIso = prefs[MANUAL_ISO] ?: 400,
+            manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
         )
     }
 
@@ -71,6 +74,9 @@ class CameraSettingsRepository(context: Context) {
             prefs[FRONT_FACING] = settings.frontFacing
             prefs[SENSOR_MODE] = settings.sensorMode.name
             prefs[HARDWARE_EV] = settings.hardwareEv
+            prefs[MANUAL_MODE] = settings.manualMode
+            prefs[MANUAL_ISO] = settings.manualIso
+            prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
         }
     }
 
@@ -93,5 +99,8 @@ class CameraSettingsRepository(context: Context) {
         val FRONT_FACING = booleanPreferencesKey("front_facing")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
+        val MANUAL_MODE = booleanPreferencesKey("manual_mode")
+        val MANUAL_ISO = intPreferencesKey("manual_iso")
+        val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
     }
 }

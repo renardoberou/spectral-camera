@@ -19,7 +19,11 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -163,6 +167,31 @@ class CameraController(context: Context) {
 
     fun setExposureCompensation(index: Int) {
         camera?.cameraControl?.setExposureCompensationIndex(index)
+    }
+
+    /**
+     * Full-manual exposure via Camera2 interop: AE off, sensor sensitivity (ISO)
+     * and exposure time set directly on the repeating request, so the live GPU
+     * preview shows exactly what will be captured. Disabling clears the options
+     * and returns the session to metered auto-exposure.
+     */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    fun setManualExposure(enabled: Boolean, iso: Int, shutterNs: Long) {
+        val control = camera?.cameraControl ?: return
+        val camera2 = Camera2CameraControl.from(control)
+        if (!enabled) {
+            camera2.clearCaptureRequestOptions()
+            return
+        }
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CameraMetadata.CONTROL_AE_MODE_OFF,
+            )
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
+            .build()
+        camera2.setCaptureRequestOptions(options)
     }
 
     fun setAnalysisEnabled(enabled: Boolean) {
@@ -347,6 +376,8 @@ class CameraController(context: Context) {
         val zoomState = info.zoomState.value
         var aperture: Float? = null
         var isoRange: IntRange? = null
+        var exposureTimeRange: LongRange? = null
+        var manualExposureSupported = false
         try {
             val camera2Info = Camera2CameraInfo.from(info)
             aperture = camera2Info
@@ -355,6 +386,14 @@ class CameraController(context: Context) {
             val iso = camera2Info
                 .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
             if (iso != null) isoRange = iso.lower..iso.upper
+            val expTime = camera2Info
+                .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            if (expTime != null) exposureTimeRange = expTime.lower..expTime.upper
+            val caps = camera2Info
+                .getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            manualExposureSupported = caps?.contains(
+                CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR,
+            ) == true
         } catch (t: Exception) {
             // interop is best-effort; display-only data
         }
@@ -367,6 +406,8 @@ class CameraController(context: Context) {
                 zoomRange = 1f..(zoomState?.maxZoomRatio ?: 1f),
                 aperture = aperture,
                 isoRange = isoRange,
+                exposureTimeRange = exposureTimeRange,
+                manualExposureSupported = manualExposureSupported,
             ),
         )
     }

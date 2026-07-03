@@ -158,22 +158,60 @@ fun LiveCameraScreen(
                         shape = MaterialTheme.shapes.large,
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            val stopOptions = listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f)
-                                .filter { it >= capabilities.minStops - 0.01f && it <= capabilities.maxStops + 0.01f }
-                                .map { formatStops(it) to it }
-                            SteppedControl(
-                                label = "Exposure compensation (stops)",
-                                options = stopOptions,
-                                value = settings.hardwareEv,
-                            ) { stops ->
-                                viewModel.setHardwareEv(stops)
-                                cameraController.setExposureCompensation(capabilities.stopsToIndex(stops))
+                            if (capabilities.manualExposureSupported) {
+                                SteppedControl(
+                                    label = "Exposure mode",
+                                    options = listOf("Auto" to 0f, "Manual" to 1f),
+                                    value = if (settings.manualMode) 1f else 0f,
+                                ) { mode -> viewModel.setManualMode(mode > 0.5f) }
+                            }
+                            if (settings.manualMode && capabilities.manualExposureSupported) {
+                                val isoOptions = listOf(100, 200, 400, 800, 1600, 3200)
+                                    .filter { iso ->
+                                        val range = capabilities.isoRange
+                                        range == null || (iso >= range.first && iso <= range.last)
+                                    }
+                                    .map { "ISO $it" to it.toFloat() }
+                                SteppedControl(
+                                    label = "ISO (AE off)",
+                                    options = isoOptions,
+                                    value = settings.manualIso.toFloat(),
+                                ) { iso -> viewModel.setManualIso(iso.toInt()) }
+                                val shutterOptions = listOf(
+                                    "1/4000" to 250_000L, "1/2000" to 500_000L, "1/1000" to 1_000_000L,
+                                    "1/500" to 2_000_000L, "1/250" to 4_000_000L, "1/125" to 8_000_000L,
+                                    "1/60" to 16_666_667L, "1/30" to 33_333_333L, "1/15" to 66_666_667L,
+                                    "1/8" to 125_000_000L,
+                                ).filter { pair ->
+                                    val range = capabilities.exposureTimeRange
+                                    range == null || (pair.second >= range.first && pair.second <= range.last)
+                                }
+                                ShutterControl(
+                                    options = shutterOptions,
+                                    valueNs = settings.manualShutterNs,
+                                ) { ns -> viewModel.setManualShutter(ns) }
+                            } else {
+                                val stopOptions = listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f)
+                                    .filter { it >= capabilities.minStops - 0.01f && it <= capabilities.maxStops + 0.01f }
+                                    .map { formatStops(it) to it }
+                                SteppedControl(
+                                    label = "Exposure compensation (stops)",
+                                    options = stopOptions,
+                                    value = settings.hardwareEv,
+                                ) { stops ->
+                                    viewModel.setHardwareEv(stops)
+                                    cameraController.setExposureCompensation(capabilities.stopsToIndex(stops))
+                                }
                             }
                             Text(
                                 buildString {
-                                    append("ISO auto")
-                                    capabilities.aperture?.let { append("  ·  f/" + String.format("%.1f", it)) }
-                                    append("  ·  fixed lens")
+                                    if (settings.manualMode && capabilities.manualExposureSupported) {
+                                        append("AE off \u00b7 manual sensor")
+                                    } else {
+                                        append("ISO auto")
+                                    }
+                                    capabilities.aperture?.let { append("  \u00b7  f/" + String.format("%.1f", it)) }
+                                    append("  \u00b7  fixed lens")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary,
@@ -428,6 +466,32 @@ private fun SteppedControl(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val nearest = options.minByOrNull { abs(it.second - value) }?.second
+            options.forEach { option ->
+                FilterChip(
+                    selected = option.second == nearest,
+                    onClick = { onSelect(option.second) },
+                    label = { Text(option.first) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShutterControl(
+    options: List<Pair<String, Long>>,
+    valueNs: Long,
+    onSelect: (Long) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Shutter (AE off)", style = MaterialTheme.typography.labelLarge)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val nearest = options.minByOrNull { abs(it.second - valueNs) }?.second
             options.forEach { option ->
                 FilterChip(
                     selected = option.second == nearest,

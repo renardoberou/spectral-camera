@@ -90,10 +90,26 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
         }
 
         // Hardware exposure compensation lives on the camera itself.
-        LaunchedEffect(capabilities, settings.hardwareEv) {
-            val index = capabilities?.stopsToIndex(settings.hardwareEv)
-                ?: settings.hardwareEv.roundToInt()
-            cameraController.setExposureCompensation(index)
+        LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
+            if (!settings.manualMode) {
+                val index = capabilities?.stopsToIndex(settings.hardwareEv)
+                    ?: settings.hardwareEv.roundToInt()
+                cameraController.setExposureCompensation(index)
+            }
+        }
+
+        // Full-manual exposure: applied to the live session (re-applied after
+        // every rebind because capabilities re-emits then).
+        LaunchedEffect(capabilities, settings.manualMode, settings.manualIso, settings.manualShutterNs) {
+            val iso = settings.manualIso.coerceIn(
+                capabilities?.isoRange?.first ?: 50,
+                capabilities?.isoRange?.last ?: 6400,
+            )
+            val shutter = settings.manualShutterNs.coerceIn(
+                capabilities?.exposureTimeRange?.first ?: 100_000L,
+                capabilities?.exposureTimeRange?.last ?: 125_000_000L,
+            )
+            cameraController.setManualExposure(settings.manualMode, iso, shutter)
         }
 
         // GLSurfaceView needs explicit pause/resume to keep its render thread healthy.

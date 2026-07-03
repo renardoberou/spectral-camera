@@ -79,8 +79,13 @@ data class CameraSettings(
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
-    /** Hardware exposure compensation index applied to the camera itself. */
+    /** Hardware exposure compensation, in photographic stops. */
     val hardwareEv: Float = 0f,
+    /** Full-manual exposure: AE off, ISO and shutter set directly. */
+    val manualMode: Boolean = false,
+    val manualIso: Int = 400,
+    /** Shutter time in nanoseconds (default 1/125s). */
+    val manualShutterNs: Long = 8_000_000L,
 )
 
 data class CameraCapabilities(
@@ -91,8 +96,12 @@ data class CameraCapabilities(
     val zoomRange: ClosedFloatingPointRange<Float>,
     /** Fixed lens aperture (phones have no iris), for display only. */
     val aperture: Float? = null,
-    /** Sensor ISO range, for display; exposure remains metered (auto ISO). */
+    /** Sensor ISO range (also the bounds for full-manual mode). */
     val isoRange: IntRange? = null,
+    /** Sensor exposure-time range in nanoseconds, for full-manual mode. */
+    val exposureTimeRange: LongRange? = null,
+    /** Whether the camera declares the MANUAL_SENSOR capability. */
+    val manualExposureSupported: Boolean = false,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
