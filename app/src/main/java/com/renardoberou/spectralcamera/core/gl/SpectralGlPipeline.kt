@@ -230,44 +230,78 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
 // grade: 0 = Rollei (restrained, anti-halation), 1 = HIE (deep, contrasty),
 // 2 = Ilford SFX (milder Wood effect).
 float irHDCurve(float e, float grade) {
-    float le = log2(max(e, 0.00001));
-    // Rollei S-curve; HIE shifts/steepens, SFX softens
-    float lo = mix(4.7, 4.3, step(0.5, grade) * (1.0 - step(1.5, grade)));
-    float span = mix(6.7, 6.1, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    // Aviphot Pan 200 / Rollei IR 400 characteristic curve, calibrated against
+    // Serger's densitometry (Zone I-X neg densities 0.07..1.27, DD-X 1+4) and
+    // validated on reference photos: soft compressed toe (Zone I-III sit low
+    // but separated), steep midsection, gently rolled Reinhard shoulder.
+    // Sunlit foliage lands ~0.82-0.85, sky ~0.01-0.15 with gradient, and the
+    // ceiling stays below paper white (anti-clipping: the make-or-break rule).
+    float le = log2(max(e, 0.0005));
+    float lo = 4.8;
+    float span = 5.5;
+    float toePow = 2.30;
+    float k = 0.33;
+    float ceiling = 0.955;
+    if (grade > 0.5 && grade < 1.5) {   // Kodak HIE: deeper toe, harder drama
+        lo = 4.6; span = 5.2; toePow = 2.60; k = 0.26; ceiling = 0.965;
+    }
+    if (grade > 1.5) {                  // Ilford SFX 200: gentler throughout
+        lo = 5.0; span = 5.8; toePow = 2.05; k = 0.40; ceiling = 0.945;
+    }
     float x = clamp((le + lo) / span, 0.0, 1.0);
-    float toePow = 2.35;
-    if (grade > 0.5 && grade < 1.5) toePow = 2.75;   // HIE: deeper toe, more drama
-    if (grade > 1.5) toePow = 2.05;                  // SFX: gentler
     float toe = pow(x, toePow);
-    float shoulder = mix(0.36, 0.30, step(0.5, grade) * (1.0 - step(1.5, grade)));
-    float sh = toe * (1.0 + shoulder) / (toe + shoulder);
-    float ceil = mix(0.95, 0.965, step(0.5, grade) * (1.0 - step(1.5, grade)));
-    return clamp(sh * ceil + 0.012, 0.0, 1.0);
+    float sh = toe * (1.0 + k) / (toe + k);
+    return clamp(sh * ceiling + 0.008, 0.0, 1.0);
 }
 
 float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) {
-    float irBase = 0.70 * c.r + 0.20 * c.g + 0.10 * c.b;
-    // vegetation NIR jump (~5%->50% reflectance); HIE strongest, SFX weakest
-    float vegBoost = mix(1.95, 2.5, step(0.5, grade) * (1.0 - step(1.5, grade)));
-    if (grade > 1.5) vegBoost = 1.4;
-    float ir = irBase * (1.0 + veg * vegBoost);
-    // bright non-vegetation neutrals (clouds, light stone) reflect IR well
-    float bright = smoothstep(0.62, 0.95, irBase) * (1.0 - veg);
-    ir = ir * (1.0 + bright * 0.42);
-    // sky suppression with vertical gradient (darker at zenith)
-    float nrr = c.r / (c.r + c.g + c.b + 0.001);
-    float ngg = c.g / (c.r + c.g + c.b + 0.001);
-    float nbb = c.b / (c.r + c.g + c.b + 0.001);
-    float skyDown = smoothstep(0.02, 0.10, nbb - max(nrr, ngg));
-    float skyStr = mix(0.70, 0.82, step(0.5, grade) * (1.0 - step(1.5, grade)));
-    ir = ir * (1.0 - skyDown * (skyStr + 0.16 * skyT));
-    // water absorbs NIR -> darker still
-    float water = skyDown * smoothstep(0.0, 0.35, smoothLuma) * (1.0 - veg);
-    ir = ir * (1.0 - water * 0.25);
-    // skin: pale, waxy IR lift
-    float skin = smoothstep(0.02, 0.10, nrr - ngg) * smoothstep(-0.01, 0.05, ngg - nbb);
-    ir = ir * (1.0 + skin * 0.34);
-    return ir;
+    // R72-filtered emulsion: blue is blocked, green heavily attenuated, so the
+    // base signal is dominated by red (the film's declining NIR tail rides on
+    // its red sensitisation).
+    float irBase = 0.78 * c.r + 0.19 * c.g + 0.03 * c.b;
+
+    // Wood effect: chlorophyll goes from ~5% reflectance in visible red to
+    // ~50% in NIR. The lift is saturation-aware (sigmoid, not multiply) so
+    // sunlit foliage lands at Zone VII-VIII TEXTURED, never clipped.
+    // HIE reaches deeper into NIR (stronger); SFX is extended-red only (weaker).
+    float liftAmt = 0.60;
+    if (grade > 0.5 && grade < 1.5) liftAmt = 0.72;   // HIE
+    if (grade > 1.5) liftAmt = 0.42;                  // SFX 200
+    float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt;
+
+    float total = c.r + c.g + c.b + 0.001;
+    float nrr = c.r / total;
+    float ngg = c.g / total;
+    float nbb = c.b / total;
+
+    // Sky: Rayleigh scattering is absent in NIR, so sky goes Zone I-II.
+    // Two detectors: chromaticity (saturated blue sky) plus an absolute
+    // pale/hazy-sky signal (bright with B >= G >= R), which chromaticity
+    // alone misses. Vegetation is excluded (foliage always has G >= B).
+    float skyChroma = smoothstep(0.03, 0.11, nbb - max(nrr, ngg * 0.97));
+    float skyHazy = smoothstep(0.30, 0.72, c.b)
+        * smoothstep(0.01, 0.07, c.b - c.g)
+        * smoothstep(-0.01, 0.05, c.b - c.r);
+    float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7);
+    float skyStr = 0.88;
+    if (grade > 0.5 && grade < 1.5) skyStr = 0.92;    // HIE: denser skies
+    if (grade > 1.5) skyStr = 0.78;                   // SFX: milder
+    ir = ir * (1.0 - skyDown * (skyStr + 0.08 * skyT));
+
+    // Water absorbs NIR heavily -> near black
+    float water = skyDown * smoothstep(0.0, 0.40, smoothLuma) * (1.0 - veg);
+    ir = ir * (1.0 - water * 0.28);
+
+    // Skin: NIR penetrates a few mm -> pale, smooth, waxy
+    float skin = smoothstep(0.03, 0.12, nrr - ngg)
+        * smoothstep(-0.01, 0.06, ngg - nbb)
+        * smoothstep(0.20, 0.70, smoothLuma);
+    ir = ir * (1.0 + skin * 0.30);
+
+    // Bright neutral surfaces (clouds, light stone) reflect IR well
+    float bright = smoothstep(0.62, 0.90, irBase) * (1.0 - veg) * (1.0 - skyDown * 0.5);
+    ir = ir * (1.0 + bright * 0.15);
+    return clamp(ir, 0.0, 1.0);
 }
 
 vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
@@ -294,21 +328,26 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float cool = max(0.0, b - r);
 
     if (uPreset == 0) {
-        // Rollei Infrared 400: the reference monochrome IR look
+        // Rollei Infrared 400: sharp, fine-grained, restrained glow (the film
+        // HAS an anti-halation layer, so halation is minimal)
         float ir = irLuminance(src, foliage, smoothLuma, skyT, 0.0);
         float m = irHDCurve(ir, 0.0);
+        m = clamp(m + smoothstep(0.78, 0.98, smoothLuma) * 0.05, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 1) {
-        // Kodak HIE style: deeper Wood effect, more contrast, denser skies
+        // Kodak HIE style: no anti-halation backing -> the famous bloom
         float ir = irLuminance(src, foliage, smoothLuma, skyT, 1.0);
         float m = irHDCurve(ir, 1.0);
+        m = clamp(m + smoothstep(0.68, 0.96, smoothLuma) * 0.14, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 2) {
-        // Ilford SFX 200 style: milder extended-red Wood effect, finer tonality
+        // Ilford SFX 200: extended-red, grey acetate base gives good halation
+        // protection -> minimal glow, gentler tonality
         float ir = irLuminance(src, foliage, smoothLuma, skyT, 2.0);
         float m = irHDCurve(ir, 2.0);
+        m = clamp(m + smoothstep(0.80, 0.98, smoothLuma) * 0.04, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 3) {
@@ -521,8 +560,18 @@ void main() {
     }
 
     // film grain
-    if (uGrain > 0.001) {
-        c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * uGrain * 0.060;
+    if (uGrain > 0.001 || uPreset <= 2) {
+        float grainAmp = uGrain * 0.060;
+        if (uPreset <= 2) {
+            // Film grain is part of the emulsion, so the mono IR presets carry
+            // a fine baseline even at Grain=Off. Amplitude is density-dependent
+            // (Poisson-like): strongest in midtones, near-zero in deep shadow
+            // and clean highlights - a uniform overlay is the amateur tell.
+            float d = (lumaOf(c) - 0.42) / 0.30;
+            float densityWeight = exp(-d * d);
+            grainAmp = (0.012 + uGrain * 0.048) * densityWeight;
+        }
+        c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * grainAmp;
     }
 
     // channel swap
