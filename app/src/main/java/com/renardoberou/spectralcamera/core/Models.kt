@@ -7,16 +7,16 @@ enum class SpectralPreset(
     val description: String,
 ) {
     B_W_INFRARED(
-        label = "B&W Infrared",
-        description = "Classic monochrome IR with bright foliage and dark sky.",
+        label = "Rollei Infrared 400",
+        description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain.",
     ),
     HIGH_CONTRAST_IR(
-        label = "High Contrast IR",
-        description = "Deeper blacks, brighter whites, stronger drama.",
+        label = "Kodak HIE",
+        description = "Deep Wood effect, high contrast, near-black skies, stronger halation glow.",
     ),
     WHITE_FOLIAGE_DARK_SKY(
-        label = "White Foliage / Dark Sky",
-        description = "Leaf whitening with aggressive sky suppression.",
+        label = "Ilford SFX 200",
+        description = "Milder extended-red look, finer tonality, gentler foliage glow.",
     ),
     AEROCHROME_FALSE_COLOR(
         label = "Aerochrome-Style False Colour",

@@ -221,6 +221,55 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     return ir;
 }
 
+// ---- Monochrome IR film model (Rollei Infrared 400, research-derived) -------
+// Stage 1: synthesize IR luminance (red-weighted + vegetation NIR boost, sky
+// suppressed with gradient, skin lifted). Stage 2: H&D characteristic curve
+// with a long toe (compressed but separated shadows), steep midsection, and a
+// gently rolled shoulder so sunlit foliage sits at Zone VII-VIII TEXTURED and
+// never clips to paper white. Grain and halation are applied by the caller.
+// grade: 0 = Rollei (restrained, anti-halation), 1 = HIE (deep, contrasty),
+// 2 = Ilford SFX (milder Wood effect).
+float irHDCurve(float e, float grade) {
+    float le = log2(max(e, 0.00001));
+    // Rollei S-curve; HIE shifts/steepens, SFX softens
+    float lo = mix(4.7, 4.3, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    float span = mix(6.7, 6.1, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    float x = clamp((le + lo) / span, 0.0, 1.0);
+    float toePow = 2.35;
+    if (grade > 0.5 && grade < 1.5) toePow = 2.75;   // HIE: deeper toe, more drama
+    if (grade > 1.5) toePow = 2.05;                  // SFX: gentler
+    float toe = pow(x, toePow);
+    float shoulder = mix(0.36, 0.30, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    float sh = toe * (1.0 + shoulder) / (toe + shoulder);
+    float ceil = mix(0.95, 0.965, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    return clamp(sh * ceil + 0.012, 0.0, 1.0);
+}
+
+float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) {
+    float irBase = 0.70 * c.r + 0.20 * c.g + 0.10 * c.b;
+    // vegetation NIR jump (~5%->50% reflectance); HIE strongest, SFX weakest
+    float vegBoost = mix(1.95, 2.5, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    if (grade > 1.5) vegBoost = 1.4;
+    float ir = irBase * (1.0 + veg * vegBoost);
+    // bright non-vegetation neutrals (clouds, light stone) reflect IR well
+    float bright = smoothstep(0.62, 0.95, irBase) * (1.0 - veg);
+    ir = ir * (1.0 + bright * 0.42);
+    // sky suppression with vertical gradient (darker at zenith)
+    float nrr = c.r / (c.r + c.g + c.b + 0.001);
+    float ngg = c.g / (c.r + c.g + c.b + 0.001);
+    float nbb = c.b / (c.r + c.g + c.b + 0.001);
+    float skyDown = smoothstep(0.02, 0.10, nbb - max(nrr, ngg));
+    float skyStr = mix(0.70, 0.82, step(0.5, grade) * (1.0 - step(1.5, grade)));
+    ir = ir * (1.0 - skyDown * (skyStr + 0.16 * skyT));
+    // water absorbs NIR -> darker still
+    float water = skyDown * smoothstep(0.0, 0.35, smoothLuma) * (1.0 - veg);
+    ir = ir * (1.0 - water * 0.25);
+    // skin: pale, waxy IR lift
+    float skin = smoothstep(0.02, 0.10, nrr - ngg) * smoothstep(-0.01, 0.05, ngg - nbb);
+    ir = ir * (1.0 + skin * 0.34);
+    return ir;
+}
+
 vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float r = src.r;
     float g = src.g;
@@ -245,21 +294,21 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float cool = max(0.0, b - r);
 
     if (uPreset == 0) {
-        float m = tone(luma * 0.78 + foliage * 0.85 - sky * 0.30, 1.45);
-        // Wood effect: IR-dark sky; shade level keyed on smoothed luma so the
-        // sky tone does not band, fine texture (m) preserved inside the level
-        float skyShade = m * mix(0.22, 0.62, smoothstep(0.55, 0.98, smoothLuma));
-        m = mix(m, skyShade, skyMask);
+        // Rollei Infrared 400: the reference monochrome IR look
+        float ir = irLuminance(src, foliage, smoothLuma, skyT, 0.0);
+        float m = irHDCurve(ir, 0.0);
         return vec3(m);
     }
     if (uPreset == 1) {
-        float m = tone(luma * 0.72 + foliage * 0.95 - sky * 0.38, 1.85);
-        m = mix(m, m * mix(0.16, 0.55, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
+        // Kodak HIE style: deeper Wood effect, more contrast, denser skies
+        float ir = irLuminance(src, foliage, smoothLuma, skyT, 1.0);
+        float m = irHDCurve(ir, 1.0);
         return vec3(m);
     }
     if (uPreset == 2) {
-        float m = tone(luma * 0.62 + foliage * 1.20 - sky * 0.45, 1.65);
-        m = mix(m, m * mix(0.20, 0.58, smoothstep(0.55, 0.98, smoothLuma)), skyMask);
+        // Ilford SFX 200 style: milder extended-red Wood effect, finer tonality
+        float ir = irLuminance(src, foliage, smoothLuma, skyT, 2.0);
+        float m = irHDCurve(ir, 2.0);
         return vec3(m);
     }
     if (uPreset == 3) {
@@ -383,6 +432,31 @@ void main() {
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, skyMask, skyT, bLuma);
+
+    // Monochrome IR film character (Rollei/HIE/SFX presets only): density-
+    // dependent grain (peaks in midtones, fades in deep shadow and clean
+    // highlights) and a subtle highlight halation. Rollei has an anti-halation
+    // layer so its glow is minimal; HIE gets noticeably more.
+    if (uPreset <= 2) {
+        float mv = c.r; // mono: all channels equal
+        // grain: bell-weighted on tonal value, fine Rollei-scale structure
+        float gWeight = exp(-((mv - 0.45) * (mv - 0.45)) / (2.0 * 0.24 * 0.24));
+        float grainAmp = (uPreset == 1) ? 0.050 : ((uPreset == 2) ? 0.030 : 0.038);
+        float gn = hashNoise(grainUv * 0.85 + vec2(uGrainSeed * 1.7));
+        gn += 0.5 * hashNoise(grainUv * 1.9 + vec2(uGrainSeed * 0.6 + 41.0));
+        gn = gn / 1.5 - 0.5;
+        mv = clamp(mv + gn * gWeight * grainAmp, 0.0, 1.0);
+        // halation: bright highlights only, low opacity (Rollei); HIE stronger
+        float haloAmt = (uPreset == 1) ? 0.14 : ((uPreset == 2) ? 0.05 : 0.075);
+        float hiMask = smoothstep(0.80, 1.0, mv);
+        float b1 = lumaOf(texture2D(uTexture, vTexCoord + vec2(uTexelSize.x * 3.0, 0.0)).rgb);
+        float b2 = lumaOf(texture2D(uTexture, vTexCoord - vec2(uTexelSize.x * 3.0, 0.0)).rgb);
+        float b3 = lumaOf(texture2D(uTexture, vTexCoord + vec2(0.0, uTexelSize.y * 3.0)).rgb);
+        float b4 = lumaOf(texture2D(uTexture, vTexCoord - vec2(0.0, uTexelSize.y * 3.0)).rgb);
+        float around = (b1 + b2 + b3 + b4) * 0.25;
+        mv = clamp(mv + hiMask * around * haloAmt, 0.0, 1.0);
+        c = vec3(mv);
+    }
 
     // exposure (digital gain, stops)
     c *= exp2(clamp(uExposure, -3.0, 3.0));
