@@ -41,8 +41,11 @@ class HardwareTestAnalyzer {
         // primary evidence; flashing raises confidence but isn't required for a
         // steady press. Thresholds tuned to fire within a second or two at a
         // normal hand-held distance.
-        val steady = signal.irSpot > 0.45f
-        val detected = steady || (signal.irSpot > 0.30f && flicker > 0.10f)
+        // A remote LED PULSES; static scenery doesn't. Flicker is required
+        // unless the spot is an unmistakable saturating violet dot - bright
+        // daylight exteriors were false-triggering the old steady path.
+        val steady = signal.irSpot > 0.62f
+        val detected = steady || (signal.irSpot > 0.32f && flicker > 0.14f)
         val confidence = ((signal.irSpot * 0.7f) + (flicker * 0.3f)).coerceIn(0f, 1f)
         val status = when {
             detected -> "minor near-IR leakage detected"

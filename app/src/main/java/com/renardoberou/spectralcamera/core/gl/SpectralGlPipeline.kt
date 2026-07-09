@@ -240,8 +240,8 @@ float irHDCurve(float e, float grade) {
     float lo = 4.8;
     float span = 5.5;
     float toePow = 2.30;
-    float k = 0.33;
-    float ceiling = 0.955;
+    float k = 0.36;
+    float ceiling = 0.948;
     if (grade > 0.5 && grade < 1.5) {   // Kodak HIE: deeper toe, harder drama
         lo = 4.6; span = 5.2; toePow = 2.60; k = 0.26; ceiling = 0.965;
     }
@@ -264,9 +264,9 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     // ~50% in NIR. The lift is saturation-aware (sigmoid, not multiply) so
     // sunlit foliage lands at Zone VII-VIII TEXTURED, never clipped.
     // HIE reaches deeper into NIR (stronger); SFX is extended-red only (weaker).
-    float liftAmt = 0.60;
-    if (grade > 0.5 && grade < 1.5) liftAmt = 0.72;   // HIE
-    if (grade > 1.5) liftAmt = 0.42;                  // SFX 200
+    float liftAmt = 0.56;
+    if (grade > 0.5 && grade < 1.5) liftAmt = 0.68;   // HIE
+    if (grade > 1.5) liftAmt = 0.40;                  // SFX 200
     float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt;
 
     float total = c.r + c.g + c.b + 0.001;
@@ -286,11 +286,13 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     float skyStr = 0.88;
     if (grade > 0.5 && grade < 1.5) skyStr = 0.92;    // HIE: denser skies
     if (grade > 1.5) skyStr = 0.78;                   // SFX: milder
-    ir = ir * (1.0 - skyDown * (skyStr + 0.08 * skyT));
+    // positional: zenith sky suppresses fully; low-in-frame blue (pools,
+    // reflections) darkens far less, keeping Zone II texture instead of void
+    ir = ir * (1.0 - skyDown * (skyStr * (0.59 + 0.50 * skyT)));
 
     // Water absorbs NIR heavily -> near black
     float water = skyDown * smoothstep(0.0, 0.40, smoothLuma) * (1.0 - veg);
-    ir = ir * (1.0 - water * 0.28);
+    ir = ir * (1.0 - water * 0.20);
 
     // Skin: NIR penetrates a few mm -> pale, smooth, waxy
     float skin = smoothstep(0.03, 0.12, nrr - ngg)
@@ -473,30 +475,10 @@ void main() {
     vec3 c = presetColor(src, skyMask, skyT, bLuma);
 
     // Monochrome IR film character (Rollei/HIE/SFX presets only): density-
-    // dependent grain (peaks in midtones, fades in deep shadow and clean
-    // highlights) and a subtle highlight halation. Rollei has an anti-halation
-    // layer so its glow is minimal; HIE gets noticeably more.
-    if (uPreset <= 2) {
-        float mv = c.r; // mono: all channels equal
-        // grain: bell-weighted on tonal value, fine Rollei-scale structure
-        float gWeight = exp(-((mv - 0.45) * (mv - 0.45)) / (2.0 * 0.24 * 0.24));
-        float grainAmp = (uPreset == 1) ? 0.050 : ((uPreset == 2) ? 0.030 : 0.038);
-        float gn = hashNoise(grainUv * 0.85 + vec2(uGrainSeed * 1.7));
-        gn += 0.5 * hashNoise(grainUv * 1.9 + vec2(uGrainSeed * 0.6 + 41.0));
-        gn = gn / 1.5 - 0.5;
-        mv = clamp(mv + gn * gWeight * grainAmp, 0.0, 1.0);
-        // halation: bright highlights only, low opacity (Rollei); HIE stronger
-        float haloAmt = (uPreset == 1) ? 0.14 : ((uPreset == 2) ? 0.05 : 0.075);
-        float hiMask = smoothstep(0.80, 1.0, mv);
-        float b1 = lumaOf(texture2D(uTexture, vTexCoord + vec2(uTexelSize.x * 3.0, 0.0)).rgb);
-        float b2 = lumaOf(texture2D(uTexture, vTexCoord - vec2(uTexelSize.x * 3.0, 0.0)).rgb);
-        float b3 = lumaOf(texture2D(uTexture, vTexCoord + vec2(0.0, uTexelSize.y * 3.0)).rgb);
-        float b4 = lumaOf(texture2D(uTexture, vTexCoord - vec2(0.0, uTexelSize.y * 3.0)).rgb);
-        float around = (b1 + b2 + b3 + b4) * 0.25;
-        mv = clamp(mv + hiMask * around * haloAmt, 0.0, 1.0);
-        c = vec3(mv);
-    }
-
+    // dependent grain in the shared grain stage below; halation is applied
+    // once, inside presetColor, calibrated per emulsion. (A duplicate
+    // grain+halation post-block used to live here: stacking both was the
+    // source of the harsh sky speckle and blown canopy blobs.)
     // exposure (digital gain, stops)
     c *= exp2(clamp(uExposure, -3.0, 3.0));
 
@@ -569,7 +551,7 @@ void main() {
             // and clean highlights - a uniform overlay is the amateur tell.
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
-            grainAmp = (0.012 + uGrain * 0.048) * densityWeight;
+            grainAmp = (0.015 + uGrain * 0.045) * densityWeight;
         }
         c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * grainAmp;
     }
