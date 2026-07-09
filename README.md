@@ -4,6 +4,8 @@ An Android camera app that emulates infrared and false-colour spectral film look
 
 **Current version:** 1.8.2 (versionCode 24) · **Status:** actively developed, manually verified on a physical device (Motorola Edge 60 Fusion, Android 16) after every change. No automated test suite yet — see [Test status](#test-status).
 
+**Release status:** signed release [`v1.8.2`](https://github.com/renardoberou/spectral-camera/releases/tag/v1.8.2) is live with APK, AAB, and SHA-256 checksums. This release includes the updated launcher icon and was produced by the tag-triggered release workflow.
+
 ## Honesty note — read this first
 
 **The phone's camera sensor has no infrared sensitivity.** Every filter in this app is a *simulated* spectral/IR look, computed from the visible-light RGB image using colour-science heuristics (chromaticity analysis, a synthesized vegetation/NIR proxy, and film-characteristic-curve modelling). It is not, and cannot be, true infrared photography without external hardware.
@@ -80,6 +82,8 @@ From the project root:
 GitHub Actions builds the debug APK and an unsigned release APK on every push to `main` and uploads them as workflow artifacts (`spectral-camera-debug`, `spectral-camera-release`) — this is the compile/package verification path used during development, since this project has been built entirely from an Android phone (GitHub web UI + Actions), with no local desktop toolchain. If a push breaks the build, the workflow automatically files a GitHub issue containing the compiler error log.
 
 Public/store releases are signed only by the tag-triggered `release` workflow after GitHub Actions signing secrets are configured. See [`docs/RELEASE.md`](docs/RELEASE.md). The normal CI artifact is not the production-signed artifact.
+
+Latest signed public release: [`v1.8.2`](https://github.com/renardoberou/spectral-camera/releases/tag/v1.8.2).
 
 If you build locally inside Termux, put any `android.aapt2FromMavenOverride` override in `~/.gradle/gradle.properties` on the device — it must not live in the repo, or it breaks the GitHub Actions runners (this was a real regression fixed early in the project's history).
 

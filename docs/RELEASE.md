@@ -2,6 +2,13 @@
 
 Spectral Camera uses environment-driven release signing. The normal CI workflow builds debug and unsigned release APKs for compile verification; the tag workflow builds the signed APK and AAB for distribution.
 
+## Current signed release
+
+- Latest signed release: [`v1.8.2`](https://github.com/renardoberou/spectral-camera/releases/tag/v1.8.2)
+- Published assets: `spectral-camera-v1.8.2.apk`, `spectral-camera-v1.8.2.aab`, `CHECKSUMS.txt`
+- Local verification on 2026-07-09: checksum verification passed and `apksigner verify --verbose` reported APK Signature Scheme v2 verified with one signer.
+- Release content: launcher icon replacement plus signed APK/AAB distribution artifacts.
+
 ## 1. Generate or choose a release keystore
 
 Do this once, then back up the `.jks` file and passwords somewhere private. Do **not** commit them.
@@ -43,17 +50,17 @@ GitHub stores only the encrypted secret values; the repo never receives the keys
 
 ## 3. Cut a signed release
 
-Push a `v*` tag. Example:
+Push a `v*` tag. Example for the next patch release:
 
 ```bash
-git tag v1.8.1
-git push origin v1.8.1
+git tag v1.8.3
+git push origin v1.8.3
 ```
 
 The `release` workflow will:
 
 1. decode the private keystore from GitHub Actions secrets;
-2. set `VERSION_NAME` from the tag, e.g. `v1.8.1` → `1.8.1`;
+2. set `VERSION_NAME` from the tag, e.g. `v1.8.3` → `1.8.3`;
 3. use the `versionCode` committed in `app/build.gradle.kts`;
 4. build `assembleRelease` and `bundleRelease`;
 5. verify the APK signature with `apksigner`;
