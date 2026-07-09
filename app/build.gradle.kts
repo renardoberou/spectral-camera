@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing is environment-driven by .github/workflows/release.yml.
+// When these env vars are absent, local/CI release builds remain unsigned;
+// they are no longer debug-signed by accident.
+val ksFile: String? = System.getenv("KEYSTORE_FILE")
+
 android {
     namespace = "com.renardoberou.spectralcamera"
     compileSdk = 35
@@ -11,16 +16,27 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "1.8.1"
+        versionCode = (System.getenv("VERSION_CODE") ?: "23").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.8.1"
+    }
+
+    signingConfigs {
+        if (ksFile != null) {
+            create("release") {
+                storeFile = file(ksFile)
+                storePassword = System.getenv("KEYSTORE_PASS")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASS")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sign with the debug keystore so the release APK from CI installs
-            // directly. Replace with a real keystore before any store upload.
-            signingConfig = signingConfigs.getByName("debug")
+            if (ksFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

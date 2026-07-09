@@ -77,9 +77,9 @@ From the project root:
 ./gradlew assembleDebug assembleRelease
 ```
 
-GitHub Actions builds both APKs on every push to `main` and uploads them as workflow artifacts (`spectral-camera-debug`, `spectral-camera-release`) — this is the actual build verification path used during development, since this project has been built entirely from an Android phone (GitHub web UI + Actions), with no local desktop toolchain. If a push breaks the build, the workflow automatically files a GitHub issue containing the compiler error log.
+GitHub Actions builds the debug APK and an unsigned release APK on every push to `main` and uploads them as workflow artifacts (`spectral-camera-debug`, `spectral-camera-release`) — this is the compile/package verification path used during development, since this project has been built entirely from an Android phone (GitHub web UI + Actions), with no local desktop toolchain. If a push breaks the build, the workflow automatically files a GitHub issue containing the compiler error log.
 
-The release APK is signed with the debug keystore so it installs directly for testing; **replace the signing config with a real keystore before any store/production release.**
+Public/store releases are signed only by the tag-triggered `release` workflow after GitHub Actions signing secrets are configured. See [`docs/RELEASE.md`](docs/RELEASE.md). The normal CI artifact is not the production-signed artifact.
 
 If you build locally inside Termux, put any `android.aapt2FromMavenOverride` override in `~/.gradle/gradle.properties` on the device — it must not live in the repo, or it breaks the GitHub Actions runners (this was a real regression fixed early in the project's history).
 

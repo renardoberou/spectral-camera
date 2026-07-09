@@ -30,7 +30,7 @@ jobs:
       - name: Grant gradlew execute permission
         run: chmod +x ./gradlew
 
-      - name: Build debug and release APKs
+      - name: Build debug and unsigned release APKs
         run: |
           set -o pipefail
           ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee build.log

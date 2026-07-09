@@ -20,3 +20,8 @@ out/
 *.tmp
 *.swp
 .DS_Store
+
+# Release signing material must stay private
+*.jks
+*.keystore
+keystore.properties
