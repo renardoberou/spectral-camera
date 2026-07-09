@@ -542,16 +542,17 @@ void main() {
     }
 
     // film grain
-    if (uGrain > 0.001 || uPreset <= 2) {
-        float grainAmp = uGrain * 0.060;
+    if (uGrain > 0.001) {
+        // Grain is strictly opt-in (default Off = perfectly clean output).
+        // When enabled on the mono IR presets it stays density-dependent
+        // (Poisson-like: strongest in midtones, near-zero in deep shadow and
+        // clean highlights); per-pixel hash noise reads as sensor noise at
+        // print scale, so amplitudes are kept low even at Coarse.
+        float grainAmp = uGrain * 0.045;
         if (uPreset <= 2) {
-            // Film grain is part of the emulsion, so the mono IR presets carry
-            // a fine baseline even at Grain=Off. Amplitude is density-dependent
-            // (Poisson-like): strongest in midtones, near-zero in deep shadow
-            // and clean highlights - a uniform overlay is the amateur tell.
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
-            grainAmp = (0.015 + uGrain * 0.045) * densityWeight;
+            grainAmp = uGrain * 0.040 * densityWeight;
         }
         c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * grainAmp;
     }
@@ -568,7 +569,7 @@ void main() {
     // sub-LSB dither: prevents 8-bit banding in smooth gradients; the sky
     // gets a stronger decorrelated octave where ramps amplify source steps
     c += hashNoise(grainUv * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
-    c += hashNoise(grainUv * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.010;
+    c += hashNoise(grainUv * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.006;
 
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

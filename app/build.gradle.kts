@@ -16,8 +16,8 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "24").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.8.2"
+        versionCode = (System.getenv("VERSION_CODE") ?: "25").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.8.3"
     }
 
     signingConfigs {
