@@ -54,7 +54,7 @@ The `release` workflow will:
 
 1. decode the private keystore from GitHub Actions secrets;
 2. set `VERSION_NAME` from the tag, e.g. `v1.8.1` → `1.8.1`;
-3. set `VERSION_CODE` from the GitHub Actions run number so it increases automatically;
+3. use the `versionCode` committed in `app/build.gradle.kts`;
 4. build `assembleRelease` and `bundleRelease`;
 5. verify the APK signature with `apksigner`;
 6. publish these release assets:
@@ -82,5 +82,6 @@ Verified using v2 scheme: true
 
 - The old CI release APK was debug-signed. This is no longer public-release safe.
 - Package name + signing certificate determine update compatibility.
+- Bump `versionCode` in `app/build.gradle.kts` before every Play/public release.
 - If a debug-signed build is installed on the phone, Android will reject the release-signed APK as an update. Uninstall the old build first.
 - For Google Play, upload the `.aab`. Keep the upload key backed up.

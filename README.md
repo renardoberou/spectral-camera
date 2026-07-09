@@ -2,7 +2,7 @@
 
 An Android camera app that emulates infrared and false-colour spectral film looks in real time. The live preview and the saved photo are rendered by the *same* OpenGL ES fragment shader, so what you see through the viewfinder is what you get in the file.
 
-**Current version:** 1.8.1 (versionCode 23) · **Status:** actively developed, manually verified on a physical device (Motorola Edge 60 Fusion, Android 16) after every change. No automated test suite yet — see [Test status](#test-status).
+**Current version:** 1.8.2 (versionCode 24) · **Status:** actively developed, manually verified on a physical device (Motorola Edge 60 Fusion, Android 16) after every change. No automated test suite yet — see [Test status](#test-status).
 
 ## Honesty note — read this first
 
