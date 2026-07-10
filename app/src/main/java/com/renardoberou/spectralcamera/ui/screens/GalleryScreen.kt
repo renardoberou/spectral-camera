@@ -58,16 +58,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.renardoberou.spectralcamera.core.GalleryItem
+import com.renardoberou.spectralcamera.core.media.GalleryAccessLevel
+import com.renardoberou.spectralcamera.core.media.GalleryPermissionPolicy
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-private enum class GalleryAccessLevel {
-    FULL,
-    PARTIAL,
-    APP_OWNED_ONLY,
-    DENIED,
-}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -222,6 +217,7 @@ private fun GalleryAccessNotice(
 @Composable
 private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
     val thumbnail by rememberGalleryThumbnail(item.uri)
+    val bitmap = thumbnail.bitmap
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -231,9 +227,9 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
     ) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (thumbnail.bitmap != null) {
+                if (bitmap != null) {
                     Image(
-                        bitmap = thumbnail.bitmap.asImageBitmap(),
+                        bitmap = bitmap.asImageBitmap(),
                         contentDescription = item.displayName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -257,17 +253,17 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
 
 @Composable
 private fun GalleryDetailDialog(item: GalleryItem, onDismiss: () -> Unit) {
-    val context = LocalContext.current
     val thumbnail by rememberGalleryThumbnail(item.uri)
+    val bitmap = thumbnail.bitmap
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.extraLarge) {
             Column(Modifier.padding(16.dp)) {
                 Text(item.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(item.presetLabel, style = MaterialTheme.typography.bodySmall)
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
-                if (thumbnail.bitmap != null) {
+                if (bitmap != null) {
                     Image(
-                        bitmap = thumbnail.bitmap.asImageBitmap(),
+                        bitmap = bitmap.asImageBitmap(),
                         contentDescription = item.displayName,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -361,31 +357,21 @@ private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHei
     return sample.coerceAtLeast(1)
 }
 
-private fun requiredGalleryPermissions(): Array<String> = when {
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
-        Manifest.permission.READ_MEDIA_IMAGES,
-        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
-    )
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-        Manifest.permission.READ_MEDIA_IMAGES,
-    )
-    else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-}
+private fun requiredGalleryPermissions(): Array<String> =
+    GalleryPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
 
 private fun resolveGalleryAccess(context: Context): GalleryAccessLevel {
     fun granted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    return when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            granted(Manifest.permission.READ_MEDIA_IMAGES) -> GalleryAccessLevel.FULL
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> GalleryAccessLevel.PARTIAL
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            granted(Manifest.permission.READ_MEDIA_IMAGES) -> GalleryAccessLevel.FULL
-        Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 &&
-            granted(Manifest.permission.READ_EXTERNAL_STORAGE) -> GalleryAccessLevel.FULL
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> GalleryAccessLevel.APP_OWNED_ONLY
-        else -> GalleryAccessLevel.DENIED
-    }
+    return GalleryPermissionPolicy.resolve(
+        sdkInt = Build.VERSION.SDK_INT,
+        hasReadMediaImages = granted(Manifest.permission.READ_MEDIA_IMAGES),
+        hasSelectedPhotoAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else {
+            false
+        },
+        hasLegacyStorageAccess = granted(Manifest.permission.READ_EXTERNAL_STORAGE),
+    )
 }
