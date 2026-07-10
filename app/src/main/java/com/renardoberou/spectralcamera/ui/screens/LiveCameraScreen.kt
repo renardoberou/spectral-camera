@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -194,7 +196,7 @@ fun LiveCameraScreen(
                                 val stopOptions = listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f)
                                     .filter { it >= capabilities.minStops - 0.01f && it <= capabilities.maxStops + 0.01f }
                                     .map { formatStops(it) to it }
-                                SteppedControl(
+                                StopsRow(
                                     label = "Exposure compensation (stops)",
                                     options = stopOptions,
                                     value = settings.hardwareEv,
@@ -406,7 +408,7 @@ private fun AdjustmentsSheet(
             Text("Reset to film defaults")
         }
         SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
-        SteppedControl("Digital exposure (stops)", listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f).map { formatStops(it) to it }, current.exposureCompensation) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
+        StopsRow("Digital exposure (stops)", listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f).map { formatStops(it) to it }, current.exposureCompensation) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
         SteppedControl("Blacks", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.blacks) { value -> onAdjustmentsChange(current.copy(blacks = value)) }
         SteppedControl("Whites", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.whites) { value -> onAdjustmentsChange(current.copy(whites = value)) }
         SteppedControl("Bloom", listOf("Off" to 0f, "Low" to 0.3f, "Medium" to 0.6f, "High" to 1.0f), current.bloom) { value -> onAdjustmentsChange(current.copy(bloom = value)) }
@@ -498,6 +500,45 @@ private fun ShutterControl(
                     onClick = { onSelect(option.second) },
                     label = { Text(option.first) },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StopsRow(
+    label: String,
+    options: List<Pair<String, Float>>,
+    value: Float,
+    onSelect: (Float) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            val nearest = options.minByOrNull { abs(it.second - value) }?.second
+            options.forEach { option ->
+                val selected = option.second == nearest
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(option.second) },
+                    shape = MaterialTheme.shapes.small,
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        option.first,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

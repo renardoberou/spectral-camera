@@ -70,6 +70,8 @@ uniform float uWhites;
 uniform float uBloom;
 uniform float uGrain;
 uniform float uGrainSeed;
+uniform float uAutoLo;
+uniform float uAutoHi;
 uniform float uSharpness;
 uniform float uRedWeight;
 uniform float uFoliageLift;
@@ -267,6 +269,12 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     float liftAmt = 0.56;
     if (grade > 0.5 && grade < 1.5) liftAmt = 0.68;   // HIE
     if (grade > 1.5) liftAmt = 0.40;                  // SFX 200
+    // Deep-shadow confidence: chromaticity is numerically unstable near black
+    // (tiny noisy RGB over tiny totals), which rendered night shadows as a
+    // blocky classifier patchwork. Below the floor everything falls back to
+    // the plain film response.
+    float conf = smoothstep(0.035, 0.12, smoothLuma);
+    veg = veg * conf;
     float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt;
 
     float total = c.r + c.g + c.b + 0.001;
@@ -282,7 +290,7 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     float skyHazy = smoothstep(0.30, 0.72, c.b)
         * smoothstep(0.01, 0.07, c.b - c.g)
         * smoothstep(-0.01, 0.05, c.b - c.r);
-    float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7);
+    float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
     float skyStr = 0.88;
     if (grade > 0.5 && grade < 1.5) skyStr = 0.92;    // HIE: denser skies
     if (grade > 1.5) skyStr = 0.78;                   // SFX: milder
@@ -382,6 +390,9 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
 
 void main() {
     vec3 src = texture2D(uTexture, vTexCoord).rgb;
+    // Capture-time auto-levels: gentle black/white points measured from the
+    // still's own histogram (Kotlin side). Preview passes 0/1 = identity.
+    src = clamp((src - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
 
     // ---- sky detection ---------------------------------------------------
     // Sky is a low-frequency phenomenon, so the mask is built from a wide
@@ -757,6 +768,24 @@ class SpectralRenderer(
      * (see [SpectralGlView.process]). Returns a new upright Bitmap.
      */
     fun processBitmap(input: Bitmap, captureSettings: CameraSettings): Bitmap {
+        // Auto-levels (capture only): sample the still's luma histogram and set
+        // gentle black/white points, Lightroom-Auto style. Caps keep it safe on
+        // already-good exposures: shadow lift <= 0.10, stretch <= ~1.25x.
+        val probe = Bitmap.createScaledBitmap(input, 48, 48, true)
+        val probePx = IntArray(48 * 48)
+        probe.getPixels(probePx, 0, 48, 0, 0, 48, 48)
+        if (probe != input) probe.recycle()
+        val lumas = FloatArray(probePx.size)
+        for (i in probePx.indices) {
+            val px = probePx[i]
+            lumas[i] = (((px ushr 16) and 0xFF) * 0.299f +
+                ((px ushr 8) and 0xFF) * 0.587f +
+                (px and 0xFF) * 0.114f) / 255f
+        }
+        lumas.sort()
+        val autoLo = lumas[lumas.size / 100].coerceAtMost(0.10f)
+        val autoHi = lumas[(lumas.size * 99) / 100].coerceAtLeast(0.90f)
+
         val program = flatProgram ?: throw IllegalStateException("GL pipeline not ready")
 
         var working = if (input.config == Bitmap.Config.ARGB_8888) {
@@ -821,6 +850,8 @@ class SpectralRenderer(
                 // Rendered content is NDC-inverted here, so image-up is -v.
                 skyUpX = 0f,
                 skyUpY = -1f,
+                autoLo = autoLo,
+                autoHi = autoHi,
             )
 
             val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -880,6 +911,8 @@ class SpectralRenderer(
         grainSeed: Float,
         skyUpX: Float,
         skyUpY: Float,
+        autoLo: Float = 0f,
+        autoHi: Float = 1f,
     ) {
         val adj = currentSettings.adjustments
         GLES20.glUseProgram(program.id)
@@ -904,6 +937,8 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uBloom, adj.bloom)
         GLES20.glUniform1f(program.uGrain, adj.grain)
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
+        GLES20.glUniform1f(program.uAutoLo, autoLo)
+        GLES20.glUniform1f(program.uAutoHi, autoHi)
         GLES20.glUniform2f(program.uSkyUp, skyUpX, skyUpY)
         GLES20.glUniform1f(program.uSharpness, adj.sharpness)
         GLES20.glUniform1f(program.uRedWeight, adj.redChannelWeight)
@@ -956,6 +991,8 @@ class SpectralRenderer(
         val uBloom = GLES20.glGetUniformLocation(id, "uBloom")
         val uGrain = GLES20.glGetUniformLocation(id, "uGrain")
         val uGrainSeed = GLES20.glGetUniformLocation(id, "uGrainSeed")
+        val uAutoLo = GLES20.glGetUniformLocation(id, "uAutoLo")
+        val uAutoHi = GLES20.glGetUniformLocation(id, "uAutoHi")
         val uSkyUp = GLES20.glGetUniformLocation(id, "uSkyUp")
         val uSharpness = GLES20.glGetUniformLocation(id, "uSharpness")
         val uRedWeight = GLES20.glGetUniformLocation(id, "uRedWeight")
