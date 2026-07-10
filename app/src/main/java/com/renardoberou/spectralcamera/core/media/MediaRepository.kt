@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
-import androidx.core.database.getLongOrNull
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.GalleryItem
@@ -51,10 +50,12 @@ class MediaRepository(private val context: Context) {
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.RELATIVE_PATH,
         )
-        val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
-        val selectionArgs = arrayOf("%SpectralCamera%")
+        // RELATIVE_PATH is normally stored with a trailing slash. Accept both
+        // representations, but no longer match unrelated folders merely because
+        // their path happens to contain the word SpectralCamera.
+        val selection = "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR ${MediaStore.Images.Media.RELATIVE_PATH} = ?)"
+        val selectionArgs = arrayOf(picturesPath, "$picturesPath/")
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
         val items = mutableListOf<GalleryItem>()
         resolver.query(
@@ -70,18 +71,18 @@ class MediaRepository(private val context: Context) {
             while (cursor.moveToNext() && items.size < limit) {
                 val id = cursor.getLong(idCol)
                 val name = cursor.getString(nameCol) ?: continue
+                val meta = parseName(name) ?: continue
                 val dateTaken = if (cursor.isNull(dateCol)) 0L else cursor.getLong(dateCol)
                 val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon()
                     .appendPath(id.toString())
                     .build()
-                val meta = parseName(name)
                 items += GalleryItem(
                     uri = uri,
                     displayName = name,
                     dateTakenMillis = dateTaken,
-                    presetLabel = meta?.preset?.label ?: "Unknown preset",
-                    sensorModeLabel = meta?.sensorMode?.label ?: "Simulated IR",
-                    isOriginal = meta?.isOriginal ?: false,
+                    presetLabel = meta.preset.label,
+                    sensorModeLabel = meta.sensorMode.label,
+                    isOriginal = meta.isOriginal,
                 )
             }
         }
