@@ -3,12 +3,25 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Signing: environment-driven for real releases (release.yml); otherwise a
-// COMMITTED, purpose-made throwaway keystore keeps the signature STABLE across
-// CI runs, so updates install in place instead of demanding uninstall (which
-// also wiped MediaStore ownership and emptied the in-app gallery). This key is
-// public and for sideloading only - never ship it to a store.
-val ksFile: String = System.getenv("KEYSTORE_FILE") ?: "signing/debug-only.keystore"
+// Production signing is opt-in and must be supplied completely through the
+// environment. Ordinary local and CI builds never fall back to a committed or
+// hard-coded signing key.
+val releaseSigningEnvironment: Map<String, String?> = mapOf(
+    "KEYSTORE_FILE" to System.getenv("KEYSTORE_FILE"),
+    "KEYSTORE_PASS" to System.getenv("KEYSTORE_PASS"),
+    "KEY_ALIAS" to System.getenv("KEY_ALIAS"),
+    "KEY_PASS" to System.getenv("KEY_PASS"),
+)
+val hasAnyReleaseSigningValue = releaseSigningEnvironment.values.any { !it.isNullOrBlank() }
+val hasCompleteReleaseSigning = releaseSigningEnvironment.values.all { !it.isNullOrBlank() }
+
+if (hasAnyReleaseSigningValue && !hasCompleteReleaseSigning) {
+    val missing = releaseSigningEnvironment
+        .filterValues { it.isNullOrBlank() }
+        .keys
+        .joinToString()
+    throw GradleException("Incomplete release signing environment. Missing: $missing")
+}
 
 android {
     namespace = "com.renardoberou.spectralcamera"
@@ -18,26 +31,31 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "28").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.8.6"
+        versionCode = (System.getenv("VERSION_CODE") ?: "29").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.8.7"
     }
 
     signingConfigs {
-        create("stable") {
-            storeFile = file(ksFile)
-            storePassword = System.getenv("KEYSTORE_PASS") ?: "spectraldebug"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "spectraldebug"
-            keyPassword = System.getenv("KEY_PASS") ?: "spectraldebug"
+        if (hasCompleteReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseSigningEnvironment["KEYSTORE_FILE"]))
+                storePassword = requireNotNull(releaseSigningEnvironment["KEYSTORE_PASS"])
+                keyAlias = requireNotNull(releaseSigningEnvironment["KEY_ALIAS"])
+                keyPassword = requireNotNull(releaseSigningEnvironment["KEY_PASS"])
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("stable")
+            // Use the Android toolchain's normal debug key. Debug artifacts are
+            // ephemeral and are never presented as update-compatible releases.
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("stable")
+            if (hasCompleteReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
