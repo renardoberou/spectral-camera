@@ -3,6 +3,7 @@ package com.renardoberou.spectralcamera.core.media
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import com.renardoberou.spectralcamera.core.CameraSettings
@@ -10,6 +11,7 @@ import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
@@ -21,6 +23,13 @@ class MediaRepository(private val context: Context) {
     // DCIM is the camera-media location that Google Photos and every gallery
     // app surface prominently; Pictures/ subfolders get buried under Library.
     private val picturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
+
+    @Suppress("DEPRECATION")
+    private val legacyPicturesDirectory = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+        "SpectralCamera",
+    )
+
     private val timestampFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
         .withZone(ZoneId.systemDefault())
 
@@ -45,17 +54,22 @@ class MediaRepository(private val context: Context) {
         )
     }
 
+    @Suppress("DEPRECATION")
     fun loadGallery(limit: Int = 120): List<GalleryItem> {
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_TAKEN,
         )
-        // RELATIVE_PATH is normally stored with a trailing slash. Accept both
-        // representations, but no longer match unrelated folders merely because
-        // their path happens to contain the word SpectralCamera.
-        val selection = "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR ${MediaStore.Images.Media.RELATIVE_PATH} = ?)"
-        val selectionArgs = arrayOf(picturesPath, "$picturesPath/")
+        val (selection, selectionArgs) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // RELATIVE_PATH is normally stored with a trailing slash. Accept both
+            // representations, but do not match unrelated similarly named folders.
+            "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR ${MediaStore.Images.Media.RELATIVE_PATH} = ?)" to
+                arrayOf(picturesPath, "$picturesPath/")
+        } else {
+            "${MediaStore.Images.Media.DATA} LIKE ?" to
+                arrayOf("${legacyPicturesDirectory.absolutePath}/%")
+        }
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
         val items = mutableListOf<GalleryItem>()
         resolver.query(
@@ -89,6 +103,7 @@ class MediaRepository(private val context: Context) {
         return items
     }
 
+    @Suppress("DEPRECATION")
     private fun insertBitmap(
         bitmap: Bitmap,
         displayName: String,
@@ -98,22 +113,45 @@ class MediaRepository(private val context: Context) {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, picturesPath)
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-            put(MediaStore.Images.Media.DESCRIPTION, "${settings.sensorMode.label} • ${settings.preset.label} • ${if (raw) "Original" else "Processed"}")
+            put(
+                MediaStore.Images.Media.DESCRIPTION,
+                "${settings.sensorMode.label} • ${settings.preset.label} • ${if (raw) "Original" else "Processed"}",
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, picturesPath)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            } else {
+                if (!legacyPicturesDirectory.exists() && !legacyPicturesDirectory.mkdirs()) {
+                    throw IOException("Failed to create legacy SpectralCamera directory")
+                }
+                put(
+                    MediaStore.Images.Media.DATA,
+                    File(legacyPicturesDirectory, displayName).absolutePath,
+                )
+            }
         }
+
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore item")
-        resolver.openOutputStream(uri)?.use { stream ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
-                throw IOException("Failed to compress bitmap")
+
+        try {
+            resolver.openOutputStream(uri, "w")?.use { stream ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
+                    throw IOException("Failed to compress bitmap")
+                }
+            } ?: throw IOException("Failed to open output stream")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
             }
-        } ?: throw IOException("Failed to open output stream")
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return uri
+            return uri
+        } catch (error: Throwable) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw error
+        }
     }
 
     private fun fileName(settings: CameraSettings, raw: Boolean, instant: Instant): String {
