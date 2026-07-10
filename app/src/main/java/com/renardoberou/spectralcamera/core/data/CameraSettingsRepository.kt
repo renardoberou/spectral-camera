@@ -49,7 +49,12 @@ class CameraSettingsRepository(context: Context) {
             hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
                 if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
             },
-            manualMode = prefs[MANUAL_MODE] ?: false,
+            // Manual mode deliberately does NOT persist across launches: stale
+            // night settings (high ISO, slow shutter) silently carried into a
+            // sunny day produce catastrophically blown captures. A camera you
+            // pick up meters; manual is re-armed deliberately. ISO/shutter
+            // VALUES persist so re-arming restores your last setup.
+            manualMode = false,
             manualIso = prefs[MANUAL_ISO] ?: 400,
             manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
         )

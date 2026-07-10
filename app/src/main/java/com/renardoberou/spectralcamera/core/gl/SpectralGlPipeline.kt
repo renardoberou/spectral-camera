@@ -180,8 +180,8 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     vec3 ir = mix(base, folCol, veg);
     ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - veg));
     // skylight shadow: film-correct darkening, faintly cool
-    vec3 shadowCol = vec3(luma * 0.55, luma * 0.58, luma * 0.72);
-    ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue));
+    vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
+    ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue) * 0.72);
 
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
     ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
@@ -216,7 +216,12 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     // detail is added back as a brightness-only modulation - no hue steps - so
     // clouds stay crisp. (Verified in simulation: peak adjacent-pixel colour
     // step drops below the source's own.)
-    float lift = smoothstep(0.30, 1.0, smoothLuma);
+    // Key the pale lift on CLOUDINESS, not brightness: clouds are bright AND
+    // desaturated; a clear noon sky is bright AND saturated-blue and must stay
+    // deep (the washed-lavender sky bug). Real EIR renders clear sky deep blue
+    // at any brightness.
+    float clearBlue = smoothstep(0.05, 0.14, nb - max(nr, ng));
+    float lift = smoothstep(0.30, 1.0, smoothLuma) * (1.0 - clearBlue);
     vec3 skyCol = mix(deepCol, paleCol, lift);
     skyCol = clamp(skyCol + (luma - smoothLuma) * 0.6, 0.0, 1.0);
     ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.94);
@@ -784,7 +789,16 @@ class SpectralRenderer(
         }
         lumas.sort()
         val autoLo = lumas[lumas.size / 100].coerceAtMost(0.10f)
-        val autoHi = lumas[(lumas.size * 99) / 100].coerceAtLeast(0.90f)
+        var autoHi = lumas[(lumas.size * 99) / 100].coerceAtLeast(0.90f)
+        // Overexposure rescue: a plain p1/p99 stretch can only brighten. If the
+        // median says the capture is badly blown (stale manual settings, harsh
+        // sun), raise the mapped white point ABOVE 1 so the frame is gently
+        // compressed back into range before the film curve. Capped at 1.8 so a
+        // deliberately high-key shot is respected.
+        val median = lumas[lumas.size / 2]
+        if (median > 0.72f) {
+            autoHi = (median / 0.60f).coerceIn(autoHi, 1.8f)
+        }
 
         val program = flatProgram ?: throw IllegalStateException("GL pipeline not ready")
 
