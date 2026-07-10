@@ -144,6 +144,13 @@ fun LiveCameraScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary,
                         )
+                        if (settings.manualMode) {
+                            Text(
+                                "MANUAL EXPOSURE \u2014 ISO ${settings.manualIso} \u00b7 metering off",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 }
 
