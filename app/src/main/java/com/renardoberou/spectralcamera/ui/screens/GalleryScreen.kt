@@ -67,7 +67,7 @@ fun GalleryScreen(viewModel: SpectralViewModel) {
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
         )
         Text(
-            text = "Captured outputs are saved in public MediaStore storage. The label always reflects whether the image is simulated or external hardware.",
+            text = "Captures are saved to your phone\u2019s gallery (DCIM/SpectralCamera) and show up in Google Photos. Everything stays on this device \u2014 nothing is ever uploaded. Labels always show whether an image is simulated or from external hardware.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )

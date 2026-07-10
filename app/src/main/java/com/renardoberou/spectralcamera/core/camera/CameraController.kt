@@ -482,8 +482,15 @@ class CameraController(context: Context) {
     }
 
     private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
-        if (rotationDegrees == 0) return bitmap
-        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+        if (rotationDegrees == 0 && !isFront) return bitmap
+        val matrix = Matrix().apply {
+            postRotate(rotationDegrees.toFloat())
+            // Un-mirror front-camera captures: the sensor image is mirrored by
+            // convention, but the SAVED file should read like reality (text the
+            // right way round), matching every serious camera app.
+            if (isFront) postScale(-1f, 1f)
+        }
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 }

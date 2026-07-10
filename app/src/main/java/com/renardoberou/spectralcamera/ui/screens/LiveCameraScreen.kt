@@ -60,6 +60,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.renardoberou.spectralcamera.core.CameraCapabilities
@@ -516,7 +517,7 @@ private fun StopsRow(
         Text(label, style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             val nearest = options.minByOrNull { abs(it.second - value) }?.second
             options.forEach { option ->
@@ -533,10 +534,12 @@ private fun StopsRow(
                         option.first,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 7.dp),
                         style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }

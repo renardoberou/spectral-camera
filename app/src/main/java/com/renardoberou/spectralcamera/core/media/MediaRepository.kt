@@ -19,7 +19,9 @@ import java.util.Locale
 
 class MediaRepository(private val context: Context) {
     private val resolver = context.contentResolver
-    private val picturesPath = "${Environment.DIRECTORY_PICTURES}/SpectralCamera"
+    // DCIM is the camera-media location that Google Photos and every gallery
+    // app surface prominently; Pictures/ subfolders get buried under Library.
+    private val picturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
     private val timestampFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
         .withZone(ZoneId.systemDefault())
 
