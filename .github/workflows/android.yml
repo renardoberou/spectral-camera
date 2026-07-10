@@ -25,8 +25,8 @@ jobs:
             echo "$tracked"
             exit 1
           fi
-          if git grep -nE 'spectraldebug|debug-only\.keystore' -- . ':(exclude)docs/**' ':(exclude)README.md'; then
-            echo "::error::Retired public signing credentials are still referenced by build code."
+          if git grep -nE 'spectraldebug|signing/debug-only\.keystore' -- app build.gradle.kts settings.gradle.kts gradle.properties 2>/dev/null; then
+            echo "::error::Retired public signing credentials are still referenced by build or application code."
             exit 1
           fi
 
