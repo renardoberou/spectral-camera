@@ -20,13 +20,22 @@ import java.util.Locale
 
 class MediaRepository(private val context: Context) {
     private val resolver = context.contentResolver
-    // DCIM is the camera-media location that Google Photos and every gallery
-    // app surface prominently; Pictures/ subfolders get buried under Library.
-    private val picturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
+
+    // New captures use DCIM so they appear prominently in Google Photos and
+    // other gallery apps. Earlier builds used Pictures/SpectralCamera, which is
+    // still queried exactly so historical captures remain recoverable.
+    private val currentPicturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
+    private val formerPicturesPath = "${Environment.DIRECTORY_PICTURES}/SpectralCamera"
 
     @Suppress("DEPRECATION")
-    private val legacyPicturesDirectory = File(
+    private val legacyCurrentDirectory = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+        "SpectralCamera",
+    )
+
+    @Suppress("DEPRECATION")
+    private val legacyFormerDirectory = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
         "SpectralCamera",
     )
 
@@ -62,13 +71,23 @@ class MediaRepository(private val context: Context) {
             MediaStore.Images.Media.DATE_TAKEN,
         )
         val (selection, selectionArgs) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // RELATIVE_PATH is normally stored with a trailing slash. Accept both
-            // representations, but do not match unrelated similarly named folders.
-            "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR ${MediaStore.Images.Media.RELATIVE_PATH} = ?)" to
-                arrayOf(picturesPath, "$picturesPath/")
+            // Accept exact current and historical paths, with or without the
+            // trailing slash MediaStore normally stores.
+            val pathColumn = MediaStore.Images.Media.RELATIVE_PATH
+            "($pathColumn = ? OR $pathColumn = ? OR $pathColumn = ? OR $pathColumn = ?)" to
+                arrayOf(
+                    currentPicturesPath,
+                    "$currentPicturesPath/",
+                    formerPicturesPath,
+                    "$formerPicturesPath/",
+                )
         } else {
-            "${MediaStore.Images.Media.DATA} LIKE ?" to
-                arrayOf("${legacyPicturesDirectory.absolutePath}/%")
+            val dataColumn = MediaStore.Images.Media.DATA
+            "($dataColumn LIKE ? OR $dataColumn LIKE ?)" to
+                arrayOf(
+                    "${legacyCurrentDirectory.absolutePath}/%",
+                    "${legacyFormerDirectory.absolutePath}/%",
+                )
         }
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
         val items = mutableListOf<GalleryItem>()
@@ -119,15 +138,15 @@ class MediaRepository(private val context: Context) {
                 "${settings.sensorMode.label} • ${settings.preset.label} • ${if (raw) "Original" else "Processed"}",
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, picturesPath)
+                put(MediaStore.Images.Media.RELATIVE_PATH, currentPicturesPath)
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
-                if (!legacyPicturesDirectory.exists() && !legacyPicturesDirectory.mkdirs()) {
+                if (!legacyCurrentDirectory.exists() && !legacyCurrentDirectory.mkdirs()) {
                     throw IOException("Failed to create legacy SpectralCamera directory")
                 }
                 put(
                     MediaStore.Images.Media.DATA,
-                    File(legacyPicturesDirectory, displayName).absolutePath,
+                    File(legacyCurrentDirectory, displayName).absolutePath,
                 )
             }
         }
@@ -148,7 +167,7 @@ class MediaRepository(private val context: Context) {
                 resolver.update(uri, values, null, null)
             }
             return uri
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             runCatching { resolver.delete(uri, null, null) }
             throw error
         }
