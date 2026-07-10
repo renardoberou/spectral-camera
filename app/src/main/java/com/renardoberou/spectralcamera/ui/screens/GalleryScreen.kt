@@ -1,6 +1,10 @@
 package com.renardoberou.spectralcamera.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -60,6 +64,25 @@ fun GalleryScreen(viewModel: SpectralViewModel) {
     val context = LocalContext.current
     val items by viewModel.galleryItems.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<GalleryItem?>(null) }
+
+    // Media-read permission: without it the app only sees items created by the
+    // CURRENT install; every reinstall (forced by unstable signing until now)
+    // orphaned the history. With the grant, the full DCIM+Pictures history of
+    // SpectralCamera captures is visible again.
+    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) viewModel.refreshGallery() }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, mediaPermission) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(mediaPermission)
+        }
+        viewModel.refreshGallery()
+    }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(

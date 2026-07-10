@@ -3,10 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Release signing is environment-driven by .github/workflows/release.yml.
-// When these env vars are absent, local/CI release builds remain unsigned;
-// they are no longer debug-signed by accident.
-val ksFile: String? = System.getenv("KEYSTORE_FILE")
+// Signing: environment-driven for real releases (release.yml); otherwise a
+// COMMITTED, purpose-made throwaway keystore keeps the signature STABLE across
+// CI runs, so updates install in place instead of demanding uninstall (which
+// also wiped MediaStore ownership and emptied the in-app gallery). This key is
+// public and for sideloading only - never ship it to a store.
+val ksFile: String = System.getenv("KEYSTORE_FILE") ?: "signing/debug-only.keystore"
 
 android {
     namespace = "com.renardoberou.spectralcamera"
@@ -16,27 +18,26 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "27").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.8.5"
+        versionCode = (System.getenv("VERSION_CODE") ?: "28").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.8.6"
     }
 
     signingConfigs {
-        if (ksFile != null) {
-            create("release") {
-                storeFile = file(ksFile)
-                storePassword = System.getenv("KEYSTORE_PASS")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASS")
-            }
+        create("stable") {
+            storeFile = file(ksFile)
+            storePassword = System.getenv("KEYSTORE_PASS") ?: "spectraldebug"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "spectraldebug"
+            keyPassword = System.getenv("KEY_PASS") ?: "spectraldebug"
         }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = false
-            if (ksFile != null) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            signingConfig = signingConfigs.getByName("stable")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

@@ -875,9 +875,8 @@ class SpectralRenderer(
         if (srcWidth <= 0 || srcHeight <= 0) {
             // Source geometry not yet known: show the frame edge-to-edge without
             // inventing an aspect ratio (never stretch on a fallback).
-            var fx = 1f
-            if (settings.frontFacing) fx = -1f
-            Matrix.scaleM(posMatrix, 0, fx, 1f, 1f)
+            // No front-camera mirror: the preview shows reality, matching the
+            // saved file (explicit user requirement).
             return
         }
         val rotated = srcRotation == 90 || srcRotation == 270
@@ -892,7 +891,6 @@ class SpectralRenderer(
             sy = 1f / sx
             sx = 1f
         }
-        if (settings.frontFacing) sx = -sx
 
         Matrix.scaleM(posMatrix, 0, sx, sy, 1f)
         // The SurfaceTexture transform already carries the camera orientation,
