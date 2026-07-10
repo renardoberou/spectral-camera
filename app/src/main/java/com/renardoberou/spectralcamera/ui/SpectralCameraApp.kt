@@ -31,12 +31,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -74,14 +74,14 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             }
         }
         val settings by viewModel.settings.collectAsStateWithLifecycle()
-        val gallery by viewModel.galleryItems.collectAsStateWithLifecycle()
+        val galleryState by viewModel.galleryState.collectAsStateWithLifecycle()
         var capabilities by remember { mutableStateOf<CameraCapabilities?>(null) }
         var permissionsGranted by remember { mutableStateOf(hasRequiredPermissions(context)) }
 
         val permissionLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.RequestMultiplePermissions(),
-        ) { granted ->
-            permissionsGranted = granted.values.all { it }
+        ) {
+            permissionsGranted = hasRequiredPermissions(context)
         }
 
         // Push every settings change straight into the GPU pipeline.
@@ -140,7 +140,7 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
                 glView = glView,
                 lifecycleOwner = lifecycleOwner,
                 settings = settings,
-                galleryCount = gallery.size,
+                galleryCount = galleryState.items.size,
                 capabilities = capabilities,
                 onCapabilities = { capabilities = it },
             )
@@ -269,21 +269,26 @@ private fun PermissionGateScreen(onGrant: () -> Unit) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Text("Spectral Camera")
             Text("Camera permission is required to start the simulated IR view.")
+            Text("Photo-library access is requested separately and only when you choose to recover saved captures in the Gallery.")
             Text("The app never claims true infrared from the internal camera — simulated IR is the default.")
             Button(onClick = onGrant) {
-                Text("Grant camera permissions")
+                Text("Grant camera permission")
             }
         }
     }
 }
 
 private fun hasRequiredPermissions(context: Context): Boolean =
-    requiredPermissions().all { perm ->
-        ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+    requiredPermissions().all { permission ->
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-private fun requiredPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-    arrayOf(Manifest.permission.CAMERA, Manifest.permission.READ_MEDIA_IMAGES)
-} else {
-    arrayOf(Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE)
-}
+private fun requiredPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+        arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        )
+    } else {
+        arrayOf(Manifest.permission.CAMERA)
+    }
