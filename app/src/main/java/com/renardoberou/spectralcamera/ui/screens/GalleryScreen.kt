@@ -1,12 +1,14 @@
 package com.renardoberou.spectralcamera.ui.screens
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -23,25 +25,25 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,37 +53,54 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.InputStream
+
+private enum class GalleryAccessLevel {
+    FULL,
+    PARTIAL,
+    APP_OWNED_ONLY,
+    DENIED,
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(viewModel: SpectralViewModel) {
     val context = LocalContext.current
-    val items by viewModel.galleryItems.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val galleryState by viewModel.galleryState.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<GalleryItem?>(null) }
+    var accessLevel by remember { mutableStateOf(resolveGalleryAccess(context)) }
 
-    // Media-read permission: without it the app only sees items created by the
-    // CURRENT install; every reinstall (forced by unstable signing until now)
-    // orphaned the history. With the grant, the full DCIM+Pictures history of
-    // SpectralCamera captures is visible again.
-    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
-    }
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) viewModel.refreshGallery() }
-    LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, mediaPermission) != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(mediaPermission)
-        }
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        accessLevel = resolveGalleryAccess(context)
         viewModel.refreshGallery()
+    }
+
+    LaunchedEffect(Unit) {
+        accessLevel = resolveGalleryAccess(context)
+        viewModel.refreshGallery()
+    }
+
+    // Android can change full/partial photo access while the app is in the
+    // background. Re-check on every resume instead of caching the grant.
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessLevel = resolveGalleryAccess(context)
+                viewModel.refreshGallery()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -90,19 +109,69 @@ fun GalleryScreen(viewModel: SpectralViewModel) {
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
         )
         Text(
-            text = "Captures are saved to your phone\u2019s gallery (DCIM/SpectralCamera) and show up in Google Photos. Everything stays on this device \u2014 nothing is ever uploaded. Labels always show whether an image is simulated or from external hardware.",
+            text = "Captures are saved to your phone’s gallery (DCIM/SpectralCamera) and show up in Google Photos. Everything stays on this device — nothing is ever uploaded. Labels always show whether an image is simulated or from external hardware.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 160.dp),
-            contentPadding = PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            items(items, key = { it.uri.toString() }) { item ->
-                GalleryCard(item = item, onClick = { selected = item })
+
+        if (accessLevel != GalleryAccessLevel.FULL) {
+            GalleryAccessNotice(
+                accessLevel = accessLevel,
+                onRequestAccess = { permissionLauncher.launch(requiredGalleryPermissions()) },
+            )
+        }
+
+        galleryState.errorMessage?.let { message ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Button(onClick = viewModel::refreshGallery) {
+                        Text("Try again")
+                    }
+                }
+            }
+        }
+
+        when {
+            galleryState.isLoading && galleryState.items.isEmpty() -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            galleryState.items.isEmpty() -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = when (accessLevel) {
+                            GalleryAccessLevel.PARTIAL -> "No Spectral Camera captures are included in the current photo selection."
+                            GalleryAccessLevel.DENIED -> "Photo access is unavailable. Grant access to display saved captures."
+                            else -> "No Spectral Camera captures are visible yet."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            else -> {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 160.dp),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(galleryState.items, key = { it.uri.toString() }) { item ->
+                        GalleryCard(item = item, onClick = { selected = item })
+                    }
+                }
             }
         }
     }
@@ -112,6 +181,41 @@ fun GalleryScreen(viewModel: SpectralViewModel) {
             item = item,
             onDismiss = { selected = null },
         )
+    }
+}
+
+@Composable
+private fun GalleryAccessNotice(
+    accessLevel: GalleryAccessLevel,
+    onRequestAccess: () -> Unit,
+) {
+    val message = when (accessLevel) {
+        GalleryAccessLevel.PARTIAL ->
+            "Only selected photos are visible. Change the selection to include other Spectral Camera captures."
+        GalleryAccessLevel.APP_OWNED_ONLY ->
+            "Captures from this installation are visible. Allow photo access to recover images made by previous installations."
+        GalleryAccessLevel.DENIED ->
+            "Allow photo access to display Spectral Camera captures saved on this device."
+        GalleryAccessLevel.FULL -> return
+    }
+    val action = if (accessLevel == GalleryAccessLevel.PARTIAL) {
+        "Manage photo access"
+    } else {
+        "Show previous captures"
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(message, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Button(onClick = onRequestAccess) {
+                Text(action)
+            }
+        }
     }
 }
 
@@ -127,9 +231,9 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
     ) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (thumbnail != null) {
+                if (thumbnail.bitmap != null) {
                     Image(
-                        bitmap = thumbnail!!.asImageBitmap(),
+                        bitmap = thumbnail.bitmap.asImageBitmap(),
                         contentDescription = item.displayName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -137,7 +241,7 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
                 } else {
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Loading")
+                            Text(if (thumbnail.complete) "Preview unavailable" else "Loading")
                         }
                     }
                 }
@@ -154,22 +258,31 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
 @Composable
 private fun GalleryDetailDialog(item: GalleryItem, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val bitmap by rememberGalleryThumbnail(item.uri)
+    val thumbnail by rememberGalleryThumbnail(item.uri)
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.extraLarge) {
             Column(Modifier.padding(16.dp)) {
                 Text(item.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(item.presetLabel, style = MaterialTheme.typography.bodySmall)
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
-                if (bitmap != null) {
+                if (thumbnail.bitmap != null) {
                     Image(
-                        bitmap = bitmap!!.asImageBitmap(),
+                        bitmap = thumbnail.bitmap.asImageBitmap(),
                         contentDescription = item.displayName,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(360.dp),
                         contentScale = ContentScale.Crop,
                     )
+                } else if (thumbnail.complete) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("Preview unavailable")
+                    }
                 }
                 Text("URI: ${item.uri}", style = MaterialTheme.typography.bodySmall)
                 RowActions(uri = item.uri, onDismiss = onDismiss)
@@ -181,53 +294,98 @@ private fun GalleryDetailDialog(item: GalleryItem, onDismiss: () -> Unit) {
 @Composable
 private fun RowActions(uri: Uri, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = {
             val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                 type = "image/jpeg"
                 putExtra(android.content.Intent.EXTRA_STREAM, uri)
                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(android.content.Intent.createChooser(intent, "Share spectral image").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            context.startActivity(
+                android.content.Intent.createChooser(intent, "Share spectral image")
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }) {
             Icon(Icons.Outlined.Share, contentDescription = null)
             Text("Share")
         }
         Button(onClick = onDismiss) {
-            Icon(Icons.Outlined.ArrowBack, contentDescription = null)
+            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
             Text("Close")
         }
     }
 }
 
+private data class GalleryThumbnailState(
+    val bitmap: Bitmap? = null,
+    val complete: Boolean = false,
+)
+
 @Composable
-private fun rememberGalleryThumbnail(uri: Uri): androidx.compose.runtime.State<android.graphics.Bitmap?> {
+private fun rememberGalleryThumbnail(uri: Uri): androidx.compose.runtime.State<GalleryThumbnailState> {
     val context = LocalContext.current
-    return androidx.compose.runtime.produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uri) {
-        value = withContext(Dispatchers.IO) { loadSampledBitmap(context, uri, 960, 960) }
+    return androidx.compose.runtime.produceState(initialValue = GalleryThumbnailState(), key1 = uri) {
+        val bitmap = withContext(Dispatchers.IO) { loadSampledBitmap(context, uri, 960, 960) }
+        value = GalleryThumbnailState(bitmap = bitmap, complete = true)
     }
 }
 
-private fun loadSampledBitmap(context: android.content.Context, uri: Uri, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
+private fun loadSampledBitmap(
+    context: Context,
+    uri: Uri,
+    reqWidth: Int,
+    reqHeight: Int,
+): Bitmap? = runCatching {
     val resolver = context.contentResolver
-    resolver.openInputStream(uri)?.use { stream ->
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeStream(stream, null, options)
-        val sample = calculateInSampleSize(options.outWidth, options.outHeight, reqWidth, reqHeight)
-        val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sample }
-        resolver.openInputStream(uri)?.use { stream2 ->
-            return BitmapFactory.decodeStream(stream2, null, decodeOptions)
+    val bounds = resolver.openInputStream(uri)?.use { stream ->
+        BitmapFactory.Options().also { options ->
+            options.inJustDecodeBounds = true
+            BitmapFactory.decodeStream(stream, null, options)
         }
+    } ?: return@runCatching null
+
+    val sample = calculateInSampleSize(bounds.outWidth, bounds.outHeight, reqWidth, reqHeight)
+    val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sample }
+    resolver.openInputStream(uri)?.use { stream ->
+        BitmapFactory.decodeStream(stream, null, decodeOptions)
     }
-    return null
-}
+}.getOrNull()
 
 private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
     var sample = 1
-    var halfHeight = height / 2
-    var halfWidth = width / 2
+    val halfHeight = height / 2
+    val halfWidth = width / 2
     while (halfHeight / sample >= reqHeight && halfWidth / sample >= reqWidth) {
         sample *= 2
     }
     return sample.coerceAtLeast(1)
+}
+
+private fun requiredGalleryPermissions(): Array<String> = when {
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+        Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+    )
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+        Manifest.permission.READ_MEDIA_IMAGES,
+    )
+    else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+}
+
+private fun resolveGalleryAccess(context: Context): GalleryAccessLevel {
+    fun granted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    return when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            granted(Manifest.permission.READ_MEDIA_IMAGES) -> GalleryAccessLevel.FULL
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> GalleryAccessLevel.PARTIAL
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            granted(Manifest.permission.READ_MEDIA_IMAGES) -> GalleryAccessLevel.FULL
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 &&
+            granted(Manifest.permission.READ_EXTERNAL_STORAGE) -> GalleryAccessLevel.FULL
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> GalleryAccessLevel.APP_OWNED_ONLY
+        else -> GalleryAccessLevel.DENIED
+    }
 }
