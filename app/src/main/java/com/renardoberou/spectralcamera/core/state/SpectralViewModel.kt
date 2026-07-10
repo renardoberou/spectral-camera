@@ -22,6 +22,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+data class GalleryUiState(
+    val items: List<GalleryItem> = emptyList(),
+    val isLoading: Boolean = true,
+    val errorMessage: String? = null,
+)
+
 class SpectralViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = CameraSettingsRepository(application)
     private val mediaRepository = MediaRepository(application)
@@ -33,8 +39,8 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         initialValue = CameraSettings(),
     )
 
-    private val _galleryItems = MutableStateFlow<List<GalleryItem>>(emptyList())
-    val galleryItems = _galleryItems.asStateFlow()
+    private val _galleryState = MutableStateFlow(GalleryUiState())
+    val galleryState = _galleryState.asStateFlow()
 
     private val _hardwareState = MutableStateFlow(HardwareTestState.idle())
     val hardwareState = _hardwareState.asStateFlow()
@@ -58,19 +64,12 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setPreset(preset: SpectralPreset) = updateSettings { it.copy(preset = preset) }
-
     fun setSaveOriginal(enabled: Boolean) = updateSettings { it.copy(saveOriginal = enabled) }
-
     fun setFrontFacing(enabled: Boolean) = updateSettings { it.copy(frontFacing = enabled) }
-
     fun setHardwareEv(value: Float) = updateSettings { it.copy(hardwareEv = value) }
-
     fun setManualMode(enabled: Boolean) = updateSettings { it.copy(manualMode = enabled) }
-
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
-
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
-
     fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) = updateSettings { it.copy(sensorMode = mode) }
 
     fun updateAdjustments(transform: (com.renardoberou.spectralcamera.core.ManualAdjustments) -> com.renardoberou.spectralcamera.core.ManualAdjustments) {
@@ -96,8 +95,20 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshGallery() {
+        val currentItems = _galleryState.value.items
+        _galleryState.value = GalleryUiState(items = currentItems, isLoading = true)
         viewModelScope.launch(Dispatchers.IO) {
-            _galleryItems.value = mediaRepository.loadGallery()
+            _galleryState.value = runCatching { mediaRepository.loadGallery() }
+                .fold(
+                    onSuccess = { GalleryUiState(items = it, isLoading = false) },
+                    onFailure = {
+                        GalleryUiState(
+                            items = currentItems,
+                            isLoading = false,
+                            errorMessage = "Unable to read the photo library. Check photo access and try again.",
+                        )
+                    },
+                )
         }
     }
 }

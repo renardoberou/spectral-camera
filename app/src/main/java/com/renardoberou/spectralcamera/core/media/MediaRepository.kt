@@ -3,14 +3,15 @@ package com.renardoberou.spectralcamera.core.media
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import androidx.core.database.getLongOrNull
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
@@ -19,9 +20,25 @@ import java.util.Locale
 
 class MediaRepository(private val context: Context) {
     private val resolver = context.contentResolver
-    // DCIM is the camera-media location that Google Photos and every gallery
-    // app surface prominently; Pictures/ subfolders get buried under Library.
-    private val picturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
+
+    // New captures use DCIM so they appear prominently in Google Photos and
+    // other gallery apps. Earlier builds used Pictures/SpectralCamera, which is
+    // still queried exactly so historical captures remain recoverable.
+    private val currentPicturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
+    private val formerPicturesPath = "${Environment.DIRECTORY_PICTURES}/SpectralCamera"
+
+    @Suppress("DEPRECATION")
+    private val legacyCurrentDirectory = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+        "SpectralCamera",
+    )
+
+    @Suppress("DEPRECATION")
+    private val legacyFormerDirectory = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+        "SpectralCamera",
+    )
+
     private val timestampFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
         .withZone(ZoneId.systemDefault())
 
@@ -46,15 +63,32 @@ class MediaRepository(private val context: Context) {
         )
     }
 
+    @Suppress("DEPRECATION")
     fun loadGallery(limit: Int = 120): List<GalleryItem> {
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.RELATIVE_PATH,
         )
-        val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
-        val selectionArgs = arrayOf("%SpectralCamera%")
+        val (selection, selectionArgs) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Accept exact current and historical paths, with or without the
+            // trailing slash MediaStore normally stores.
+            val pathColumn = MediaStore.Images.Media.RELATIVE_PATH
+            "($pathColumn = ? OR $pathColumn = ? OR $pathColumn = ? OR $pathColumn = ?)" to
+                arrayOf(
+                    currentPicturesPath,
+                    "$currentPicturesPath/",
+                    formerPicturesPath,
+                    "$formerPicturesPath/",
+                )
+        } else {
+            val dataColumn = MediaStore.Images.Media.DATA
+            "($dataColumn LIKE ? OR $dataColumn LIKE ?)" to
+                arrayOf(
+                    "${legacyCurrentDirectory.absolutePath}/%",
+                    "${legacyFormerDirectory.absolutePath}/%",
+                )
+        }
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
         val items = mutableListOf<GalleryItem>()
         resolver.query(
@@ -70,24 +104,25 @@ class MediaRepository(private val context: Context) {
             while (cursor.moveToNext() && items.size < limit) {
                 val id = cursor.getLong(idCol)
                 val name = cursor.getString(nameCol) ?: continue
+                val meta = parseName(name) ?: continue
                 val dateTaken = if (cursor.isNull(dateCol)) 0L else cursor.getLong(dateCol)
                 val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon()
                     .appendPath(id.toString())
                     .build()
-                val meta = parseName(name)
                 items += GalleryItem(
                     uri = uri,
                     displayName = name,
                     dateTakenMillis = dateTaken,
-                    presetLabel = meta?.preset?.label ?: "Unknown preset",
-                    sensorModeLabel = meta?.sensorMode?.label ?: "Simulated IR",
-                    isOriginal = meta?.isOriginal ?: false,
+                    presetLabel = meta.preset.label,
+                    sensorModeLabel = meta.sensorMode.label,
+                    isOriginal = meta.isOriginal,
                 )
             }
         }
         return items
     }
 
+    @Suppress("DEPRECATION")
     private fun insertBitmap(
         bitmap: Bitmap,
         displayName: String,
@@ -97,22 +132,45 @@ class MediaRepository(private val context: Context) {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, picturesPath)
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-            put(MediaStore.Images.Media.DESCRIPTION, "${settings.sensorMode.label} • ${settings.preset.label} • ${if (raw) "Original" else "Processed"}")
+            put(
+                MediaStore.Images.Media.DESCRIPTION,
+                "${settings.sensorMode.label} • ${settings.preset.label} • ${if (raw) "Original" else "Processed"}",
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, currentPicturesPath)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            } else {
+                if (!legacyCurrentDirectory.exists() && !legacyCurrentDirectory.mkdirs()) {
+                    throw IOException("Failed to create legacy SpectralCamera directory")
+                }
+                put(
+                    MediaStore.Images.Media.DATA,
+                    File(legacyCurrentDirectory, displayName).absolutePath,
+                )
+            }
         }
+
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore item")
-        resolver.openOutputStream(uri)?.use { stream ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
-                throw IOException("Failed to compress bitmap")
+
+        try {
+            resolver.openOutputStream(uri, "w")?.use { stream ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
+                    throw IOException("Failed to compress bitmap")
+                }
+            } ?: throw IOException("Failed to open output stream")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
             }
-        } ?: throw IOException("Failed to open output stream")
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return uri
+            return uri
+        } catch (error: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw error
+        }
     }
 
     private fun fileName(settings: CameraSettings, raw: Boolean, instant: Instant): String {

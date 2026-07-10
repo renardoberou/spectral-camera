@@ -14,6 +14,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Reject tracked signing material
+        run: |
+          tracked="$(git ls-files '*.jks' '*.keystore')"
+          if [ -n "$tracked" ]; then
+            echo "::error::Signing material must never be tracked in Git:"
+            echo "$tracked"
+            exit 1
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -27,15 +36,23 @@ jobs:
       - name: Grant gradlew execute permission
         run: chmod +x ./gradlew
 
-      - name: Decode keystore from secrets
+      - name: Validate release tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must have the form vX.Y.Z."
+            exit 1
+          fi
+
+      - name: Decode and verify release keystore
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASS: ${{ secrets.KEY_PASS }}
+          RELEASE_CERT_SHA256: ${{ secrets.RELEASE_CERT_SHA256 }}
         run: |
           missing=0
-          for name in KEYSTORE_B64 KEYSTORE_PASS KEY_ALIAS KEY_PASS; do
+          for name in KEYSTORE_B64 KEYSTORE_PASS KEY_ALIAS KEY_PASS RELEASE_CERT_SHA256; do
             if [ -z "${!name}" ]; then
               echo "::error::$name secret is missing — follow docs/RELEASE.md first."
               missing=1
@@ -44,36 +61,82 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
+
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
-      - name: Derive version name from tag
-        run: |
-          echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          actual_cert=$(
+            keytool -list -v \
+              -keystore "$RUNNER_TEMP/release.jks" \
+              -storepass "$KEYSTORE_PASS" \
+              -alias "$KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' \
+            | head -1 \
+            | tr -d ':' \
+            | tr '[:upper:]' '[:lower:]'
+          )
+          expected_cert=$(printf '%s' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
 
-      - name: Build signed APK + AAB
+          if [ -z "$actual_cert" ] || [ "$actual_cert" != "$expected_cert" ]; then
+            echo "::error::Release keystore certificate does not match RELEASE_CERT_SHA256."
+            echo "Expected: $expected_cert"
+            echo "Actual:   $actual_cert"
+            exit 1
+          fi
+
+          echo "RELEASE_CERT_NORMALIZED=$actual_cert" >> "$GITHUB_ENV"
+          echo "Release certificate SHA-256: $actual_cert"
+
+      - name: Derive version name from tag
+        run: echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build signed APK and AAB
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASS: ${{ secrets.KEY_PASS }}
-        run: ./gradlew assembleRelease bundleRelease --stacktrace
+        run: ./gradlew testDebugUnitTest assembleRelease bundleRelease --stacktrace
 
-      - name: Stage release assets
+      - name: Stage and verify release assets
         run: |
           cp app/build/outputs/apk/release/app-release.apk "spectral-camera-${GITHUB_REF_NAME}.apk"
           cp app/build/outputs/bundle/release/app-release.aab "spectral-camera-${GITHUB_REF_NAME}.aab"
 
-      - name: Verify signature and generate checksums
-        run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           APKSIGNER=$(find "$SDK_ROOT/build-tools" -maxdepth 2 -name apksigner 2>/dev/null | sort -V | tail -1)
-          if [ -z "$APKSIGNER" ]; then
-            echo "::error::apksigner not found under $SDK_ROOT/build-tools — cannot verify the release signature."
+          AAPT=$(find "$SDK_ROOT/build-tools" -maxdepth 2 -name aapt 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ] || [ -z "$AAPT" ]; then
+            echo "::error::Android signature/package verification tools were not found."
             exit 1
           fi
-          echo "Using $APKSIGNER"
-          "$APKSIGNER" verify --verbose "spectral-camera-${GITHUB_REF_NAME}.apk"
+
+          apk="spectral-camera-${GITHUB_REF_NAME}.apk"
+          verify_output=$("$APKSIGNER" verify --verbose --print-certs "$apk")
+          printf '%s\n' "$verify_output"
+          apk_cert=$(printf '%s\n' "$verify_output" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | head -1 \
+            | tr -d ':[:space:]' \
+            | tr '[:upper:]' '[:lower:]')
+          if [ "$apk_cert" != "$RELEASE_CERT_NORMALIZED" ]; then
+            echo "::error::Built APK certificate differs from the verified release keystore."
+            exit 1
+          fi
+
+          if ! "$AAPT" dump badging "$apk" | grep -q "package: name='com.renardoberou.spectralcamera'"; then
+            echo "::error::Release APK has the wrong application ID."
+            exit 1
+          fi
+
           sha256sum spectral-camera-*.apk spectral-camera-*.aab | tee CHECKSUMS.txt
+          {
+            echo "tag=$GITHUB_REF_NAME"
+            echo "commit=$GITHUB_SHA"
+            echo "package=com.renardoberou.spectralcamera"
+            echo "version_name=${GITHUB_REF_NAME#v}"
+            echo "certificate_sha256=$RELEASE_CERT_NORMALIZED"
+            cat CHECKSUMS.txt
+          } | tee RELEASE-MANIFEST.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -82,10 +145,10 @@ jobs:
             spectral-camera-*.apk
             spectral-camera-*.aab
             CHECKSUMS.txt
+            RELEASE-MANIFEST.txt
           body: |
-            Signed release. Verify the APK signature yourself before installing:
-            `apksigner verify --verbose spectral-camera-*.apk`
+            Signed stable release. The APK package, certificate and signature were verified before publication.
 
-            SHA-256 checksums are in `CHECKSUMS.txt`.
+            SHA-256 checksums are in `CHECKSUMS.txt`; build identity is in `RELEASE-MANIFEST.txt`.
           generate_release_notes: true
           fail_on_unmatched_files: true
