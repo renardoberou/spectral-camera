@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.clickable
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -82,6 +85,7 @@ fun LiveCameraScreen(
     capabilities: CameraCapabilities?,
     galleryCount: Int,
     onCapture: suspend () -> CaptureResult,
+    onImport: suspend (android.net.Uri) -> CaptureResult,
     onOpenGallery: () -> Unit,
     onOpenHardware: () -> Unit,
 ) {
@@ -250,6 +254,19 @@ fun LiveCameraScreen(
                                 Icon(Icons.Outlined.Cameraswitch, contentDescription = "Switch camera")
                             }
 
+                            val importLauncher = rememberLauncherForActivityResult(
+                                ActivityResultContracts.PickVisualMedia(),
+                            ) { uri ->
+                                if (uri != null) {
+                                    scope.launch {
+                                        captureLabel = "Processing import\u2026"
+                                        runCatching { onImport(uri) }
+                                            .onSuccess { captureLabel = "Saved ${it.displayName}" }
+                                            .onFailure { captureLabel = "Import failed: ${it.message ?: it.javaClass.simpleName}" }
+                                    }
+                                }
+                            }
+
                             FilledTonalButton(
                                 onClick = {
                                     scope.launch {
@@ -288,6 +305,15 @@ fun LiveCameraScreen(
                                 selected = false,
                                 onClick = { showAdjustments = true },
                                 label = { Text("Manual panel") },
+                            )
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    importLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
+                                label = { Text("Import photo") },
                             )
                         }
                     }
