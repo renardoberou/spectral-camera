@@ -64,7 +64,7 @@ class MediaRepository(private val context: Context) {
     }
 
     @Suppress("DEPRECATION")
-    fun loadGallery(limit: Int = 120): List<GalleryItem> {
+    fun loadGallery(limit: Int = 400): List<GalleryItem> {
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
@@ -89,7 +89,11 @@ class MediaRepository(private val context: Context) {
                     "${legacyFormerDirectory.absolutePath}/%",
                 )
         }
-        val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
+        // NULL-safe ordering: older files without DATE_TAKEN fall back to
+        // DATE_ADDED (seconds -> ms) instead of sorting last and evicting the
+        // newest captures once the 120-item history filled the old cap.
+        val sortOrder =
+            "COALESCE(${MediaStore.Images.Media.DATE_TAKEN}, ${MediaStore.Images.Media.DATE_ADDED} * 1000) DESC"
         val items = mutableListOf<GalleryItem>()
         resolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,

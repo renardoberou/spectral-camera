@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,7 +38,13 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     private val mediaRepository = MediaRepository(application)
     private val hardwareAnalyzer = HardwareTestAnalyzer()
 
-    val settings: StateFlow<CameraSettings> = settingsRepository.settings.stateIn(
+    // Manual exposure is SESSION state: never persisted, and layered over the
+    // repository flow here (forcing it false at read time fought every
+    // DataStore re-emission, snapping the Manual switch off instantly).
+    private val manualModeSession = MutableStateFlow(false)
+
+    val settings: StateFlow<CameraSettings> = settingsRepository.settings
+        .combine(manualModeSession) { persisted, manual -> persisted.copy(manualMode = manual) }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
         initialValue = CameraSettings(),
@@ -71,7 +78,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setSaveOriginal(enabled: Boolean) = updateSettings { it.copy(saveOriginal = enabled) }
     fun setFrontFacing(enabled: Boolean) = updateSettings { it.copy(frontFacing = enabled) }
     fun setHardwareEv(value: Float) = updateSettings { it.copy(hardwareEv = value) }
-    fun setManualMode(enabled: Boolean) = updateSettings { it.copy(manualMode = enabled) }
+    fun setManualMode(enabled: Boolean) { manualModeSession.value = enabled }
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
     fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) = updateSettings { it.copy(sensorMode = mode) }
