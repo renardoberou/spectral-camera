@@ -95,6 +95,18 @@ fun LiveCameraScreen(
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                captureLabel = "Processing import\u2026"
+                runCatching { onImport(uri) }
+                    .onSuccess { captureLabel = "Saved ${it.displayName}" }
+                    .onFailure { captureLabel = "Import failed: ${it.message ?: it.javaClass.simpleName}" }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -252,19 +264,6 @@ fun LiveCameraScreen(
                         ) {
                             IconButton(onClick = { viewModel.setFrontFacing(!settings.frontFacing) }) {
                                 Icon(Icons.Outlined.Cameraswitch, contentDescription = "Switch camera")
-                            }
-
-                            val importLauncher = rememberLauncherForActivityResult(
-                                ActivityResultContracts.PickVisualMedia(),
-                            ) { uri ->
-                                if (uri != null) {
-                                    scope.launch {
-                                        captureLabel = "Processing import\u2026"
-                                        runCatching { onImport(uri) }
-                                            .onSuccess { captureLabel = "Saved ${it.displayName}" }
-                                            .onFailure { captureLabel = "Import failed: ${it.message ?: it.javaClass.simpleName}" }
-                                    }
-                                }
                             }
 
                             FilledTonalButton(
