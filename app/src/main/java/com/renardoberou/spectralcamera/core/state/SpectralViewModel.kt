@@ -2,6 +2,10 @@ package com.renardoberou.spectralcamera.core.state
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.renardoberou.spectralcamera.core.CameraSettings
@@ -86,6 +90,44 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     ): CaptureResult {
         val currentSettings = settings.value
         val raw = cameraController.capture()
+        val processed = process(raw, currentSettings)
+        val result = withContext(Dispatchers.IO) {
+            mediaRepository.saveCapture(processed, raw, currentSettings)
+        }
+        refreshGallery()
+        return result
+    }
+
+    /**
+     * Import an existing photo (Android photo picker Uri) through the SAME
+     * process lambda the live capture uses, and save it exactly like a
+     * capture (including the optional untouched original). Lets a
+     * photographer run their whole back catalog through the film pipelines.
+     */
+    suspend fun importAndSave(
+        uri: Uri,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureResult {
+        val currentSettings = settings.value
+        val app = getApplication<android.app.Application>()
+        val decoded = withContext(Dispatchers.IO) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val source = ImageDecoder.createSource(app.contentResolver, uri)
+                // Software allocation: the GL upload path needs CPU-accessible
+                // pixels; ImageDecoder also applies EXIF orientation for us.
+                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                MediaStore.Images.Media.getBitmap(app.contentResolver, uri)
+            }
+        }
+        val raw = if (decoded.config != Bitmap.Config.ARGB_8888) {
+            decoded.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            decoded
+        }
         val processed = process(raw, currentSettings)
         val result = withContext(Dispatchers.IO) {
             mediaRepository.saveCapture(processed, raw, currentSettings)
