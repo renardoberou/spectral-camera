@@ -116,7 +116,10 @@ vec3 thermal(float v) {
 // hot magenta/crimson foliage, deep cyan-blue skies, white clouds, dark
 // water, waxy pale-green skin, red paint turning yellow-green.
 // gold = 1.0 selects the orange-filter variant (warmer foliage, teal skies).
-vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma) {
+// cc is the CLASSIFICATION colour: chroma-denoised (small bilateral) so the
+// material classifiers do not flicker on per-pixel/JPEG-block chroma noise.
+// Tone still comes from the full-detail c.
+vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float smoothLuma) {
     float r = c.r;
     float g = c.g;
     float b = c.b;
@@ -139,10 +142,10 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     // foliage go muddy brown and let red leak into blue water (purple pools).
     // Chromaticity (each channel's share of r+g+b) is invariant to exposure,
     // so a leaf classifies as a leaf whether sunlit or in shadow.
-    float total = r + g + b + 0.001;
-    float nr = r / total;
-    float ng = g / total;
-    float nb = b / total;
+    float total = cc.r + cc.g + cc.b + 0.001;
+    float nr = cc.r / total;
+    float ng = cc.g / total;
+    float nb = cc.b / total;
 
     float greenDom = smoothstep(0.0, 0.05, ng - nr);
     float grn = smoothstep(-0.01, 0.08, ng - nb);
@@ -183,6 +186,19 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
     ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue) * 0.72);
 
+    // Murky (algae/sediment) water: weakly green-yellow, low-chroma, and
+    // locally SMOOTH (a water surface, unlike grass, has almost no texture at
+    // the blur scale). Real EIR renders any water NIR-dark; without this the
+    // generic warm base turned murky ponds into flat toxic yellow. Gated hard
+    // on all three signals so grass and sand never match.
+    float weakGreen = smoothstep(0.015, 0.06, ng - nr) * smoothstep(0.0, 0.04, ng - nb);
+    float lowChroma = 1.0 - smoothstep(0.045, 0.10,
+        max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333)));
+    float surfSmooth = 1.0 - smoothstep(0.015, 0.06, abs(luma - smoothLuma));
+    float murky = weakGreen * lowChroma * surfSmooth * (1.0 - veg) * (1.0 - vividBlue);
+    vec3 murkyCol = vec3(luma * 0.30, luma * 0.34, luma * 0.42);
+    ir = mix(ir, murkyCol, murky * 0.55);
+
     // gold (orange-filter) variant: warmer foliage, cooler/teal sky
     ir.g = clamp(ir.g + gold * veg * 0.10, 0.0, 1.0);
     ir.b = clamp(ir.b - gold * 0.05, 0.0, 1.0);
@@ -198,9 +214,20 @@ vec3 aerochrome(vec3 c, float gold, float skyMask, float skyT, float smoothLuma)
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
     ir = mix(ir, s1, 0.55);
 
-    // baked-in reversal-film saturation
+    // Baked-in reversal-film saturation, HEADROOM-LIMITED: the boost tapers
+    // per pixel to the largest hue-preserving factor that keeps every channel
+    // in range. A flat 1.18x hard-clipped vivid subjects to solid primaries
+    // (texture-less max-red foliage, pure-yellow water); this keeps their
+    // internal gradation while identical elsewhere.
     float il = lumaOf(ir);
-    ir = clamp(vec3(il) + (ir - vec3(il)) * 1.18, 0.0, 1.0);
+    vec3 dSat = ir - vec3(il);
+    vec3 tPos = mix(vec3(1000.0), (vec3(1.0 - il)) / max(dSat, vec3(0.0001)),
+        step(vec3(0.0001), dSat));
+    vec3 tNeg = mix(vec3(1000.0), vec3(il) / max(-dSat, vec3(0.0001)),
+        step(vec3(0.0001), -dSat));
+    vec3 tCh = min(tPos, tNeg);
+    float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, 1.18);
+    ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
@@ -261,7 +288,7 @@ float irHDCurve(float e, float grade) {
     return clamp(sh * ceiling + 0.008, 0.0, 1.0);
 }
 
-float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) {
+float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, float grade) {
     // R72-filtered emulsion: blue is blocked, green heavily attenuated, so the
     // base signal is dominated by red (the film's declining NIR tail rides on
     // its red sensitisation).
@@ -282,19 +309,21 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     veg = veg * conf;
     float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt;
 
-    float total = c.r + c.g + c.b + 0.001;
-    float nrr = c.r / total;
-    float ngg = c.g / total;
-    float nbb = c.b / total;
+    // chroma-denoised classification colour: stops the sky/skin detectors
+    // flickering on JPEG chroma-block noise (the leopard-spot artifact)
+    float total = cc.r + cc.g + cc.b + 0.001;
+    float nrr = cc.r / total;
+    float ngg = cc.g / total;
+    float nbb = cc.b / total;
 
     // Sky: Rayleigh scattering is absent in NIR, so sky goes Zone I-II.
     // Two detectors: chromaticity (saturated blue sky) plus an absolute
     // pale/hazy-sky signal (bright with B >= G >= R), which chromaticity
     // alone misses. Vegetation is excluded (foliage always has G >= B).
     float skyChroma = smoothstep(0.03, 0.11, nbb - max(nrr, ngg * 0.97));
-    float skyHazy = smoothstep(0.30, 0.72, c.b)
-        * smoothstep(0.01, 0.07, c.b - c.g)
-        * smoothstep(-0.01, 0.05, c.b - c.r);
+    float skyHazy = smoothstep(0.30, 0.72, cc.b)
+        * smoothstep(0.01, 0.07, cc.b - cc.g)
+        * smoothstep(-0.01, 0.05, cc.b - cc.r);
     float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
     float skyStr = 0.88;
     if (grade > 0.5 && grade < 1.5) skyStr = 0.92;    // HIE: denser skies
@@ -319,7 +348,7 @@ float irLuminance(vec3 c, float veg, float smoothLuma, float skyT, float grade) 
     return clamp(ir, 0.0, 1.0);
 }
 
-vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
+vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLuma) {
     float r = src.r;
     float g = src.g;
     float b = src.b;
@@ -329,10 +358,10 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     // B&W IR model, separate from Aerochrome: exposure-invariant chromaticity
     // vegetation drives the Wood-effect glow, so foliage classifies the same
     // in sun or shadow (no more muddy shaded canopy in the mono presets).
-    float totM = r + g + b + 0.001;
-    float nrM = r / totM;
-    float ngM = g / totM;
-    float nbM = b / totM;
+    float totM = srcC.r + srcC.g + srcC.b + 0.001;
+    float nrM = srcC.r / totM;
+    float ngM = srcC.g / totM;
+    float nbM = srcC.b / totM;
     float foliage = clamp(
         smoothstep(-0.01, 0.08, ngM - nbM)
             * smoothstep(0.0, 0.05, ngM - nrM)
@@ -342,34 +371,40 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
     float warm = max(0.0, r - b);
     float cool = max(0.0, b - r);
 
+    // Halation is a POINT-SOURCE effect: light punching through the emulsion
+    // around genuinely bright spots. Keyed on local contrast (luma above the
+    // smoothed surround) so a uniformly bright hazy sky or blown backlit
+    // canopy no longer fogs the whole frame flat; discrete highlights still
+    // bloom fully.
+    float halo = 0.35 + 0.65 * smoothstep(0.015, 0.09, luma - smoothLuma);
     if (uPreset == 0) {
         // Rollei Infrared 400: sharp, fine-grained, restrained glow (the film
         // HAS an anti-halation layer, so halation is minimal)
-        float ir = irLuminance(src, foliage, smoothLuma, skyT, 0.0);
+        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 0.0);
         float m = irHDCurve(ir, 0.0);
-        m = clamp(m + smoothstep(0.78, 0.98, smoothLuma) * 0.05, 0.0, 1.0);
+        m = clamp(m + smoothstep(0.78, 0.98, smoothLuma) * 0.05 * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 1) {
         // Kodak HIE style: no anti-halation backing -> the famous bloom
-        float ir = irLuminance(src, foliage, smoothLuma, skyT, 1.0);
+        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 1.0);
         float m = irHDCurve(ir, 1.0);
-        m = clamp(m + smoothstep(0.68, 0.96, smoothLuma) * 0.14, 0.0, 1.0);
+        m = clamp(m + smoothstep(0.68, 0.96, smoothLuma) * 0.14 * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 2) {
         // Ilford SFX 200: extended-red, grey acetate base gives good halation
         // protection -> minimal glow, gentler tonality
-        float ir = irLuminance(src, foliage, smoothLuma, skyT, 2.0);
+        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 2.0);
         float m = irHDCurve(ir, 2.0);
-        m = clamp(m + smoothstep(0.80, 0.98, smoothLuma) * 0.04, 0.0, 1.0);
+        m = clamp(m + smoothstep(0.80, 0.98, smoothLuma) * 0.04 * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 3) {
-        return aerochrome(src, 0.0, skyMask, skyT, smoothLuma);
+        return aerochrome(src, srcC, 0.0, skyMask, skyT, smoothLuma);
     }
     if (uPreset == 4) {
-        return aerochrome(src, 1.0, skyMask, skyT, smoothLuma);
+        return aerochrome(src, srcC, 1.0, skyMask, skyT, smoothLuma);
     }
     if (uPreset == 5) {
         vec3 red720 = vec3(
@@ -394,10 +429,11 @@ vec3 presetColor(vec3 src, float skyMask, float skyT, float smoothLuma) {
 }
 
 void main() {
-    vec3 src = texture2D(uTexture, vTexCoord).rgb;
+    vec3 raw = texture2D(uTexture, vTexCoord).rgb;
+    float rawLuma = lumaOf(raw);
     // Capture-time auto-levels: gentle black/white points measured from the
     // still's own histogram (Kotlin side). Preview passes 0/1 = identity.
-    src = clamp((src - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+    vec3 src = clamp((raw - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
 
     // ---- sky detection ---------------------------------------------------
     // Sky is a low-frequency phenomenon, so the mask is built from a wide
@@ -411,6 +447,43 @@ void main() {
     // print shows film-like grain rather than pixel-fine digital speckle.
     vec2 pix0 = vTexCoord / max(uTexelSize, vec2(0.00001));
     vec2 grainUv = vTexCoord * 720.0;
+
+    // ---- classification chroma denoise -------------------------------------
+    // Small-radius luma-bilateral average feeding ONLY the material
+    // classifiers (vegetation/sky/water/skin chromaticity). Phone JPEGs carry
+    // per-pixel and 8x8-block chroma noise; the narrow smoothstep gates in the
+    // classifiers flicker across it, which rendered foliage and bark as a
+    // black/white leopard-spot patchwork. Averaging chroma over a few texels
+    // (luma-gated so material edges stay crisp) removes the flicker; tone is
+    // still taken from the full-detail pixel. Verified in simulation: spatial
+    // classifier noise drops below the clean-source level with BETTER
+    // classification accuracy than per-pixel.
+    vec2 cr1 = uTexelSize * 2.0;
+    vec2 cr2 = uTexelSize * 4.0;
+    vec3 cAcc = raw;
+    float cWsum = 1.0;
+    vec3 cTap;
+    float cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2( cr1.x, 0.0)).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2(-cr1.x, 0.0)).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2(0.0,  cr1.y)).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2(0.0, -cr1.y)).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2( cr2.x,  cr2.y) * 0.7).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2(-cr2.x,  cr2.y) * 0.7).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2( cr2.x, -cr2.y) * 0.7).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    cTap = texture2D(uTexture, vTexCoord + vec2(-cr2.x, -cr2.y) * 0.7).rgb;
+    cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
+    vec3 srcC = cAcc / cWsum;
+    // auto-levels must hit the classification colour identically
+    srcC = clamp((srcC - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+    // ------------------------------------------------------------------------
 
     vec2 r1 = vec2(0.016, 0.016);
     vec2 r2 = vec2(0.032, 0.032);
@@ -488,7 +561,7 @@ void main() {
     skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
     // -----------------------------------------------------------------------
 
-    vec3 c = presetColor(src, skyMask, skyT, bLuma);
+    vec3 c = presetColor(src, srcC, skyMask, skyT, bLuma);
 
     // Monochrome IR film character (Rollei/HIE/SFX presets only): density-
     // dependent grain in the shared grain stage below; halation is applied
