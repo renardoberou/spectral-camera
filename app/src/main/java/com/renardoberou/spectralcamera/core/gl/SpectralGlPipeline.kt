@@ -152,6 +152,17 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float notBlueC = 1.0 - smoothstep(0.0, 0.06, nb - max(nr, ng));
     float veg = clamp(grn * notBlueC * greenDom, 0.0, 1.0);
 
+    // Olive/yellow-green foliage: chlorophyll present but nr approaches ng
+    // (naturally yellow-green species, partial senescence), which fails the
+    // strict greenDom gate above and fell through to the generic warm base,
+    // rendering real foliage as a flat toxic-yellow patch. Pavement/concrete/
+    // facades sit at the same near-zero ng-nr but never reach this ng-nb
+    // margin (measured ~0.20+ on real foliage vs <=0.06 on built surfaces),
+    // so that alone safely separates them without a texture gate.
+    float oliveGreenBlue = smoothstep(0.12, 0.22, ng - nb);
+    float nearNeutralRG = 1.0 - smoothstep(0.03, 0.09, abs(ng - nr));
+    float oliveVeg = clamp(oliveGreenBlue * nearNeutralRG * notBlueC * (1.0 - veg), 0.0, 1.0);
+
     // Water/glass is CYAN-LEANING blue (green share well above red) and keeps
     // the vivid indigo rendering. Skylight-lit shadow on walls is NEUTRAL-
     // leaning blue and goes DARK - which is what the film's yellow filter
@@ -185,6 +196,13 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // skylight shadow: film-correct darkening, faintly cool
     vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
     ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue) * 0.72);
+
+    // Olive foliage renders as a distinct, less-saturated warm coral rather
+    // than the full hot-red used for deep-green veg, so the two foliage
+    // types stay visually differentiated (varying NIR reflectance across
+    // species/health, as real EIR film shows).
+    vec3 oliveCol = mix(vec3(luma), folCol, 0.55);
+    ir = mix(ir, oliveCol, oliveVeg * 0.75);
 
     // Murky (algae/sediment) water: weakly green-yellow, low-chroma, and
     // locally SMOOTH (a water surface, unlike grass, has almost no texture at
@@ -367,6 +385,17 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
             * smoothstep(0.0, 0.05, ngM - nrM)
             * (1.0 - smoothstep(0.0, 0.06, nbM - max(nrM, ngM))),
         0.0, 1.0);
+    // Olive/yellow-green foliage (see the matching branch in aerochrome()):
+    // fails the strict ngM-nrM gate above but is unambiguously vegetation by
+    // its ngM-nbM margin, which pavement/concrete/facades never reach. Adds
+    // the same Wood-effect brightness lift so this foliage type is treated
+    // consistently across all presets, not just where a wrong hue made the
+    // gap visible.
+    float oliveGreenBlueM = smoothstep(0.12, 0.22, ngM - nbM);
+    float nearNeutralRGM = 1.0 - smoothstep(0.03, 0.09, abs(ngM - nrM));
+    float oliveFoliageM = oliveGreenBlueM * nearNeutralRGM
+        * (1.0 - smoothstep(0.0, 0.06, nbM - max(nrM, ngM)));
+    foliage = clamp(foliage + oliveFoliageM * (1.0 - foliage), 0.0, 1.0);
     float sky = max(0.0, b - g);
     float warm = max(0.0, r - b);
     float cool = max(0.0, b - r);
