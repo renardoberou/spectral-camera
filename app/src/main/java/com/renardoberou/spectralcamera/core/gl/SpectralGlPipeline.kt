@@ -179,41 +179,46 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 blueHue = mix(vec3(0.03, 0.08 + ng * 0.35, 0.85), vec3(0.42, 0.58, 0.95), paleGap);
     vec3 blueOut = blueHue * blueBright;
 
-    // Foliage: soft film shoulder instead of a hard clip - sunlit leaves roll
-    // off toward pink-white exactly like overexposed Aerochrome, so highlight
-    // detail survives instead of flattening into solid max-red.
-    float folBright = 1.0 - exp(-luma * 3.2);
-    float hiRoll = smoothstep(0.55, 0.95, luma) * 0.55;
-    vec3 folCol = mix(vec3(1.0, 0.09, 0.15), vec3(1.0, 0.60, 0.64), hiRoll) * folBright;
+    // ---- P1: water signals FIRST so foliage can respect water sanctity ----
+    float weakGreen = smoothstep(0.015, 0.06, ng - nr) * smoothstep(0.0, 0.04, ng - nb);
+    float chromaDistC = max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333));
+    float lowChroma = 1.0 - smoothstep(0.045, 0.10, chromaDistC);
+    float surfSmooth = 1.0 - smoothstep(0.015, 0.06, abs(luma - smoothLuma));
+    float murky = weakGreen * lowChroma * surfSmooth * (1.0 - veg) * (1.0 - vividBlue);
+
+    // ---- P1.3: chroma-energy floor + coherent-cast guard --------------------
+    // Large near-neutral casts (through-glass walls, haze) sit close to the
+    // neutral point in the CLASSIFICATION average; real foliage never does.
+    // This kills the red speckle rain without touching genuine vegetation.
+    float chromaFloor = smoothstep(0.035, 0.058, chromaDistC);
+    // ---- P1.4: water sanctity - foliage output may not bleed into water ----
+    float waterStrong = clamp(max(vividBlue, murky * 1.2), 0.0, 1.0);
+    float vegAll = clamp(veg + oliveVeg, 0.0, 1.0) * chromaFloor * (1.0 - waterStrong * 0.9);
+
+    // ---- P1.1 + P1.2: tone-preserving colorization on a continuous hue ----
+    // manifold. Hue position follows species/vigor (deep green -> crimson,
+    // yellow-green/olive -> coral) exactly as varying NIR reflectance renders
+    // on the real film; luminance keeps the SOURCE tonal structure with an
+    // expanded spread, so canopy clump shadows and leaf texture survive
+    // instead of flattening into crimson upholstery.
+    float species = clamp((ng - nr) / 0.085, 0.0, 1.0);
+    vec3 folHue = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
+    float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
+    float hiRoll = smoothstep(0.62, 0.95, folL) * 0.5;
+    vec3 folCol = mix(folHue, vec3(1.0, 0.62, 0.66), hiRoll) * folL;
 
     // warmth requires actual RED participation (cyan can no longer read warm)
     float warmth = clamp(r * 0.72 + max(r, g) * 0.28, 0.0, 1.0);
     vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
-    vec3 ir = mix(base, folCol, veg);
-    ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - veg));
+    vec3 ir = mix(base, folCol, vegAll);
+    ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - vegAll));
     // skylight shadow: film-correct darkening, faintly cool
     vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
-    ir = mix(ir, shadowCol, plainBlue * (1.0 - veg) * (1.0 - vividBlue) * 0.72);
+    ir = mix(ir, shadowCol, plainBlue * (1.0 - vegAll) * (1.0 - vividBlue) * 0.72);
 
-    // Olive foliage renders as a distinct, less-saturated warm coral rather
-    // than the full hot-red used for deep-green veg, so the two foliage
-    // types stay visually differentiated (varying NIR reflectance across
-    // species/health, as real EIR film shows).
-    vec3 oliveCol = mix(vec3(luma), folCol, 0.55);
-    ir = mix(ir, oliveCol, oliveVeg * 0.75);
-
-    // Murky (algae/sediment) water: weakly green-yellow, low-chroma, and
-    // locally SMOOTH (a water surface, unlike grass, has almost no texture at
-    // the blur scale). Real EIR renders any water NIR-dark; without this the
-    // generic warm base turned murky ponds into flat toxic yellow. Gated hard
-    // on all three signals so grass and sand never match.
-    float weakGreen = smoothstep(0.015, 0.06, ng - nr) * smoothstep(0.0, 0.04, ng - nb);
-    float lowChroma = 1.0 - smoothstep(0.045, 0.10,
-        max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333)));
-    float surfSmooth = 1.0 - smoothstep(0.015, 0.06, abs(luma - smoothLuma));
-    float murky = weakGreen * lowChroma * surfSmooth * (1.0 - veg) * (1.0 - vividBlue);
+    // Murky (algae/sediment) water renders NIR-dark and NEUTRAL - never red.
     vec3 murkyCol = vec3(luma * 0.30, luma * 0.34, luma * 0.42);
     ir = mix(ir, murkyCol, murky * 0.55);
 
@@ -227,6 +232,14 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float greyC = (1.0 - smoothstep(0.020, 0.075, chromaDist)) * smoothstep(0.25, 0.60, luma);
     vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
     ir = mix(ir, cream, greyC * 0.85);
+
+    // P1.5: unified reversal grade - strongly-colored man-made objects pass
+    // through a soft dye pull instead of keeping native color, so playgrounds
+    // and signage read as part of the same film frame, not stickers.
+    float manMade = smoothstep(0.10, 0.16, chromaDistC)
+        * (1.0 - vegAll) * (1.0 - vividBlue) * (1.0 - skyMask);
+    vec3 dyeG = mix(ir, vec3(lumaOf(ir)) * vec3(1.06, 1.0, 0.90), 0.40);
+    ir = mix(ir, dyeG, manMade * 0.45);
 
     // slide-film S-curve: crushed toe, rolled shoulder
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
@@ -245,6 +258,8 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
         step(vec3(0.0001), -dSat));
     vec3 tCh = min(tPos, tNeg);
     float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, 1.18);
+    // water keeps its transparency: no reversal-sat push on pools/ponds
+    tSat = mix(tSat, 1.0, clamp(vividBlue + murky, 0.0, 1.0) * 0.6);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
@@ -316,16 +331,20 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // ~50% in NIR. The lift is saturation-aware (sigmoid, not multiply) so
     // sunlit foliage lands at Zone VII-VIII TEXTURED, never clipped.
     // HIE reaches deeper into NIR (stronger); SFX is extended-red only (weaker).
-    float liftAmt = 0.56;
-    if (grade > 0.5 && grade < 1.5) liftAmt = 0.68;   // HIE
-    if (grade > 1.5) liftAmt = 0.40;                  // SFX 200
+    float liftAmt = 0.52;
+    if (grade > 0.5 && grade < 1.5) liftAmt = 0.64;   // HIE
+    if (grade > 1.5) liftAmt = 0.38;                  // SFX 200
     // Deep-shadow confidence: chromaticity is numerically unstable near black
     // (tiny noisy RGB over tiny totals), which rendered night shadows as a
     // blocky classifier patchwork. Below the floor everything falls back to
     // the plain film response.
     float conf = smoothstep(0.035, 0.12, smoothLuma);
     veg = veg * conf;
-    float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt;
+    // P1.1 (mono): tone-modulated lift - darker canopy clumps lift less than
+    // sunlit ones, so the Wood effect keeps intra-canopy structure instead of
+    // fusing into a white sheet. Spread validated on the overcast field shot.
+    float toneMod = 0.55 + 0.70 * clamp((irBase - 0.28) * 1.7, 0.0, 1.0);
+    float ir = irBase + veg * smoothstep(0.0, 0.80, 1.0 - irBase) * liftAmt * toneMod;
 
     // chroma-denoised classification colour: stops the sky/skin detectors
     // flickering on JPEG chroma-block noise (the leopard-spot artifact)
@@ -396,6 +415,8 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     float oliveFoliageM = oliveGreenBlueM * nearNeutralRGM
         * (1.0 - smoothstep(0.0, 0.06, nbM - max(nrM, ngM)));
     foliage = clamp(foliage + oliveFoliageM * (1.0 - foliage), 0.0, 1.0);
+    float chromaDistM = max(max(abs(nrM - 0.3333), abs(ngM - 0.3333)), abs(nbM - 0.3333));
+    foliage = foliage * smoothstep(0.035, 0.058, chromaDistM);
     float sky = max(0.0, b - g);
     float warm = max(0.0, r - b);
     float cool = max(0.0, b - r);
