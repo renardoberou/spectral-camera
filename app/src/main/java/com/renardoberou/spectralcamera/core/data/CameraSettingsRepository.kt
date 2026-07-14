@@ -52,6 +52,8 @@ class CameraSettingsRepository(context: Context) {
             manualMode = false,
             manualIso = prefs[MANUAL_ISO] ?: 400,
             manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
+            intensity = (prefs[INTENSITY] ?: 1f).coerceIn(0.25f, 1f),
+            zebraEnabled = prefs[ZEBRA] ?: false,
         )
     }
 
@@ -77,6 +79,8 @@ class CameraSettingsRepository(context: Context) {
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
             prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
+            prefs[INTENSITY] = settings.intensity
+            prefs[ZEBRA] = settings.zebraEnabled
         }
     }
 
@@ -102,5 +106,7 @@ class CameraSettingsRepository(context: Context) {
         val MANUAL_MODE = booleanPreferencesKey("manual_mode")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
         val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
+        val INTENSITY = floatPreferencesKey("look_intensity")
+        val ZEBRA = booleanPreferencesKey("zebra_enabled")
     }
 }

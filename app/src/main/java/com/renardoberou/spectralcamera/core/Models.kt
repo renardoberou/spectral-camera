@@ -86,6 +86,10 @@ data class CameraSettings(
     val manualIso: Int = 400,
     /** Shutter time in nanoseconds (default 1/125s). */
     val manualShutterNs: Long = 8_000_000L,
+    /** Look intensity: 1.0 = full film effect, lower blends toward source. */
+    val intensity: Float = 1f,
+    /** Preview-only clipping zebras over near-blown highlights. */
+    val zebraEnabled: Boolean = false,
 )
 
 data class CameraCapabilities(

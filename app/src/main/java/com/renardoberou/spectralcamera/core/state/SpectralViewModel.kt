@@ -81,6 +81,10 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setManualMode(enabled: Boolean) { manualModeSession.value = enabled }
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
+
+    fun setIntensity(value: Float) = updateSettings { it.copy(intensity = value) }
+
+    fun setZebra(enabled: Boolean) = updateSettings { it.copy(zebraEnabled = enabled) }
     fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) = updateSettings { it.copy(sensorMode = mode) }
 
     fun updateAdjustments(transform: (com.renardoberou.spectralcamera.core.ManualAdjustments) -> com.renardoberou.spectralcamera.core.ManualAdjustments) {

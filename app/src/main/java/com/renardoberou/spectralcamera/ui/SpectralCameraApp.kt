@@ -233,7 +233,14 @@ private fun AppShell(
                     )
                 }
                 composable(Route.Gallery.route) {
-                    GalleryScreen(viewModel = viewModel)
+                    GalleryScreen(
+                        viewModel = viewModel,
+                        onReprocess = { uri ->
+                            viewModel.importAndSave(uri) { raw, captureSettings ->
+                                glView.process(raw, captureSettings)
+                            }
+                        },
+                    )
                 }
                 composable(Route.Hardware.route) {
                     HardwareTestScreen(

@@ -184,6 +184,11 @@ fun LiveCameraScreen(
                         shape = MaterialTheme.shapes.large,
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SteppedControl(
+                                label = "Look intensity",
+                                options = listOf("25%" to 0.25f, "50%" to 0.5f, "75%" to 0.75f, "100%" to 1.0f),
+                                value = settings.intensity,
+                            ) { v -> viewModel.setIntensity(v) }
                             if (capabilities.manualExposureSupported) {
                                 SteppedControl(
                                     label = "Exposure mode",
@@ -313,6 +318,11 @@ fun LiveCameraScreen(
                                     )
                                 },
                                 label = { Text("Import photo") },
+                            )
+                            FilterChip(
+                                selected = settings.zebraEnabled,
+                                onClick = { viewModel.setZebra(!settings.zebraEnabled) },
+                                label = { Text("Zebras") },
                             )
                         }
                     }

@@ -72,6 +72,8 @@ uniform float uGrain;
 uniform float uGrainSeed;
 uniform float uAutoLo;
 uniform float uAutoHi;
+uniform float uIntensity;
+uniform float uZebra;
 uniform float uSharpness;
 uniform float uRedWeight;
 uniform float uFoliageLift;
@@ -710,6 +712,20 @@ void main() {
     c += hashNoise(grainUv * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
     c += hashNoise(grainUv * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.006;
 
+    // Look intensity: blend the finished film look against the levelled
+    // source. 1.0 = full effect; lower values are the pro dial-it-back
+    // control every film-emulation workflow expects.
+    c = mix(src, c, clamp(uIntensity, 0.0, 1.0));
+
+    // Clipping zebras (preview only; the capture path passes uZebra = 0):
+    // diagonal stripes over anything within a breath of clipping, so blown
+    // exposure is visible BEFORE the shot, not in the gallery afterwards.
+    if (uZebra > 0.5 && lumaOf(c) > 0.965) {
+        if (mod(gl_FragCoord.x + gl_FragCoord.y, 14.0) < 7.0) {
+            c = mix(c, vec3(1.0, 0.15, 0.15), 0.75);
+        }
+    }
+
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """
@@ -888,6 +904,7 @@ class SpectralRenderer(
             grainSeed = frameIndex.toFloat(),
             skyUpX = skyUpX,
             skyUpY = skyUpY,
+            zebraOverlay = settings.zebraEnabled,
         )
     }
 
@@ -1048,6 +1065,7 @@ class SpectralRenderer(
         skyUpY: Float,
         autoLo: Float = 0f,
         autoHi: Float = 1f,
+        zebraOverlay: Boolean = false,
     ) {
         val adj = currentSettings.adjustments
         GLES20.glUseProgram(program.id)
@@ -1074,6 +1092,8 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
         GLES20.glUniform1f(program.uAutoLo, autoLo)
         GLES20.glUniform1f(program.uAutoHi, autoHi)
+        GLES20.glUniform1f(program.uIntensity, currentSettings.intensity)
+        GLES20.glUniform1f(program.uZebra, if (zebraOverlay) 1f else 0f)
         GLES20.glUniform2f(program.uSkyUp, skyUpX, skyUpY)
         GLES20.glUniform1f(program.uSharpness, adj.sharpness)
         GLES20.glUniform1f(program.uRedWeight, adj.redChannelWeight)
@@ -1128,6 +1148,8 @@ class SpectralRenderer(
         val uGrainSeed = GLES20.glGetUniformLocation(id, "uGrainSeed")
         val uAutoLo = GLES20.glGetUniformLocation(id, "uAutoLo")
         val uAutoHi = GLES20.glGetUniformLocation(id, "uAutoHi")
+        val uIntensity = GLES20.glGetUniformLocation(id, "uIntensity")
+        val uZebra = GLES20.glGetUniformLocation(id, "uZebra")
         val uSkyUp = GLES20.glGetUniformLocation(id, "uSkyUp")
         val uSharpness = GLES20.glGetUniformLocation(id, "uSharpness")
         val uRedWeight = GLES20.glGetUniformLocation(id, "uRedWeight")

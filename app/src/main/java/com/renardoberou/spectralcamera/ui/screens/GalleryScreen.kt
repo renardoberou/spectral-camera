@@ -51,7 +51,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -66,7 +68,9 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun GalleryScreen(viewModel: SpectralViewModel) {
+fun GalleryScreen(viewModel: SpectralViewModel,
+    onReprocess: suspend (Uri) -> Unit = {},
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val galleryState by viewModel.galleryState.collectAsStateWithLifecycle()
@@ -173,6 +177,7 @@ fun GalleryScreen(viewModel: SpectralViewModel) {
 
     selected?.let { item ->
         GalleryDetailDialog(
+            onReprocess = onReprocess,
             item = item,
             onDismiss = { selected = null },
         )
@@ -252,7 +257,12 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
 }
 
 @Composable
-private fun GalleryDetailDialog(item: GalleryItem, onDismiss: () -> Unit) {
+private fun GalleryDetailDialog(
+    item: GalleryItem,
+    onDismiss: () -> Unit,
+    onReprocess: suspend (Uri) -> Unit = {},
+) {
+    val scope = rememberCoroutineScope()
     val thumbnail by rememberGalleryThumbnail(item.uri)
     val bitmap = thumbnail.bitmap
     Dialog(onDismissRequest = onDismiss) {
@@ -281,6 +291,14 @@ private fun GalleryDetailDialog(item: GalleryItem, onDismiss: () -> Unit) {
                     }
                 }
                 Text("URI: ${item.uri}", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = {
+                    scope.launch {
+                        onReprocess(item.uri)
+                        onDismiss()
+                    }
+                }) {
+                    Text("Process with current preset")
+                }
                 RowActions(uri = item.uri, onDismiss = onDismiss)
             }
         }
