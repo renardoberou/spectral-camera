@@ -172,7 +172,11 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // building faces without touching the pool.
     float blueC = smoothstep(0.030, 0.10, nb - max(nr, ng));
     float waterC = smoothstep(0.05, 0.14, ng - nr) * smoothstep(0.02, 0.08, nb - nr);
-    float cyanC = smoothstep(0.025, 0.09, min(ng, nb) - nr);
+    float surfCalm = 1.0 - smoothstep(0.015, 0.06, abs(luma - smoothLuma));
+    // cyan-vivid is for water and glass - SMOOTH surfaces. Backlit palm
+    // fronds are cyan-leaning but textured; without this gate they flipped
+    // vivid blue.
+    float cyanC = smoothstep(0.025, 0.09, min(ng, nb) - nr) * surfCalm;
     float vividBlue = clamp(waterC * max(blueC, smoothstep(0.02, 0.08, nb - nr)) + cyanC * 0.6, 0.0, 1.0);
     float plainBlue = clamp(blueC * (1.0 - waterC), 0.0, 1.0);
     float blueBright = clamp(luma * 1.35 + 0.02, 0.0, 1.0) * smoothstep(0.10, 0.35, luma);
@@ -218,7 +222,10 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - vegAll));
     // skylight shadow: film-correct darkening, faintly cool
     vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
-    ir = mix(ir, shadowCol, plainBlue * (1.0 - vegAll) * (1.0 - vividBlue) * 0.72);
+    // saturated blue OBJECTS (denim, paint) darken harder than faint skylight
+    // shadow - the yellow filter kills blue light in proportion
+    float blueObj = mix(0.72, 0.93, smoothstep(0.06, 0.12, chromaDistC));
+    ir = mix(ir, shadowCol, plainBlue * (1.0 - vegAll) * (1.0 - vividBlue) * blueObj);
 
     // Murky (algae/sediment) water renders NIR-dark and NEUTRAL - never red.
     vec3 murkyCol = vec3(luma * 0.30, luma * 0.34, luma * 0.42);
@@ -261,8 +268,22 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 tCh = min(tPos, tNeg);
     float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, 1.18);
     // water keeps its transparency: no reversal-sat push on pools/ponds
-    tSat = mix(tSat, 1.0, clamp(vividBlue + murky, 0.0, 1.0) * 0.6);
+    tSat = mix(tSat, 1.0, clamp(vividBlue + murky + plainBlue * 0.8, 0.0, 1.0) * 0.6);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
+
+    // No saturation from nowhere: reversal film cannot create chroma that was
+    // not in the exposure. For NON-vegetation pixels, output chroma is capped
+    // relative to source chroma - this renders reflective algae ponds dark
+    // umber instead of blood red, denim dark instead of royal blue, and kills
+    // posterized water, without attempting (unreliable) water segmentation.
+    // Foliage, the sky ramp, and genuinely saturated subjects are unaffected.
+    float capMag = chromaDistC * 2.2 + 0.06;
+    float il2 = lumaOf(ir);
+    vec3 d2 = ir - vec3(il2);
+    float outMag = max(max(abs(d2.r), abs(d2.g)), abs(d2.b));
+    float capScale = min(1.0, capMag / max(outMag, 0.0001));
+    float capApply = (1.0 - smoothstep(0.25, 0.50, vegAll)) * (1.0 - skyMask);
+    ir = mix(ir, vec3(il2) + d2 * capScale, capApply);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
@@ -360,8 +381,8 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // pale/hazy-sky signal (bright with B >= G >= R), which chromaticity
     // alone misses. Vegetation is excluded (foliage always has G >= B).
     float skyChroma = smoothstep(0.03, 0.11, nbb - max(nrr, ngg * 0.97));
-    float skyHazy = smoothstep(0.30, 0.72, cc.b)
-        * smoothstep(0.01, 0.07, cc.b - cc.g)
+    float skyHazy = smoothstep(0.42, 0.78, cc.b)
+        * smoothstep(0.02, 0.09, cc.b - cc.g)
         * smoothstep(-0.01, 0.05, cc.b - cc.r);
     float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
     float skyStr = 0.88;
