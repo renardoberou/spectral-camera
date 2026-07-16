@@ -207,11 +207,22 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // on the real film; luminance keeps the SOURCE tonal structure with an
     // expanded spread, so canopy clump shadows and leaf texture survive
     // instead of flattening into crimson upholstery.
+    // Authentic Aerochrome hue: IR-reflective leaves reflect BOTH near-IR
+    // (renders red) AND green visible light (renders blue); their ratio is
+    // what makes real foliage MAGENTA-red, not pure red. We add a blue
+    // component scaled by the source's green-visible strength, giving the
+    // crimson->magenta manifold the film is known for.
     float species = clamp((ng - nr) / 0.085, 0.0, 1.0);
-    vec3 folHue = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
+    // green-visible share drives the magenta lift; grass (thin blades, high
+    // green share) skews bluer/magenta, broadleaf canopy stays redder - the
+    // documented "grass shows a bluer hue of red" behaviour.
+    float greenShare = smoothstep(0.30, 0.42, ng);
+    float magenta = greenShare * (0.30 + 0.30 * species);
+    vec3 folRed = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
+    vec3 folMag = mix(folRed, vec3(0.92, 0.05, 0.48), magenta);
     float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
     float hiRoll = smoothstep(0.62, 0.95, folL) * 0.5;
-    vec3 folCol = mix(folHue, vec3(1.0, 0.62, 0.66), hiRoll) * folL;
+    vec3 folCol = mix(folMag, vec3(1.0, 0.62, 0.72), hiRoll) * folL;
 
     // warmth requires actual RED participation (cyan can no longer read warm)
     float warmth = clamp(r * 0.72 + max(r, g) * 0.28, 0.0, 1.0);
