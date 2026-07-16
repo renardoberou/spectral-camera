@@ -271,26 +271,6 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     tSat = mix(tSat, 1.0, clamp(vividBlue + murky + plainBlue * 0.8, 0.0, 1.0) * 0.6);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
 
-    // No saturation from nowhere: reversal film cannot create chroma that was
-    // not in the exposure. For NON-vegetation pixels, output chroma is capped
-    // relative to source chroma - this renders reflective algae ponds dark
-    // umber instead of blood red, denim dark instead of royal blue, and kills
-    // posterized water, without attempting (unreliable) water segmentation.
-    // Foliage, the sky ramp, and genuinely saturated subjects are unaffected.
-    // v1.11.1 shipped this cap at 2.2x + 0.06: on the measured pond that
-    // yields capScale 0.89 - an 11% trim, invisible by construction. The
-    // corrected constants target capScale ~0.45 on low-chroma sources
-    // (algae pond, denim) = saturation halved = dark umber / dark denim.
-    float capMag = chromaDistC * 1.2 + 0.02;
-    float il2 = lumaOf(ir);
-    vec3 d2 = ir - vec3(il2);
-    float outMag = max(max(abs(d2.r), abs(d2.g)), abs(d2.b));
-    float capScale = min(1.0, capMag / max(outMag, 0.0001));
-    // gate raised: only STRONG vegetation classification escapes the cap, so
-    // patchy low-confidence veg on water reflections can no longer keep the
-    // manufactured red alive
-    float capApply = (1.0 - smoothstep(0.45, 0.75, vegAll)) * (1.0 - skyMask);
-    ir = mix(ir, vec3(il2) + d2 * capScale, capApply);
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
