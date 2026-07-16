@@ -406,6 +406,40 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     return clamp(ir, 0.0, 1.0);
 }
 
+// Physics-correct halation (threshold-then-spread): only energy exceeding
+// the film's latitude halates. Light passes through the emulsion, reflects
+// off the base, and re-exposes the layers from behind - ORANGE right at the
+// overexposed border (reflected energy still reaches the green layer), RED
+// further out. Keyed on SOURCE exposure, never output tone, and it must
+// never bleed from midtones - that is the classic amateur-emulation tell.
+// Returns vec2(tight ring, wide ring), each 0..1. Radii are normalized to a
+// 720px-tall frame so the halo is the same visual size at any resolution.
+vec2 halationEnergy(vec2 uv, float threshold) {
+    float span = max(1.0 - threshold, 0.001);
+    vec2 hUnit = uTexelSize / (720.0 * uTexelSize.y);
+    vec2 rT = hUnit * 2.6;
+    vec2 rW = hUnit * 7.0;
+    float tight = 0.0;
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(rT.x, 0.0)).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv - vec2(rT.x, 0.0)).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(0.0, rT.y)).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv - vec2(0.0, rT.y)).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv + rT * 0.707).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv - rT * 0.707).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(rT.x, -rT.y) * 0.707).rgb) - threshold);
+    tight += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(-rT.x, rT.y) * 0.707).rgb) - threshold);
+    float wide = 0.0;
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(rW.x, 0.0)).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv - vec2(rW.x, 0.0)).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(0.0, rW.y)).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv - vec2(0.0, rW.y)).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv + rW * 0.707).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv - rW * 0.707).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(rW.x, -rW.y) * 0.707).rgb) - threshold);
+    wide += max(0.0, lumaOf(texture2D(uTexture, uv + vec2(-rW.x, rW.y) * 0.707).rgb) - threshold);
+    return vec2(tight, wide) / (8.0 * span);
+}
+
 vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLuma) {
     float r = src.r;
     float g = src.g;
@@ -453,14 +487,20 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         // HAS an anti-halation layer, so halation is minimal)
         float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 0.0);
         float m = irHDCurve(ir, 0.0);
-        m = clamp(m + smoothstep(0.78, 0.98, smoothLuma) * 0.05 * halo, 0.0, 1.0);
+        // Rollei has an anti-halation layer: only the SLIGHT halo that even
+        // protected stock shows around the very brightest elements.
+        vec2 hal = halationEnergy(vTexCoord, 0.86);
+        m = clamp(m + (hal.x * 0.28 + hal.y * 0.14) * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 1) {
         // Kodak HIE style: no anti-halation backing -> the famous bloom
         float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 1.0);
         float m = irHDCurve(ir, 1.0);
-        m = clamp(m + smoothstep(0.68, 0.96, smoothLuma) * 0.14 * halo, 0.0, 1.0);
+        // HIE has NO anti-halation backing - the famous ethereal glow IS
+        // this effect. Lower threshold, strong two-ring bloom.
+        vec2 hal = halationEnergy(vTexCoord, 0.78);
+        m = clamp(m + (hal.x * 0.70 + hal.y * 0.45) * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 2) {
@@ -468,14 +508,23 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         // protection -> minimal glow, gentler tonality
         float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 2.0);
         float m = irHDCurve(ir, 2.0);
-        m = clamp(m + smoothstep(0.80, 0.98, smoothLuma) * 0.04 * halo, 0.0, 1.0);
+        vec2 hal = halationEnergy(vTexCoord, 0.87);
+        m = clamp(m + (hal.x * 0.22 + hal.y * 0.10) * halo, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 3) {
-        return aerochrome(src, srcC, 0.0, skyMask, skyT, smoothLuma);
+        vec3 col = aerochrome(src, srcC, 0.0, skyMask, skyT, smoothLuma);
+        // Even protected stock shows a slight red halo around the brightest
+        // elements; orange at the border, red further out.
+        vec2 hal = halationEnergy(vTexCoord, 0.86);
+        col += vec3(1.0, 0.42, 0.18) * hal.x * 0.30 + vec3(0.95, 0.12, 0.08) * hal.y * 0.16;
+        return clamp(col, 0.0, 1.0);
     }
     if (uPreset == 4) {
-        return aerochrome(src, srcC, 1.0, skyMask, skyT, smoothLuma);
+        vec3 col = aerochrome(src, srcC, 1.0, skyMask, skyT, smoothLuma);
+        vec2 hal = halationEnergy(vTexCoord, 0.86);
+        col += vec3(1.0, 0.48, 0.16) * hal.x * 0.30 + vec3(0.95, 0.16, 0.08) * hal.y * 0.16;
+        return clamp(col, 0.0, 1.0);
     }
     if (uPreset == 5) {
         vec3 red720 = vec3(
