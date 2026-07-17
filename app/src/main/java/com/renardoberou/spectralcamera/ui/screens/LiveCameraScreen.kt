@@ -91,6 +91,9 @@ fun LiveCameraScreen(
 ) {
     val scope = rememberCoroutineScope()
     var showPresets by remember { mutableStateOf(false) }
+    // Viewfinder-first: the exposure/look panel is collapsed by default so the
+    // preview owns the screen; one tap opens it, one tap puts it away.
+    var showExposure by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
@@ -145,7 +148,7 @@ fun LiveCameraScreen(
                     shape = MaterialTheme.shapes.large,
                     tonalElevation = 6.dp,
                 ) {
-                    Column(Modifier.padding(14.dp)) {
+                    Column(Modifier.padding(10.dp)) {
                         Text(
                             text = "Spectral Camera",
                             style = MaterialTheme.typography.headlineSmall,
@@ -179,11 +182,18 @@ fun LiveCameraScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (capabilities?.exposureSupported == true) {
+                    FilterChip(
+                        selected = showExposure,
+                        onClick = { showExposure = !showExposure },
+                        label = { Text(if (showExposure) "Exposure \u25b4" else "Exposure \u25be") },
+                    )
+                }
+                if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
                         shape = MaterialTheme.shapes.large,
                     ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             SteppedControl(
                                 label = "Look intensity",
                                 options = listOf("25%" to 0.25f, "50%" to 0.5f, "75%" to 0.75f, "100%" to 1.0f),
@@ -322,7 +332,7 @@ fun LiveCameraScreen(
                             FilterChip(
                                 selected = settings.zebraEnabled,
                                 onClick = { viewModel.setZebra(!settings.zebraEnabled) },
-                                label = { Text("Zebras") },
+                                label = { Text("Zebra") },
                             )
                         }
                     }
@@ -598,3 +608,4 @@ private fun formatStops(stops: Float): String {
         sign + String.format("%.1f", stops)
     }
 }
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
