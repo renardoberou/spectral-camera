@@ -249,7 +249,9 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // neutral preservation on CHROMATICITY: slightly-warm sunlit grey still
     // counts as grey and renders the film's pale cream instead of hard yellow
     float chromaDist = max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333));
-    float greyC = (1.0 - smoothstep(0.020, 0.075, chromaDist)) * smoothstep(0.25, 0.60, luma);
+    float coolCast = smoothstep(0.0, 0.05, nb - nr) * (1.0 - smoothstep(0.05, 0.10, chromaDistC));
+    float greyWide = 1.0 - smoothstep(0.020, mix(0.075, 0.095, coolCast), chromaDistC);
+    float greyC = greyWide * smoothstep(0.25, 0.60, luma);
     vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
     ir = mix(ir, cream, greyC * 0.85);
 
@@ -515,15 +517,19 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     if (uPreset == 3) {
         vec3 col = aerochrome(src, srcC, 0.0, skyMask, skyT, smoothLuma);
         // Even protected stock shows a slight red halo around the brightest
-        // elements; orange at the border, red further out.
+        // elements; orange at the border, red further out. The local-contrast
+        // gate keeps broad bright areas (sky) from ringing skylines - only
+        // genuine local highlights halate.
+        float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
         vec2 hal = halationEnergy(vTexCoord, 0.86);
-        col += vec3(1.0, 0.42, 0.18) * hal.x * 0.30 + vec3(0.95, 0.12, 0.08) * hal.y * 0.16;
+        col += (vec3(1.0, 0.42, 0.18) * hal.x * 0.30 + vec3(0.95, 0.12, 0.08) * hal.y * 0.12) * edgeGate;
         return clamp(col, 0.0, 1.0);
     }
     if (uPreset == 4) {
         vec3 col = aerochrome(src, srcC, 1.0, skyMask, skyT, smoothLuma);
+        float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
         vec2 hal = halationEnergy(vTexCoord, 0.86);
-        col += vec3(1.0, 0.48, 0.16) * hal.x * 0.30 + vec3(0.95, 0.16, 0.08) * hal.y * 0.16;
+        col += (vec3(1.0, 0.48, 0.16) * hal.x * 0.30 + vec3(0.95, 0.16, 0.08) * hal.y * 0.12) * edgeGate;
         return clamp(col, 0.0, 1.0);
     }
     if (uPreset == 5) {
