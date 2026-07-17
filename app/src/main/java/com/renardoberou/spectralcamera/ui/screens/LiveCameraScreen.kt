@@ -143,7 +143,7 @@ fun LiveCameraScreen(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     shape = MaterialTheme.shapes.large,
                     tonalElevation = 6.dp,
@@ -190,7 +190,7 @@ fun LiveCameraScreen(
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                         shape = MaterialTheme.shapes.large,
                     ) {
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -262,7 +262,7 @@ fun LiveCameraScreen(
                 }
 
                 Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     shape = MaterialTheme.shapes.extraLarge,
                 ) {
                     Column(
@@ -387,7 +387,7 @@ fun LiveCameraScreen(
                 showSaveNote = false
             }
             Surface(
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
                 shape = MaterialTheme.shapes.large,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
