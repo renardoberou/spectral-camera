@@ -98,6 +98,31 @@ float hashNoise(vec2 p) {
     return fract(p.x * p.y) * 2.0 - 1.0;
 }
 
+float grainHash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Smooth value noise: interpolation between lattice hashes gives SPATIALLY
+// STRUCTURED clumps instead of per-pixel white noise - the difference between
+// film grain and sensor noise at print scale.
+float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(grainHash(i), grainHash(i + vec2(1.0, 0.0)), u.x),
+        mix(grainHash(i + vec2(0.0, 1.0)), grainHash(i + vec2(1.0, 1.0)), u.x),
+        u.y);
+}
+
+// Two octaves of clumpy value noise, zero-centered; scales are in
+// 720p-normalized pixels (grain clump ~1.6px / ~3.4px at 720 tall).
+float filmGrain(vec2 uv, float seed) {
+    vec2 g = uv + vec2(seed * 17.31, seed * 9.77);
+    float n = valueNoise(g / 1.6) * 0.65 + valueNoise(g / 3.4) * 0.35;
+    return n - 0.5;
+}
+
 vec3 thermal(float v) {
     v = clamp(v, 0.0, 1.0);
     if (v < 0.20) return vec3(0.05, 0.00, 0.12 + v * 0.58);
@@ -381,7 +406,7 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // pale/hazy-sky signal (bright with B >= G >= R), which chromaticity
     // alone misses. Vegetation is excluded (foliage always has G >= B).
     float skyChroma = smoothstep(0.03, 0.11, nbb - max(nrr, ngg * 0.97));
-    float skyHazy = smoothstep(0.42, 0.78, cc.b)
+    float skyHazy = smoothstep(0.34, 0.85, cc.b)
         * smoothstep(0.02, 0.09, cc.b - cc.g)
         * smoothstep(-0.01, 0.05, cc.b - cc.r);
     float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
@@ -493,6 +518,12 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         // protected stock shows around the very brightest elements.
         vec2 hal = halationEnergy(vTexCoord, 0.86);
         m = clamp(m + (hal.x * 0.28 + hal.y * 0.14) * halo, 0.0, 1.0);
+        // Water floor + sheen: dark regions keep Zone-I tone and their
+        // specular ripple back - Rollei water is never a void. Safe on deep
+        // shadow (gains only a whisper of tone at the film's own floor).
+        float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
+        m = max(m, darkFloor * 0.055);
+        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 1) {
@@ -503,6 +534,12 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         // this effect. Lower threshold, strong two-ring bloom.
         vec2 hal = halationEnergy(vTexCoord, 0.78);
         m = clamp(m + (hal.x * 0.70 + hal.y * 0.45) * halo, 0.0, 1.0);
+        // Water floor + sheen: dark regions keep Zone-I tone and their
+        // specular ripple back - Rollei water is never a void. Safe on deep
+        // shadow (gains only a whisper of tone at the film's own floor).
+        float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
+        m = max(m, darkFloor * 0.055);
+        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 2) {
@@ -512,6 +549,12 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         float m = irHDCurve(ir, 2.0);
         vec2 hal = halationEnergy(vTexCoord, 0.87);
         m = clamp(m + (hal.x * 0.22 + hal.y * 0.10) * halo, 0.0, 1.0);
+        // Water floor + sheen: dark regions keep Zone-I tone and their
+        // specular ripple back - Rollei water is never a void. Safe on deep
+        // shadow (gains only a whisper of tone at the film's own floor).
+        float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
+        m = max(m, darkFloor * 0.055);
+        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
         return vec3(m);
     }
     if (uPreset == 3) {
@@ -759,17 +802,16 @@ void main() {
     // film grain
     if (uGrain > 0.001) {
         // Grain is strictly opt-in (default Off = perfectly clean output).
-        // When enabled on the mono IR presets it stays density-dependent
-        // (Poisson-like: strongest in midtones, near-zero in deep shadow and
-        // clean highlights); per-pixel hash noise reads as sensor noise at
-        // print scale, so amplitudes are kept low even at Coarse.
+        // Structured value-noise clumps replace per-pixel white noise: film
+        // grain has spatial correlation; sensor noise does not. Density-
+        // dependent on the mono presets (Poisson-like: strongest in midtones).
         float grainAmp = uGrain * 0.045;
         if (uPreset <= 2) {
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
             grainAmp = uGrain * 0.040 * densityWeight;
         }
-        c += hashNoise(grainUv * 0.73 + vec2(uGrainSeed)) * grainAmp;
+        c += filmGrain(grainUv, uGrainSeed) * grainAmp * 2.2;
     }
 
     // channel swap
@@ -783,8 +825,12 @@ void main() {
 
     // sub-LSB dither: prevents 8-bit banding in smooth gradients; the sky
     // gets a stronger decorrelated octave where ramps amplify source steps
-    c += hashNoise(grainUv * 1.7 + vec2(uGrainSeed * 0.37)) * 0.005;
-    c += hashNoise(grainUv * 0.91 + vec2(uGrainSeed * 0.61 + 17.0)) * skyMask * 0.006;
+    // Interleaved-gradient noise: dramatically better distributed than white
+    // noise at the same amplitude - smooth sky gradients stay SILKY while
+    // banding is still broken. Sky assist halved accordingly.
+    float ign = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y)) - 0.5;
+    c += ign * 0.006;
+    c += ign * skyMask * 0.003;
 
     // Look intensity: blend the finished film look against the levelled
     // source. 1.0 = full effect; lower values are the pro dial-it-back
