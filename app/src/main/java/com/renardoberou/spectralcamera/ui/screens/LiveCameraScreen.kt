@@ -608,4 +608,3 @@ private fun formatStops(stops: Float): String {
         sign + String.format("%.1f", stops)
     }
 }
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
