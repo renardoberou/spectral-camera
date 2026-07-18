@@ -2,7 +2,7 @@
 
 An Android camera app that emulates infrared and false-colour spectral film looks in real time. The live preview and the saved photo are rendered by the *same* OpenGL ES fragment shader, so what you see through the viewfinder is what you get in the file.
 
-**Current development version:** 1.8.7 (versionCode 29) · **Status:** actively developed and manually verified on a Motorola Edge 60 Fusion running Android 16. Focused JVM tests cover gallery permission policy; camera output and device integration still require physical-device testing.
+**Current development version:** 1.15.0 (versionCode 43) · **Status:** actively developed and manually verified on a Motorola Edge 60 Fusion running Android 16. Focused JVM tests cover gallery permission policy; camera output and device integration still require physical-device testing.
 
 **Latest signed stable release:** [`v1.8.2`](https://github.com/renardoberou/spectral-camera/releases/tag/v1.8.2), with APK, AAB, and SHA-256 checksums. Stable releases are signed only by the tag-triggered release workflow using private GitHub Actions secrets.
 
@@ -20,19 +20,39 @@ External IR/thermal hardware integration exists only as a UI framework (`SensorM
 - Capture targets the sensor's highest available resolution, requesting up to 8160×6144 on capable hardware. CameraX falls back to the next supported resolution where the camera HAL does not expose an unbinned mode.
 - Saved JPEGs use compression quality 100.
 
-### Spectral presets
+### Spectral presets: two structured film-look families
 
-| Preset | What it does |
+Presets are not one-off shader hacks. Each family shares a single physically-
+motivated rendering engine (`monoLook()` / `aeroLook()` in
+`SpectralGlPipeline.kt`); every family member is a *data table entry* in
+`core/FilmLook.kt` (`FilmLookLibrary`) that reparameterizes the shared
+engine's tone curve, synthetic-NIR/Wood-effect strength, sky response, water
+floor, halation, grain, and acutance. Adding a new stock is a table entry,
+not new shader code. See `core/FilmLook.kt` for the full parameter set and
+`docs/VALIDATION.md` for how each family behaves on named failure scenes.
+
+**Monochrome IR family** (`core/gl/SpectralGlPipeline.kt`'s `monoLook()`, driven by `MonoIRLook`):
+
+| Preset | Character |
 |---|---|
-| Rollei Infrared 400 | Reference monochrome IR emulation with textured bright foliage, dense skies, fine grain, and a calibrated film-style tone curve. |
-| Kodak HIE | Deeper toe, denser skies, and stronger halation. |
-| Ilford SFX 200 | Gentler grade, milder Wood effect, and finer tonal separation. |
-| Aerochrome-Style False Colour | Synthesized NIR mapped to red with chromaticity-based foliage, sky, and water classification. |
-| Aerochrome Gold | Orange-filter variant with warmer foliage and cooler sky. |
-| Red 720nm-Style | Warm red-infrared channel remap. |
-| Blue/Cyan Spectral | Cool cyan-blue channel shift. |
-| Fake Thermal Palette | Clearly labelled stylised heat-map palette, not a thermal reading. |
-| Night Surveillance IR | Green-tinted monochrome utility look. |
+| Rollei Infrared 400 | Reference restrained IR: textured glowing foliage, dense gradated skies, fine grain, controlled anti-halation glow. |
+| Kodak HIE | No anti-halation backing: deepest toe, hardest drama, near-black skies, strongest bloom. |
+| Ilford SFX 200 | Gentler extended-red response, finer tonality, minimal halation. |
+| Moderate IR (Konica-style) | Balanced middle ground between restrained and dramatic; broadly usable default. |
+| Fine-Grain Infrared | Neutral, print-oriented: finest grain, mildest Wood effect, tightest halation - clean rather than moody. |
+| Soft Vintage IR | Romantic low-contrast print look: milky highlights, dreamy wide halation, coarser grain, lifted blacks. |
+
+**Aerochrome family** (`aeroLook()`, driven by `AerochromeLook`, all sharing the physically-grounded `aerochrome()` EIR colorimetry):
+
+| Preset | Character |
+|---|---|
+| Aerochrome Classic | The reference EIR grade: magenta-red foliage, deep cyan sky, filmic false-colour balance. |
+| Aerochrome Soft | Gentler contrast, pastel foliage magenta, paler sky, minimal glow. |
+| Aerochrome Dense | Punchier contrast, deeper cyan sky, more saturation headroom, dramatic halation. |
+| Aerochrome Gold (orange filter) | EIR with orange filter: golden foliage, teal sky. |
+| Aerochrome Faded / Vintage | Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character. |
+
+**Experimental** (simple channel-remap heuristics, not calibrated film models): Red 720nm-Style, Blue/Cyan Spectral, Fake Thermal Palette (clearly labelled stylised heat-map, not a thermal reading), Night Surveillance IR.
 
 All presets are shader functions in `SpectralGlPipeline.kt`; there is no separate native implementation per preset.
 
@@ -55,6 +75,14 @@ The live screen includes stepped photographic controls rather than free numeric 
 - Android 14+ selected-photo access is rechecked whenever the gallery resumes.
 - Historical captures from previous installations can be recovered after the user grants photo-library access.
 - Hardware Test looks for the colour signature of a near-IR LED visible through the phone camera.
+
+## Validation
+
+Look tuning is judged against a named set of failure scenes (blue sky with
+clouds, deep-shadow foliage, skin, red painted objects, water/glass, wooded
+shadow, bark/masonry, haze) rather than pretty demos alone. See
+[`docs/VALIDATION.md`](docs/VALIDATION.md) for the full scene list, expected
+behavior, and unacceptable failure modes for both families.
 
 ## Known limitations
 
@@ -122,6 +150,7 @@ A public throwaway keystore was briefly committed and used by development build 
 
 ## Architecture
 
+- `core/FilmLook.kt` — structured film-look parameter tables (`MonoIRLook`, `AerochromeLook`) for the two flagship families; the only place per-stock numbers live.
 - `core/gl/SpectralGlPipeline.kt` — live and still OpenGL rendering.
 - `core/camera/CameraController.kt` — CameraX session, capture, focus, and manual exposure integration.
 - `core/data/CameraSettingsRepository.kt` — DataStore settings persistence.
