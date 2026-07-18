@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.FilmLookLibrary
+import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.nio.ByteBuffer
@@ -84,6 +86,18 @@ uniform float uSaturation;
 uniform int uSwapMode;
 uniform vec2 uSkyUp;
 
+// ---- structured film-look parameters (FilmLookLibrary, core/FilmLook.kt) --
+// Rendering engine reads these generically; the Kotlin-side look table is
+// the only place per-stock numbers live. Only the active preset's family
+// (mono XOR aero) is actually consumed per draw call.
+uniform vec4 uMonoCurve;   // lo, span, toePow, k
+uniform vec4 uMonoCurve2;  // ceiling, woodLift, skyStrength, waterFloor
+uniform vec4 uAeroTone;    // curveMix, satCap, magentaBoost, skyDepthBoost
+uniform vec4 uAeroTone2;   // gold, fade, (reserved), (reserved)
+uniform vec4 uHaloGrain;   // haloThreshold, haloTight, haloWide, grainClump
+uniform float uGrainBias;      // per-stock grain amplitude multiplier
+uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
+
 float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
@@ -146,7 +160,8 @@ vec3 thermal(float v) {
 // cc is the CLASSIFICATION colour: chroma-denoised (small bilateral) so the
 // material classifiers do not flicker on per-pixel/JPEG-block chroma noise.
 // Tone still comes from the full-detail c.
-vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float smoothLuma) {
+vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float smoothLuma,
+    float curveMix, float satCap, float magentaBoost, float skyDepthBoost) {
     float r = c.r;
     float g = c.g;
     float b = c.b;
@@ -242,7 +257,9 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // green share) skews bluer/magenta, broadleaf canopy stays redder - the
     // documented "grass shows a bluer hue of red" behaviour.
     float greenShare = smoothstep(0.30, 0.42, ng);
-    float magenta = greenShare * (0.30 + 0.30 * species);
+    // magentaBoost is the per-look family dial: Soft/Faded pull this toward
+    // a plainer red, Dense pushes it toward a more vivid magenta-crimson.
+    float magenta = clamp(greenShare * (0.30 + 0.30 * species) * magentaBoost, 0.0, 1.0);
     vec3 folRed = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
     vec3 folMag = mix(folRed, vec3(0.92, 0.05, 0.48), magenta);
     float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
@@ -288,9 +305,10 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 dyeG = mix(ir, vec3(lumaOf(ir)) * vec3(1.06, 1.0, 0.90), 0.40);
     ir = mix(ir, dyeG, manMade * 0.45);
 
-    // slide-film S-curve: crushed toe, rolled shoulder
+    // slide-film S-curve: crushed toe, rolled shoulder. curveMix is the
+    // per-look contrast-character dial (Soft/Faded flatten it, Dense hardens it).
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
-    ir = mix(ir, s1, 0.55);
+    ir = mix(ir, s1, curveMix);
 
     // Baked-in reversal-film saturation, HEADROOM-LIMITED: the boost tapers
     // per pixel to the largest hue-preserving factor that keeps every channel
@@ -304,7 +322,8 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 tNeg = mix(vec3(1000.0), vec3(il) / max(-dSat, vec3(0.0001)),
         step(vec3(0.0001), -dSat));
     vec3 tCh = min(tPos, tNeg);
-    float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, 1.18);
+    // satCap is the per-look reversal-film saturation headroom ceiling.
+    float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, satCap);
     // water keeps its transparency: no reversal-sat push on pools/ponds
     tSat = mix(tSat, 1.0, clamp(vividBlue + murky + plainBlue * 0.8, 0.0, 1.0) * 0.6);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
@@ -318,6 +337,10 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
         mix(vec3(0.10, 0.20, 0.55), vec3(0.03, 0.09, 0.42), smoothstep(0.35, 0.95, skyT)),
         mix(vec3(0.07, 0.30, 0.48), vec3(0.02, 0.20, 0.36), smoothstep(0.35, 0.95, skyT)),
         gold);
+    // skyDepthBoost is the per-look sky-density dial: >1 darkens/deepens the
+    // clear-sky colour (Dense), <1 pales it toward a hazier vintage sky
+    // (Soft/Faded), 1.0 leaves the reference Classic/Gold ramp untouched.
+    deepCol = clamp(deepCol * (2.0 - skyDepthBoost), 0.0, 1.0);
     vec3 paleCol = mix(vec3(0.86, 0.90, 0.97), vec3(0.84, 0.92, 0.95), gold);
     // Drive the colour ramp from the SMOOTHED luma so JPEG luma plateaus do not
     // become colour plateaus (the source of the 8-bit banding). Fine per-pixel
@@ -342,34 +365,25 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
 // with a long toe (compressed but separated shadows), steep midsection, and a
 // gently rolled shoulder so sunlit foliage sits at Zone VII-VIII TEXTURED and
 // never clips to paper white. Grain and halation are applied by the caller.
-// grade: 0 = Rollei (restrained, anti-halation), 1 = HIE (deep, contrasty),
-// 2 = Ilford SFX (milder Wood effect).
-float irHDCurve(float e, float grade) {
+// Curve shape and lift/sky strength are supplied by the caller from
+// FilmLookLibrary (core/FilmLook.kt) - this function is stock-agnostic.
+float irHDCurve(float e, float lo, float span, float toePow, float k, float ceiling) {
     // Aviphot Pan 200 / Rollei IR 400 characteristic curve, calibrated against
     // Serger's densitometry (Zone I-X neg densities 0.07..1.27, DD-X 1+4) and
     // validated on reference photos: soft compressed toe (Zone I-III sit low
     // but separated), steep midsection, gently rolled Reinhard shoulder.
     // Sunlit foliage lands ~0.82-0.85, sky ~0.01-0.15 with gradient, and the
     // ceiling stays below paper white (anti-clipping: the make-or-break rule).
+    // Per-stock lo/span/toePow/k/ceiling reshape this same curve family into
+    // Rollei/HIE/SFX/Moderate/Fine-Grain/Soft-Vintage without new code paths.
     float le = log2(max(e, 0.0005));
-    float lo = 4.8;
-    float span = 5.5;
-    float toePow = 2.30;
-    float k = 0.36;
-    float ceiling = 0.948;
-    if (grade > 0.5 && grade < 1.5) {   // Kodak HIE: deeper toe, harder drama
-        lo = 4.6; span = 5.2; toePow = 2.60; k = 0.26; ceiling = 0.965;
-    }
-    if (grade > 1.5) {                  // Ilford SFX 200: gentler throughout
-        lo = 5.0; span = 5.8; toePow = 2.05; k = 0.40; ceiling = 0.945;
-    }
     float x = clamp((le + lo) / span, 0.0, 1.0);
     float toe = pow(x, toePow);
     float sh = toe * (1.0 + k) / (toe + k);
     return clamp(sh * ceiling + 0.008, 0.0, 1.0);
 }
 
-float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, float grade) {
+float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, float liftAmt, float skyStr) {
     // R72-filtered emulsion: blue is blocked, green heavily attenuated, so the
     // base signal is dominated by red (the film's declining NIR tail rides on
     // its red sensitisation).
@@ -378,10 +392,8 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // Wood effect: chlorophyll goes from ~5% reflectance in visible red to
     // ~50% in NIR. The lift is saturation-aware (sigmoid, not multiply) so
     // sunlit foliage lands at Zone VII-VIII TEXTURED, never clipped.
-    // HIE reaches deeper into NIR (stronger); SFX is extended-red only (weaker).
-    float liftAmt = 0.52;
-    if (grade > 0.5 && grade < 1.5) liftAmt = 0.64;   // HIE
-    if (grade > 1.5) liftAmt = 0.38;                  // SFX 200
+    // liftAmt is the per-stock Wood-effect strength from FilmLookLibrary
+    // (HIE reaches deepest into NIR, SFX/Fine-Grain are extended-red only).
     // Deep-shadow confidence: chromaticity is numerically unstable near black
     // (tiny noisy RGB over tiny totals), which rendered night shadows as a
     // blocky classifier patchwork. Below the floor everything falls back to
@@ -410,9 +422,8 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
         * smoothstep(0.02, 0.09, cc.b - cc.g)
         * smoothstep(-0.01, 0.05, cc.b - cc.r);
     float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
-    float skyStr = 0.88;
-    if (grade > 0.5 && grade < 1.5) skyStr = 0.92;    // HIE: denser skies
-    if (grade > 1.5) skyStr = 0.78;                   // SFX: milder
+    // skyStr is the per-stock sky-suppression strength from FilmLookLibrary
+    // (HIE: denser skies; SFX/Fine-Grain: milder).
     // positional: zenith sky suppresses fully; low-in-frame blue (pools,
     // reflections) darkens far less, keeping Zone II texture instead of void
     ir = ir * (1.0 - skyDown * (skyStr * (0.59 + 0.50 * skyT)));
@@ -509,73 +520,54 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     // canopy no longer fogs the whole frame flat; discrete highlights still
     // bloom fully.
     float halo = 0.35 + 0.65 * smoothstep(0.015, 0.09, luma - smoothLuma);
-    if (uPreset == 0) {
-        // Rollei Infrared 400: sharp, fine-grained, restrained glow (the film
-        // HAS an anti-halation layer, so halation is minimal)
-        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 0.0);
-        float m = irHDCurve(ir, 0.0);
-        // Rollei has an anti-halation layer: only the SLIGHT halo that even
-        // protected stock shows around the very brightest elements.
-        vec2 hal = halationEnergy(vTexCoord, 0.86);
-        m = clamp(m + (hal.x * 0.28 + hal.y * 0.14) * halo, 0.0, 1.0);
+
+    // ---- Monochrome IR: uPreset 0-5, one generic engine for all six stocks.
+    // Curve/lift/sky/halo/water numbers all come from the uMonoCurve* /
+    // uHaloGrain uniforms (Kotlin FilmLookLibrary.monoLookFor), so adding a
+    // seventh stock never touches this function.
+    if (uPreset <= 5) {
+        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, uMonoCurve2.y, uMonoCurve2.z);
+        float m = irHDCurve(ir, uMonoCurve.x, uMonoCurve.y, uMonoCurve.z, uMonoCurve.w, uMonoCurve2.x);
+        vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
+        m = clamp(m + (hal.x * uHaloGrain.y + hal.y * uHaloGrain.z) * halo, 0.0, 1.0);
         // Water floor + sheen: dark regions keep Zone-I tone and their
-        // specular ripple back - Rollei water is never a void. Safe on deep
+        // specular ripple back - IR water is never a void. Safe on deep
         // shadow (gains only a whisper of tone at the film's own floor).
         float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
-        m = max(m, darkFloor * 0.055);
+        m = max(m, darkFloor * uMonoCurve2.w);
         m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
         return vec3(m);
     }
-    if (uPreset == 1) {
-        // Kodak HIE style: no anti-halation backing -> the famous bloom
-        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 1.0);
-        float m = irHDCurve(ir, 1.0);
-        // HIE has NO anti-halation backing - the famous ethereal glow IS
-        // this effect. Lower threshold, strong two-ring bloom.
-        vec2 hal = halationEnergy(vTexCoord, 0.78);
-        m = clamp(m + (hal.x * 0.70 + hal.y * 0.45) * halo, 0.0, 1.0);
-        // Water floor + sheen: dark regions keep Zone-I tone and their
-        // specular ripple back - Rollei water is never a void. Safe on deep
-        // shadow (gains only a whisper of tone at the film's own floor).
-        float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
-        m = max(m, darkFloor * 0.055);
-        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
-        return vec3(m);
-    }
-    if (uPreset == 2) {
-        // Ilford SFX 200: extended-red, grey acetate base gives good halation
-        // protection -> minimal glow, gentler tonality
-        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, 2.0);
-        float m = irHDCurve(ir, 2.0);
-        vec2 hal = halationEnergy(vTexCoord, 0.87);
-        m = clamp(m + (hal.x * 0.22 + hal.y * 0.10) * halo, 0.0, 1.0);
-        // Water floor + sheen: dark regions keep Zone-I tone and their
-        // specular ripple back - Rollei water is never a void. Safe on deep
-        // shadow (gains only a whisper of tone at the film's own floor).
-        float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
-        m = max(m, darkFloor * 0.055);
-        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
-        return vec3(m);
-    }
-    if (uPreset == 3) {
-        vec3 col = aerochrome(src, srcC, 0.0, skyMask, skyT, smoothLuma);
+
+    // ---- Aerochrome: uPreset 6-10, one shared colorimetry engine for all
+    // five grades. Family-dial numbers come from uAeroTone* / uHaloGrain
+    // (Kotlin FilmLookLibrary.aeroLookFor()).
+    if (uPreset <= 10) {
+        vec3 col = aerochrome(src, srcC, uAeroTone2.x, skyMask, skyT, smoothLuma,
+            uAeroTone.x, uAeroTone.y, uAeroTone.z, uAeroTone.w);
         // Even protected stock shows a slight red halo around the brightest
         // elements; orange at the border, red further out. The local-contrast
         // gate keeps broad bright areas (sky) from ringing skylines - only
         // genuine local highlights halate.
         float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
-        vec2 hal = halationEnergy(vTexCoord, 0.86);
-        col += (vec3(1.0, 0.42, 0.18) * hal.x * 0.30 + vec3(0.95, 0.12, 0.08) * hal.y * 0.12) * edgeGate;
+        vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
+        vec3 haloTight = mix(vec3(1.0, 0.42, 0.18), vec3(1.0, 0.48, 0.16), uAeroTone2.x);
+        vec3 haloWide = mix(vec3(0.95, 0.12, 0.08), vec3(0.95, 0.16, 0.08), uAeroTone2.x);
+        col += (haloTight * hal.x * uHaloGrain.y + haloWide * hal.y * uHaloGrain.z) * edgeGate;
+        // Faded/Vintage fade dial: lift blacks and pull toward a warm neutral
+        // grey, an aged-print character none of the other grades apply.
+        float fade = uAeroTone2.y;
+        if (fade > 0.001) {
+            float l = lumaOf(col);
+            vec3 warmGrey = vec3(l) * vec3(1.06, 1.0, 0.90);
+            col = mix(col, warmGrey, fade * 0.6);
+            col = col * (1.0 - 0.10 * fade) + vec3(0.05, 0.045, 0.04) * fade;
+        }
         return clamp(col, 0.0, 1.0);
     }
-    if (uPreset == 4) {
-        vec3 col = aerochrome(src, srcC, 1.0, skyMask, skyT, smoothLuma);
-        float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
-        vec2 hal = halationEnergy(vTexCoord, 0.86);
-        col += (vec3(1.0, 0.48, 0.16) * hal.x * 0.30 + vec3(0.95, 0.16, 0.08) * hal.y * 0.12) * edgeGate;
-        return clamp(col, 0.0, 1.0);
-    }
-    if (uPreset == 5) {
+
+    // ---- Experimental family: simple channel-remap heuristics, uPreset 11-14.
+    if (uPreset == 11) {
         vec3 red720 = vec3(
             tone(luma + foliage * 0.88, 1.32),
             tone(luma * 0.34 + foliage * 0.12 - sky * 0.08, 1.0),
@@ -583,14 +575,14 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         );
         return red720 * mix(1.0, 0.30 + 0.35 * smoothstep(0.60, 0.98, luma), skyMask);
     }
-    if (uPreset == 6) {
+    if (uPreset == 12) {
         return vec3(
             tone(luma * 0.16 + warm * 0.06, 1.0),
             tone(luma * 0.82 + sky * 0.54 + foliage * 0.12, 1.08),
             tone(luma * 0.94 + sky * 0.66 + cool * 0.12, 1.08)
         );
     }
-    if (uPreset == 7) {
+    if (uPreset == 13) {
         return thermal(luma + foliage * 0.12 - sky * 0.08);
     }
     float m = tone(luma + foliage * 0.22 - sky * 0.22, 1.1);
@@ -780,13 +772,17 @@ void main() {
         Y - 1.106 * I2 + 1.703 * Q2
     );
 
-    // unsharp mask on the source luma (4-tap cross)
-    if (uSharpness > 0.001) {
+    // unsharp mask on the source luma (4-tap cross). uAcutanceBias is the
+    // per-stock structure dial (FilmLookLibrary) added on top of the user's
+    // sharpness control - Fine-Grain IR reads crisper, Soft Vintage softer,
+    // even at the user default of zero.
+    float effSharp = uSharpness + uAcutanceBias;
+    if (abs(effSharp) > 0.001) {
         float n = lumaOf(texture2D(uTexture, vTexCoord + vec2(uTexelSize.x, 0.0)).rgb)
             + lumaOf(texture2D(uTexture, vTexCoord - vec2(uTexelSize.x, 0.0)).rgb)
             + lumaOf(texture2D(uTexture, vTexCoord + vec2(0.0, uTexelSize.y)).rgb)
             + lumaOf(texture2D(uTexture, vTexCoord - vec2(0.0, uTexelSize.y)).rgb);
-        c += (srcLuma - n * 0.25) * uSharpness * 0.5;
+        c += (srcLuma - n * 0.25) * effSharp * 0.5;
     }
 
     // highlight bloom / halation
@@ -805,13 +801,17 @@ void main() {
         // Structured value-noise clumps replace per-pixel white noise: film
         // grain has spatial correlation; sensor noise does not. Density-
         // dependent on the mono presets (Poisson-like: strongest in midtones).
-        float grainAmp = uGrain * 0.045;
-        if (uPreset <= 2) {
+        // grainBias/grainClump are the per-stock amplitude and clump-scale
+        // dials from FilmLookLibrary - HIE and Soft Vintage read coarser,
+        // Fine-Grain reads tighter, independent of the user's Grain slider.
+        float grainAmp = uGrain * 0.045 * uGrainBias;
+        if (uPreset <= 5) {
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
-            grainAmp = uGrain * 0.040 * densityWeight;
+            grainAmp = uGrain * 0.040 * densityWeight * uGrainBias;
         }
-        c += filmGrain(grainUv, uGrainSeed) * grainAmp * 2.2;
+        vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
+        c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
     }
 
     // channel swap
@@ -859,16 +859,25 @@ private const val FRAGMENT_2D = FRAGMENT_PRECISION +
     "uniform sampler2D uTexture;\n" +
     FRAGMENT_BODY
 
+// Index layout matches the shader's presetColor() dispatch: 0-5 monochrome
+// IR (generic monoLook engine), 6-10 Aerochrome (generic aeroLook engine),
+// 11-14 experimental. Keep the two in sync when either changes.
 internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.B_W_INFRARED -> 0
     SpectralPreset.HIGH_CONTRAST_IR -> 1
     SpectralPreset.WHITE_FOLIAGE_DARK_SKY -> 2
-    SpectralPreset.AEROCHROME_FALSE_COLOR -> 3
-    SpectralPreset.AEROCHROME_GOLD -> 4
-    SpectralPreset.RED_720_STYLE -> 5
-    SpectralPreset.BLUE_CYAN_SPECTRAL -> 6
-    SpectralPreset.FAKE_THERMAL_PALETTE -> 7
-    SpectralPreset.NIGHT_SURVEILLANCE_IR -> 8
+    SpectralPreset.MONO_IR_MODERATE -> 3
+    SpectralPreset.MONO_IR_FINE_GRAIN -> 4
+    SpectralPreset.MONO_IR_SOFT_VINTAGE -> 5
+    SpectralPreset.AEROCHROME_FALSE_COLOR -> 6
+    SpectralPreset.AEROCHROME_SOFT -> 7
+    SpectralPreset.AEROCHROME_DENSE -> 8
+    SpectralPreset.AEROCHROME_GOLD -> 9
+    SpectralPreset.AEROCHROME_FADED -> 10
+    SpectralPreset.RED_720_STYLE -> 11
+    SpectralPreset.BLUE_CYAN_SPECTRAL -> 12
+    SpectralPreset.FAKE_THERMAL_PALETTE -> 13
+    SpectralPreset.NIGHT_SURVEILLANCE_IR -> 14
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
@@ -1225,6 +1234,41 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uSaturation, adj.saturation)
         GLES20.glUniform1i(program.uSwapMode, adj.channelSwapMode.toShaderIndex())
 
+        // Structured film-look parameters (FilmLookLibrary, core/FilmLook.kt).
+        // Only the active preset's family is actually read by the shader, so
+        // it is harmless to always populate both tables from a default.
+        when (currentSettings.preset.family) {
+            LookFamily.MONOCHROME_IR -> {
+                val look = FilmLookLibrary.monoLookFor(currentSettings.preset)
+                GLES20.glUniform4f(program.uMonoCurve, look.toeLo, look.toeSpan, look.toePow, look.toeK)
+                GLES20.glUniform4f(program.uMonoCurve2, look.ceiling, look.woodLift, look.skyStrength, look.waterFloor)
+                GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
+                GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+                GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
+                GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
+            }
+            LookFamily.AEROCHROME -> {
+                val look = FilmLookLibrary.aeroLookFor(currentSettings.preset)
+                GLES20.glUniform4f(program.uAeroTone, look.curveMix, look.satCap, look.magentaBoost, look.skyDepthBoost)
+                GLES20.glUniform4f(program.uAeroTone2, look.gold, look.fade, 0f, 0f)
+                GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
+                GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+                GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
+                GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
+            }
+            LookFamily.EXPERIMENTAL -> {
+                GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
+                GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
+                GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
+                GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
+                GLES20.glUniform4f(program.uHaloGrain, 0.86f, 0.30f, 0.12f, 1.0f)
+                GLES20.glUniform1f(program.uGrainBias, 1.0f)
+                GLES20.glUniform1f(program.uAcutanceBias, 0f)
+            }
+        }
+
         GLES20.glEnableVertexAttribArray(program.aPosition)
         quadPositions.position(0)
         GLES20.glVertexAttribPointer(program.aPosition, 2, GLES20.GL_FLOAT, false, 0, quadPositions)
@@ -1279,6 +1323,13 @@ class SpectralRenderer(
         val uHueSin = GLES20.glGetUniformLocation(id, "uHueSin")
         val uSaturation = GLES20.glGetUniformLocation(id, "uSaturation")
         val uSwapMode = GLES20.glGetUniformLocation(id, "uSwapMode")
+        val uMonoCurve = GLES20.glGetUniformLocation(id, "uMonoCurve")
+        val uMonoCurve2 = GLES20.glGetUniformLocation(id, "uMonoCurve2")
+        val uAeroTone = GLES20.glGetUniformLocation(id, "uAeroTone")
+        val uAeroTone2 = GLES20.glGetUniformLocation(id, "uAeroTone2")
+        val uHaloGrain = GLES20.glGetUniformLocation(id, "uHaloGrain")
+        val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
+        val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")
 
         fun release() {
             if (id != 0) GLES20.glDeleteProgram(id)

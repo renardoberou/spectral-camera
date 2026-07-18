@@ -70,6 +70,7 @@ import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
@@ -418,18 +419,29 @@ private fun PresetSheet(
     ) {
         Text("Filter preset drawer", style = MaterialTheme.typography.headlineSmall)
         Text("These are simulated spectral looks inspired by infrared film behavior, not claims of true IR capture.", style = MaterialTheme.typography.bodySmall)
-        SpectralPreset.values().forEach { preset ->
-            FilterChip(
-                selected = preset == current,
-                onClick = { onPick(preset) },
-                label = {
-                    Column(Modifier.padding(vertical = 8.dp)) {
-                        Text(preset.label, fontWeight = FontWeight.SemiBold)
-                        Text(preset.description, style = MaterialTheme.typography.bodySmall)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
+        val grouped = SpectralPreset.values().groupBy { it.family }
+        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME, LookFamily.EXPERIMENTAL).forEach { family ->
+            val presets = grouped[family].orEmpty()
+            if (presets.isEmpty()) return@forEach
+            Text(
+                text = family.label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 4.dp),
             )
+            presets.forEach { preset ->
+                FilterChip(
+                    selected = preset == current,
+                    onClick = { onPick(preset) },
+                    label = {
+                        Column(Modifier.padding(vertical = 8.dp)) {
+                            Text(preset.label, fontWeight = FontWeight.SemiBold)
+                            Text(preset.description, style = MaterialTheme.typography.bodySmall)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         Spacer(Modifier.height(16.dp))
     }

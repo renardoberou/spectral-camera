@@ -2,45 +2,102 @@ package com.renardoberou.spectralcamera.core
 
 import android.net.Uri
 
+/** Which coherent look family a preset belongs to, for grouped UI and product messaging. */
+enum class LookFamily(val label: String) {
+    MONOCHROME_IR("Monochrome IR"),
+    AEROCHROME("Aerochrome / False Colour"),
+    EXPERIMENTAL("Experimental"),
+}
+
 enum class SpectralPreset(
     val label: String,
     val description: String,
+    val family: LookFamily,
 ) {
+    // ---- Monochrome IR family: six differentiated stock personalities,
+    // all sharing one IR-luminance/tone-curve engine parameterized by
+    // FilmLookLibrary.monoLookFor(). See core/FilmLook.kt for the numbers.
     B_W_INFRARED(
         label = "Rollei Infrared 400",
-        description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain.",
+        description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain, restrained anti-halation glow.",
+        family = LookFamily.MONOCHROME_IR,
     ),
     HIGH_CONTRAST_IR(
         label = "Kodak HIE",
-        description = "Deep Wood effect, high contrast, near-black skies, stronger halation glow.",
+        description = "Deep Wood effect, hardest contrast, near-black skies, no anti-halation backing - the famous ethereal bloom.",
+        family = LookFamily.MONOCHROME_IR,
     ),
     WHITE_FOLIAGE_DARK_SKY(
         label = "Ilford SFX 200",
-        description = "Milder extended-red look, finer tonality, gentler foliage glow.",
+        description = "Milder extended-red look, finer tonality, gentler foliage glow, minimal halation.",
+        family = LookFamily.MONOCHROME_IR,
     ),
+    MONO_IR_MODERATE(
+        label = "Moderate IR (Konica-style)",
+        description = "Balanced middle ground between restrained and dramatic - a flexible, broadly usable IR grade.",
+        family = LookFamily.MONOCHROME_IR,
+    ),
+    MONO_IR_FINE_GRAIN(
+        label = "Fine-Grain Infrared",
+        description = "Neutral, print-oriented IR: finest grain, mildest Wood effect, tightest halation - clean rather than moody.",
+        family = LookFamily.MONOCHROME_IR,
+    ),
+    MONO_IR_SOFT_VINTAGE(
+        label = "Soft Vintage IR",
+        description = "Romantic, low-contrast print look: milky highlights, dreamy wide halation, coarser grain, lifted blacks.",
+        family = LookFamily.MONOCHROME_IR,
+    ),
+
+    // ---- Aerochrome family: five coherent EIR grades sharing one
+    // physically-grounded false-colour engine, parameterized by
+    // FilmLookLibrary.aeroLookFor().
     AEROCHROME_FALSE_COLOR(
-        label = "Aerochrome-Style False Colour",
-        description = "Red foliage, cyan sky, filmic false-colour balance.",
+        label = "Aerochrome Classic",
+        description = "The reference EIR grade: magenta-red foliage, deep cyan sky, filmic false-colour balance.",
+        family = LookFamily.AEROCHROME,
+    ),
+    AEROCHROME_SOFT(
+        label = "Aerochrome Soft",
+        description = "Gentler contrast, pastel foliage magenta, paler sky, minimal glow - an easygoing everyday grade.",
+        family = LookFamily.AEROCHROME,
+    ),
+    AEROCHROME_DENSE(
+        label = "Aerochrome Dense",
+        description = "Punchier contrast, deeper cyan sky, more saturation headroom, dramatic halation - the hero-shot grade.",
+        family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_GOLD(
         label = "Aerochrome Gold (orange filter)",
         description = "EIR with orange filter: golden foliage, teal sky.",
+        family = LookFamily.AEROCHROME,
     ),
+    AEROCHROME_FADED(
+        label = "Aerochrome Faded / Vintage",
+        description = "Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character.",
+        family = LookFamily.AEROCHROME,
+    ),
+
+    // ---- Experimental: creative spectral looks outside the two flagship
+    // families. Simple channel-remap heuristics, not calibrated film models.
     RED_720_STYLE(
         label = "Red 720nm-Style",
         description = "Warm red infrared look with strong foliage response.",
+        family = LookFamily.EXPERIMENTAL,
     ),
     BLUE_CYAN_SPECTRAL(
         label = "Blue/Cyan Spectral",
         description = "Cool cyan-blue spectral shift with darkened shadows.",
+        family = LookFamily.EXPERIMENTAL,
     ),
     FAKE_THERMAL_PALETTE(
         label = "Fake Thermal Palette",
         description = "Heat-map style palette for scientific / surreal looks.",
+        family = LookFamily.EXPERIMENTAL,
     ),
     NIGHT_SURVEILLANCE_IR(
         label = "Night Surveillance IR",
         description = "Utility-style monochrome with green tint and grain.",
+        family = LookFamily.EXPERIMENTAL,
     ),
 }
 
