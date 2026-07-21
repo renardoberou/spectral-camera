@@ -22,8 +22,9 @@ External IR/thermal hardware integration exists only as a UI framework (`SensorM
 
 ### Spectral presets: two structured film-look families
 
-Presets are not one-off shader hacks. Each family shares a single physically-
-motivated rendering engine (`monoLook()` / `aeroLook()` in
+Spectral Camera is a dedicated film-emulation tool: every preset belongs to
+one of two flagship families, and nothing else. Each family shares a single
+physically-motivated rendering engine (`monoLook()` / `aeroLook()` in
 `SpectralGlPipeline.kt`); every family member is a *data table entry* in
 `core/FilmLook.kt` (`FilmLookLibrary`) that reparameterizes the shared
 engine's tone curve, synthetic-NIR/Wood-effect strength, sky response, water
@@ -52,9 +53,7 @@ not new shader code. See `core/FilmLook.kt` for the full parameter set and
 | Aerochrome Gold (orange filter) | EIR with orange filter: golden foliage, teal sky. |
 | Aerochrome Faded / Vintage | Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character. |
 
-**Experimental** (simple channel-remap heuristics, not calibrated film models): Red 720nm-Style, Blue/Cyan Spectral, Fake Thermal Palette (clearly labelled stylised heat-map, not a thermal reading), Night Surveillance IR.
-
-All presets are shader functions in `SpectralGlPipeline.kt`; there is no separate native implementation per preset.
+All presets are shader functions in `SpectralGlPipeline.kt`; there is no separate native implementation per preset. There is no "experimental" or novelty category - every preset is a calibrated member of one of the two film families above.
 
 ### Manual controls
 
@@ -64,6 +63,7 @@ The live screen includes stepped photographic controls rather than free numeric 
 - full-manual ISO and shutter where the device exposes Camera2 `MANUAL_SENSOR` support;
 - current aperture and exposure state where available;
 - digital exposure, Blacks/Whites, Contrast, Saturation, Hue, Grain, Bloom, Sharpness, channel weighting/swap, sky suppression, and foliage lift;
+- each film stock carries a small always-on baseline grain matched to the emulsion (film is never grainless); the Grain control adds on top of that baseline;
 - reset to calibrated film defaults.
 
 ### Capture, gallery, and hardware test

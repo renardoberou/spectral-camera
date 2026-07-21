@@ -6,7 +6,6 @@ import android.net.Uri
 enum class LookFamily(val label: String) {
     MONOCHROME_IR("Monochrome IR"),
     AEROCHROME("Aerochrome / False Colour"),
-    EXPERIMENTAL("Experimental"),
 }
 
 enum class SpectralPreset(
@@ -75,29 +74,6 @@ enum class SpectralPreset(
         label = "Aerochrome Faded / Vintage",
         description = "Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character.",
         family = LookFamily.AEROCHROME,
-    ),
-
-    // ---- Experimental: creative spectral looks outside the two flagship
-    // families. Simple channel-remap heuristics, not calibrated film models.
-    RED_720_STYLE(
-        label = "Red 720nm-Style",
-        description = "Warm red infrared look with strong foliage response.",
-        family = LookFamily.EXPERIMENTAL,
-    ),
-    BLUE_CYAN_SPECTRAL(
-        label = "Blue/Cyan Spectral",
-        description = "Cool cyan-blue spectral shift with darkened shadows.",
-        family = LookFamily.EXPERIMENTAL,
-    ),
-    FAKE_THERMAL_PALETTE(
-        label = "Fake Thermal Palette",
-        description = "Heat-map style palette for scientific / surreal looks.",
-        family = LookFamily.EXPERIMENTAL,
-    ),
-    NIGHT_SURVEILLANCE_IR(
-        label = "Night Surveillance IR",
-        description = "Utility-style monochrome with green tint and grain.",
-        family = LookFamily.EXPERIMENTAL,
     ),
 }
 

@@ -24,7 +24,7 @@ Engine references point at the current architecture: `monoLook()` /
 |---|---|---|---|---|---|
 | A1 | Blue sky with clouds | Deep cyan-blue clear sky, clouds stay bright and structurally readable (not flattened to a single hue plateau); no banding in the gradient. | Washed-lavender sky; clouds losing texture; visible 8-bit contour bands. | `skyMask` + `skyCol` ramp keyed on smoothed luma; IGN dither | Reviewed in P1/P3 passes (docs/PLAN_2026-07-16); needs fresh device re-shoot per release |
 | A2 | Pale hazy sky | Sky renders paler/less saturated than clear noon sky but still reads as sky, not blown white or a hard edge against the horizon. | Hard sky/horizon seam; sky clipping to pure white; sky going muddy grey. | `clearBlue` / `lift` gating in `aerochrome()` sky ramp | Needs re-shoot |
-| A3 | Skylit concrete / neutral walls | Cool pale neutral, not saturated blue or lavender. | Shaded white facades rendering as solid blue/purple ("sticker" look). | `greyC` cool-cast branch (P3 fix, shipped v1.13.1) | Fixed; spot-check on new scenes each release |
+| A3 | Skylit concrete / neutral walls | Pale neutral (cool-lit) or pale warm gold/cream (warm-lit), not saturated blue/purple/yellow. | Shaded white facades rendering as solid blue/purple ("sticker" look); warm-lit cream walls rendering as neon/lime yellow ("neon wall" bug). | `greyC` neutral gate in `aerochrome()` (cool-cast branch: P3 fix, v1.13.1; warm-cast branch: `greenNeutral` fix, docs/PLAN_2026-07-21) | **2026-07-21: real-device test found the warm-cast case still failed (neon yellow wall) - root-caused and fixed same day, verified against the actual photo (see PLAN_2026-07-21_commercial-hardening.md §2.1).** Cool-cast case still only spot-checked, not re-shot. |
 | A4 | Deep-shadow foliage | Foliage in shadow still classifies as vegetation (reads magenta/red, textured), not muddy brown. | Shadowed canopy falling through the veg classifier to a flat brown/olive patch. | Chromaticity-based `veg`/`oliveVeg` classification (exposure-invariant) | Reviewed; needs re-shoot |
 | A5 | Skin | Waxy pale sallow-yellow, not red. | Skin misclassified as foliage (goes red/magenta). | Red-dominant gate suppresses `veg` on skin tones | Needs re-shoot |
 | A6 | Red painted objects | Renders green/yellow-green (real EIR reversal), not left red. | Object stays native red (reads as an unprocessed "sticker"). | `manMade` dye-pull grade | Needs re-shoot |
@@ -37,6 +37,26 @@ underlying scene at three contrast/saturation levels (verify `curveMix`,
 flips foliage/sky/water assignment between grades). Gold should differ from
 Classic only in warmth/sky-teal, not in classification. Faded should look
 like an aged print of Classic, not a different scene.
+
+**2026-07-21 real-device finding (docs/PLAN_2026-07-21_commercial-hardening.md):** on a dusk-window scene,
+all 5 looks produced a nearly identical dark navy sky/glass despite `skyDepthBoost` ranging 0.70-1.25.
+Root cause #1 (fixed): the boost was a plain multiply on already near-black colour, with almost no visible
+effect - replaced with a power curve that has real effect in that range while leaving `skyDepthBoost = 1.0`
+(Classic/Gold) unchanged. Root cause #2 (**fixed same day**, see
+docs/PLAN_2026-07-21b_density-dial-and-baseline-grain.md): that specific window was not even classified as
+"sky" by `skyMask` (mask ≈ 0) - its dark, flat appearance came from the `plainBlue`/`shadowCol` and
+`vividBlue` paths, which had no per-look dial; `skyDepthBoost` now doubles as a density scale on those
+paths (window-crop family luma spread more than doubled on the real photo, Classic/Gold provably
+unchanged). A1/A2 above still need a fresh device re-shoot to confirm on scenes where the sky classifier
+*does* fire.
+
+**New watch item (2026-07-21b):** on Gold/Faded, dark foliage *reflected in window glass* renders green -
+the veg classifier fires on the reflection and gold's `veg`-keyed green push amplifies it. Pre-existing
+behaviour (visible in both before/after proof rows), not introduced this cycle. Candidate fix: gate the
+gold green push by the surface-smoothness signal already used for `cyanC`.
+
+**Grain note (2026-07-21b):** stocks now carry a small always-on baseline grain (`grainBase`), so grain
+personality checks in the M-table apply at DEFAULT settings, not only with the Grain slider raised.
 
 ---
 

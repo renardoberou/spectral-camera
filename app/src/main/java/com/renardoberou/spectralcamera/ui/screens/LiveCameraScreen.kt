@@ -420,7 +420,7 @@ private fun PresetSheet(
         Text("Filter preset drawer", style = MaterialTheme.typography.headlineSmall)
         Text("These are simulated spectral looks inspired by infrared film behavior, not claims of true IR capture.", style = MaterialTheme.typography.bodySmall)
         val grouped = SpectralPreset.values().groupBy { it.family }
-        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME, LookFamily.EXPERIMENTAL).forEach { family ->
+        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME).forEach { family ->
             val presets = grouped[family].orEmpty()
             if (presets.isEmpty()) return@forEach
             Text(

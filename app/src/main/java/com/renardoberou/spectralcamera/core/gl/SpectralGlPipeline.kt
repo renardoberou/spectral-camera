@@ -96,14 +96,11 @@ uniform vec4 uAeroTone;    // curveMix, satCap, magentaBoost, skyDepthBoost
 uniform vec4 uAeroTone2;   // gold, fade, (reserved), (reserved)
 uniform vec4 uHaloGrain;   // haloThreshold, haloTight, haloWide, grainClump
 uniform float uGrainBias;      // per-stock grain amplitude multiplier
+uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
 
 float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
-}
-
-float tone(float v, float p) {
-    return pow(clamp(v, 0.0, 1.0), p);
 }
 
 float hashNoise(vec2 p) {
@@ -135,15 +132,6 @@ float filmGrain(vec2 uv, float seed) {
     vec2 g = uv + vec2(seed * 17.31, seed * 9.77);
     float n = valueNoise(g / 1.6) * 0.65 + valueNoise(g / 3.4) * 0.35;
     return n - 0.5;
-}
-
-vec3 thermal(float v) {
-    v = clamp(v, 0.0, 1.0);
-    if (v < 0.20) return vec3(0.05, 0.00, 0.12 + v * 0.58);
-    if (v < 0.40) return vec3(0.10 + (v - 0.20) * 2.0, 0.00, 0.60 + (v - 0.20) * 0.85);
-    if (v < 0.60) return vec3(0.50 + (v - 0.40) * 2.0, 0.10 + (v - 0.40) * 1.35, 0.90 - (v - 0.40) * 1.25);
-    if (v < 0.80) return vec3(0.95, 0.42 + (v - 0.60) * 2.2, 0.05);
-    return vec3(0.98, 0.82 + (v - 0.80) * 0.9, 0.62 + (v - 0.80) * 0.9);
 }
 
 // Kodak Aerochrome / EIR false-colour emulation.
@@ -271,10 +259,19 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
+    // Per-look density on the DARK BLUE paths (vividBlue water/glass and
+    // plainBlue skylight shadow): these paths previously had no family dial
+    // at all, which made all five looks render a nearly identical dark
+    // window on the real dusk validation photo (that region never enters
+    // the skyMask path). skyDepthBoost doubles as the family density dial:
+    // Dense crushes these regions harder, Soft/Faded lift them. A mid-tone
+    // multiply is fine here (these paths sit at luma ~0.1-0.4, unlike the
+    // near-black deepCol sky ramp that needed a power curve).
+    float densityScale = clamp(2.0 - skyDepthBoost, 0.6, 1.4);
     vec3 ir = mix(base, folCol, vegAll);
-    ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - vegAll));
+    ir = mix(ir, clamp(blueOut * densityScale, 0.0, 1.0), vividBlue * (1.0 - vegAll));
     // skylight shadow: film-correct darkening, faintly cool
-    vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
+    vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80) * densityScale;
     // saturated blue OBJECTS (denim, paint) darken harder than faint skylight
     // shadow - the yellow filter kills blue light in proportion
     float blueObj = mix(0.72, 0.93, smoothstep(0.06, 0.12, chromaDistC));
@@ -289,11 +286,23 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     ir.b = clamp(ir.b - gold * 0.05, 0.0, 1.0);
 
     // neutral preservation on CHROMATICITY: slightly-warm sunlit grey still
-    // counts as grey and renders the film's pale cream instead of hard yellow
-    float chromaDist = max(max(abs(nr - 0.3333), abs(ng - 0.3333)), abs(nb - 0.3333));
-    float coolCast = smoothstep(0.0, 0.05, nb - nr) * (1.0 - smoothstep(0.05, 0.10, chromaDistC));
-    float greyWide = 1.0 - smoothstep(0.020, mix(0.075, 0.095, coolCast), chromaDistC);
-    float greyC = greyWide * smoothstep(0.25, 0.60, luma);
+    // counts as grey and renders the film's pale cream instead of hard yellow.
+    //
+    // FIX ("neon wall" bug, found on a real warm-lit stucco wall): a colour-
+    // temperature CAST on an intrinsically neutral surface (warm low-sun
+    // light, cool shade) shifts red vs. blue while leaving GREEN close to
+    // its neutral 1/3 share; a genuinely saturated coloured object (paint,
+    // foliage) shifts green too. That is a more direct, symmetric signal
+    // than the old cool-only `coolCast` gate, which left warm-cast neutrals
+    // with zero widening - they fell straight through to the warmth-driven
+    // base colour and the reversal-saturation boost inflated it to a
+    // saturated yellow instead of a pale gold/cream.
+    float greenNeutral = 1.0 - smoothstep(0.0, 0.05, abs(ng - 0.3333));
+    float greyWide = 1.0 - smoothstep(0.020, mix(0.075, 0.20, greenNeutral), chromaDistC);
+    // Exclude genuine vegetation/water/murky - they can sit at similarly
+    // modest chromaDistC in weakly-saturated cases (shaded olive foliage,
+    // hazy pools) but must never be pulled toward neutral cream.
+    float greyC = greyWide * smoothstep(0.25, 0.60, luma) * (1.0 - vegAll) * (1.0 - vividBlue) * (1.0 - murky);
     vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
     ir = mix(ir, cream, greyC * 0.85);
 
@@ -326,6 +335,11 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float tSat = clamp(min(min(tCh.r, tCh.g), tCh.b), 1.0, satCap);
     // water keeps its transparency: no reversal-sat push on pools/ponds
     tSat = mix(tSat, 1.0, clamp(vividBlue + murky + plainBlue * 0.8, 0.0, 1.0) * 0.6);
+    // FIX (part 2 of the neon-wall bug): a cast-neutral pixel the greyC step
+    // above just pulled toward cream must not have its small residual
+    // warmth re-inflated by this headroom boost - the boost is meant for
+    // genuinely saturated subjects, not corrected neutrals.
+    tSat = mix(tSat, 1.0, greyC * 0.7);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
 
 
@@ -340,7 +354,16 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // skyDepthBoost is the per-look sky-density dial: >1 darkens/deepens the
     // clear-sky colour (Dense), <1 pales it toward a hazier vintage sky
     // (Soft/Faded), 1.0 leaves the reference Classic/Gold ramp untouched.
-    deepCol = clamp(deepCol * (2.0 - skyDepthBoost), 0.0, 1.0);
+    //
+    // FIX: a plain multiply has almost no visible effect once deepCol is
+    // already near-black (a dark clear sky at dusk, found on a real photo
+    // where Classic/Soft/Dense/Faded were nearly indistinguishable there
+    // despite skyDepthBoost ranging 0.70-1.25). A power curve keyed on
+    // skyDepthBoost has far more effect in exactly that low range while
+    // skyDepthBoost=1.0 (Classic/Gold) stays an exact identity - no change
+    // to those two already-tuned reference looks.
+    float skyGamma = clamp(1.0 + (skyDepthBoost - 1.0) * 1.6, 0.35, 3.0);
+    deepCol = clamp(pow(max(deepCol, vec3(0.0001)), vec3(skyGamma)), 0.0, 1.0);
     vec3 paleCol = mix(vec3(0.86, 0.90, 0.97), vec3(0.84, 0.92, 0.95), gold);
     // Drive the colour ramp from the SMOOTHED luma so JPEG luma plateaus do not
     // become colour plateaus (the source of the 8-bit banding). Fine per-pixel
@@ -479,9 +502,6 @@ vec2 halationEnergy(vec2 uv, float threshold) {
 }
 
 vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLuma) {
-    float r = src.r;
-    float g = src.g;
-    float b = src.b;
     float luma = lumaOf(src);
     // synthetic NIR proxy shared by the IR presets: vegetation glows (Wood
     // effect) via greenness-over-blue plus a dark-foliage lift; sky = blueness
@@ -510,9 +530,6 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     foliage = clamp(foliage + oliveFoliageM * (1.0 - foliage), 0.0, 1.0);
     float chromaDistM = max(max(abs(nrM - 0.3333), abs(ngM - 0.3333)), abs(nbM - 0.3333));
     foliage = foliage * smoothstep(0.035, 0.058, chromaDistM);
-    float sky = max(0.0, b - g);
-    float warm = max(0.0, r - b);
-    float cool = max(0.0, b - r);
 
     // Halation is a POINT-SOURCE effect: light punching through the emulsion
     // around genuinely bright spots. Keyed on local contrast (luma above the
@@ -541,52 +558,29 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
 
     // ---- Aerochrome: uPreset 6-10, one shared colorimetry engine for all
     // five grades. Family-dial numbers come from uAeroTone* / uHaloGrain
-    // (Kotlin FilmLookLibrary.aeroLookFor()).
-    if (uPreset <= 10) {
-        vec3 col = aerochrome(src, srcC, uAeroTone2.x, skyMask, skyT, smoothLuma,
-            uAeroTone.x, uAeroTone.y, uAeroTone.z, uAeroTone.w);
-        // Even protected stock shows a slight red halo around the brightest
-        // elements; orange at the border, red further out. The local-contrast
-        // gate keeps broad bright areas (sky) from ringing skylines - only
-        // genuine local highlights halate.
-        float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
-        vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
-        vec3 haloTight = mix(vec3(1.0, 0.42, 0.18), vec3(1.0, 0.48, 0.16), uAeroTone2.x);
-        vec3 haloWide = mix(vec3(0.95, 0.12, 0.08), vec3(0.95, 0.16, 0.08), uAeroTone2.x);
-        col += (haloTight * hal.x * uHaloGrain.y + haloWide * hal.y * uHaloGrain.z) * edgeGate;
-        // Faded/Vintage fade dial: lift blacks and pull toward a warm neutral
-        // grey, an aged-print character none of the other grades apply.
-        float fade = uAeroTone2.y;
-        if (fade > 0.001) {
-            float l = lumaOf(col);
-            vec3 warmGrey = vec3(l) * vec3(1.06, 1.0, 0.90);
-            col = mix(col, warmGrey, fade * 0.6);
-            col = col * (1.0 - 0.10 * fade) + vec3(0.05, 0.045, 0.04) * fade;
-        }
-        return clamp(col, 0.0, 1.0);
+    // (Kotlin FilmLookLibrary.aeroLookFor()). This is the only remaining
+    // family after uPreset 0-5 (monochrome IR), so no further bound check.
+    vec3 col = aerochrome(src, srcC, uAeroTone2.x, skyMask, skyT, smoothLuma,
+        uAeroTone.x, uAeroTone.y, uAeroTone.z, uAeroTone.w);
+    // Even protected stock shows a slight red halo around the brightest
+    // elements; orange at the border, red further out. The local-contrast
+    // gate keeps broad bright areas (sky) from ringing skylines - only
+    // genuine local highlights halate.
+    float edgeGate = smoothstep(0.015, 0.09, luma - smoothLuma);
+    vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
+    vec3 haloTight = mix(vec3(1.0, 0.42, 0.18), vec3(1.0, 0.48, 0.16), uAeroTone2.x);
+    vec3 haloWide = mix(vec3(0.95, 0.12, 0.08), vec3(0.95, 0.16, 0.08), uAeroTone2.x);
+    col += (haloTight * hal.x * uHaloGrain.y + haloWide * hal.y * uHaloGrain.z) * edgeGate;
+    // Faded/Vintage fade dial: lift blacks and pull toward a warm neutral
+    // grey, an aged-print character none of the other grades apply.
+    float fade = uAeroTone2.y;
+    if (fade > 0.001) {
+        float l = lumaOf(col);
+        vec3 warmGrey = vec3(l) * vec3(1.06, 1.0, 0.90);
+        col = mix(col, warmGrey, fade * 0.6);
+        col = col * (1.0 - 0.10 * fade) + vec3(0.05, 0.045, 0.04) * fade;
     }
-
-    // ---- Experimental family: simple channel-remap heuristics, uPreset 11-14.
-    if (uPreset == 11) {
-        vec3 red720 = vec3(
-            tone(luma + foliage * 0.88, 1.32),
-            tone(luma * 0.34 + foliage * 0.12 - sky * 0.08, 1.0),
-            tone(luma * 0.08 - sky * 0.08, 0.88)
-        );
-        return red720 * mix(1.0, 0.30 + 0.35 * smoothstep(0.60, 0.98, luma), skyMask);
-    }
-    if (uPreset == 12) {
-        return vec3(
-            tone(luma * 0.16 + warm * 0.06, 1.0),
-            tone(luma * 0.82 + sky * 0.54 + foliage * 0.12, 1.08),
-            tone(luma * 0.94 + sky * 0.66 + cool * 0.12, 1.08)
-        );
-    }
-    if (uPreset == 13) {
-        return thermal(luma + foliage * 0.12 - sky * 0.08);
-    }
-    float m = tone(luma + foliage * 0.22 - sky * 0.22, 1.1);
-    return vec3(m * 0.18, m * 0.92, m * 0.22);
+    return clamp(col, 0.0, 1.0);
 }
 
 void main() {
@@ -796,19 +790,22 @@ void main() {
     }
 
     // film grain
-    if (uGrain > 0.001) {
-        // Grain is strictly opt-in (default Off = perfectly clean output).
-        // Structured value-noise clumps replace per-pixel white noise: film
-        // grain has spatial correlation; sensor noise does not. Density-
-        // dependent on the mono presets (Poisson-like: strongest in midtones).
-        // grainBias/grainClump are the per-stock amplitude and clump-scale
-        // dials from FilmLookLibrary - HIE and Soft Vintage read coarser,
-        // Fine-Grain reads tighter, independent of the user's Grain slider.
-        float grainAmp = uGrain * 0.045 * uGrainBias;
+    // Film is never grainless: every stock carries a small always-on
+    // baseline (uGrainBase, per-look from FilmLookLibrary) so the per-stock
+    // grain personality is visible at default settings; the user's Grain
+    // slider adds on top of it. Structured value-noise clumps replace
+    // per-pixel white noise: film grain has spatial correlation; sensor
+    // noise does not. Density-dependent on the mono presets (Poisson-like:
+    // strongest in midtones). grainBias/grainClump are the per-stock
+    // amplitude and clump-scale dials - HIE and Soft Vintage read coarser,
+    // Fine-Grain reads tighter, independent of the user's Grain slider.
+    float effGrain = uGrain + uGrainBase;
+    if (effGrain > 0.001) {
+        float grainAmp = effGrain * 0.045 * uGrainBias;
         if (uPreset <= 5) {
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
-            grainAmp = uGrain * 0.040 * densityWeight * uGrainBias;
+            grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         }
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
         c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
@@ -860,8 +857,8 @@ private const val FRAGMENT_2D = FRAGMENT_PRECISION +
     FRAGMENT_BODY
 
 // Index layout matches the shader's presetColor() dispatch: 0-5 monochrome
-// IR (generic monoLook engine), 6-10 Aerochrome (generic aeroLook engine),
-// 11-14 experimental. Keep the two in sync when either changes.
+// IR (generic monoLook engine), 6-10 Aerochrome (generic aeroLook engine).
+// Keep the two in sync when either changes.
 internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.B_W_INFRARED -> 0
     SpectralPreset.HIGH_CONTRAST_IR -> 1
@@ -874,10 +871,6 @@ internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.AEROCHROME_DENSE -> 8
     SpectralPreset.AEROCHROME_GOLD -> 9
     SpectralPreset.AEROCHROME_FADED -> 10
-    SpectralPreset.RED_720_STYLE -> 11
-    SpectralPreset.BLUE_CYAN_SPECTRAL -> 12
-    SpectralPreset.FAKE_THERMAL_PALETTE -> 13
-    SpectralPreset.NIGHT_SURVEILLANCE_IR -> 14
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
@@ -1244,6 +1237,7 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uMonoCurve2, look.ceiling, look.woodLift, look.skyStrength, look.waterFloor)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
@@ -1254,18 +1248,10 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uAeroTone2, look.gold, look.fade, 0f, 0f)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
                 GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
-            }
-            LookFamily.EXPERIMENTAL -> {
-                GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
-                GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
-                GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
-                GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
-                GLES20.glUniform4f(program.uHaloGrain, 0.86f, 0.30f, 0.12f, 1.0f)
-                GLES20.glUniform1f(program.uGrainBias, 1.0f)
-                GLES20.glUniform1f(program.uAcutanceBias, 0f)
             }
         }
 
@@ -1329,6 +1315,7 @@ class SpectralRenderer(
         val uAeroTone2 = GLES20.glGetUniformLocation(id, "uAeroTone2")
         val uHaloGrain = GLES20.glGetUniformLocation(id, "uHaloGrain")
         val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
+        val uGrainBase = GLES20.glGetUniformLocation(id, "uGrainBase")
         val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")
 
         fun release() {
