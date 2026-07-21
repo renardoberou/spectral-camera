@@ -63,6 +63,7 @@ The live screen includes stepped photographic controls rather than free numeric 
 - full-manual ISO and shutter where the device exposes Camera2 `MANUAL_SENSOR` support;
 - current aperture and exposure state where available;
 - digital exposure, Blacks/Whites, Contrast, Saturation, Hue, Grain, Bloom, Sharpness, channel weighting/swap, sky suppression, and foliage lift;
+- each film stock carries a small always-on baseline grain matched to the emulsion (film is never grainless); the Grain control adds on top of that baseline;
 - reset to calibrated film defaults.
 
 ### Capture, gallery, and hardware test

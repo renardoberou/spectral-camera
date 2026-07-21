@@ -96,6 +96,7 @@ uniform vec4 uAeroTone;    // curveMix, satCap, magentaBoost, skyDepthBoost
 uniform vec4 uAeroTone2;   // gold, fade, (reserved), (reserved)
 uniform vec4 uHaloGrain;   // haloThreshold, haloTight, haloWide, grainClump
 uniform float uGrainBias;      // per-stock grain amplitude multiplier
+uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
 
 float lumaOf(vec3 c) {
@@ -258,10 +259,19 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 base = vec3(clamp(warmth * 0.95, 0.0, 1.0),
                      clamp(r * 0.78 + g * 0.10, 0.0, 1.0),
                      clamp(b * 0.85, 0.0, 1.0));
+    // Per-look density on the DARK BLUE paths (vividBlue water/glass and
+    // plainBlue skylight shadow): these paths previously had no family dial
+    // at all, which made all five looks render a nearly identical dark
+    // window on the real dusk validation photo (that region never enters
+    // the skyMask path). skyDepthBoost doubles as the family density dial:
+    // Dense crushes these regions harder, Soft/Faded lift them. A mid-tone
+    // multiply is fine here (these paths sit at luma ~0.1-0.4, unlike the
+    // near-black deepCol sky ramp that needed a power curve).
+    float densityScale = clamp(2.0 - skyDepthBoost, 0.6, 1.4);
     vec3 ir = mix(base, folCol, vegAll);
-    ir = mix(ir, clamp(blueOut, 0.0, 1.0), vividBlue * (1.0 - vegAll));
+    ir = mix(ir, clamp(blueOut * densityScale, 0.0, 1.0), vividBlue * (1.0 - vegAll));
     // skylight shadow: film-correct darkening, faintly cool
-    vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80);
+    vec3 shadowCol = vec3(luma * 0.64, luma * 0.67, luma * 0.80) * densityScale;
     // saturated blue OBJECTS (denim, paint) darken harder than faint skylight
     // shadow - the yellow filter kills blue light in proportion
     float blueObj = mix(0.72, 0.93, smoothstep(0.06, 0.12, chromaDistC));
@@ -780,19 +790,22 @@ void main() {
     }
 
     // film grain
-    if (uGrain > 0.001) {
-        // Grain is strictly opt-in (default Off = perfectly clean output).
-        // Structured value-noise clumps replace per-pixel white noise: film
-        // grain has spatial correlation; sensor noise does not. Density-
-        // dependent on the mono presets (Poisson-like: strongest in midtones).
-        // grainBias/grainClump are the per-stock amplitude and clump-scale
-        // dials from FilmLookLibrary - HIE and Soft Vintage read coarser,
-        // Fine-Grain reads tighter, independent of the user's Grain slider.
-        float grainAmp = uGrain * 0.045 * uGrainBias;
+    // Film is never grainless: every stock carries a small always-on
+    // baseline (uGrainBase, per-look from FilmLookLibrary) so the per-stock
+    // grain personality is visible at default settings; the user's Grain
+    // slider adds on top of it. Structured value-noise clumps replace
+    // per-pixel white noise: film grain has spatial correlation; sensor
+    // noise does not. Density-dependent on the mono presets (Poisson-like:
+    // strongest in midtones). grainBias/grainClump are the per-stock
+    // amplitude and clump-scale dials - HIE and Soft Vintage read coarser,
+    // Fine-Grain reads tighter, independent of the user's Grain slider.
+    float effGrain = uGrain + uGrainBase;
+    if (effGrain > 0.001) {
+        float grainAmp = effGrain * 0.045 * uGrainBias;
         if (uPreset <= 5) {
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
-            grainAmp = uGrain * 0.040 * densityWeight * uGrainBias;
+            grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         }
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
         c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
@@ -1224,6 +1237,7 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uMonoCurve2, look.ceiling, look.woodLift, look.skyStrength, look.waterFloor)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
@@ -1234,6 +1248,7 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uAeroTone2, look.gold, look.fade, 0f, 0f)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
                 GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
@@ -1300,6 +1315,7 @@ class SpectralRenderer(
         val uAeroTone2 = GLES20.glGetUniformLocation(id, "uAeroTone2")
         val uHaloGrain = GLES20.glGetUniformLocation(id, "uHaloGrain")
         val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
+        val uGrainBase = GLES20.glGetUniformLocation(id, "uGrainBase")
         val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")
 
         fun release() {

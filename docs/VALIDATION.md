@@ -42,10 +42,21 @@ like an aged print of Classic, not a different scene.
 all 5 looks produced a nearly identical dark navy sky/glass despite `skyDepthBoost` ranging 0.70-1.25.
 Root cause #1 (fixed): the boost was a plain multiply on already near-black colour, with almost no visible
 effect - replaced with a power curve that has real effect in that range while leaving `skyDepthBoost = 1.0`
-(Classic/Gold) unchanged. Root cause #2 (**not yet fixed** - next cycle): that specific window was not even
-classified as "sky" by `skyMask` (mask ≈ 0) - its dark, flat appearance actually comes from the
-`plainBlue`/`shadowCol` path, which has no per-look dial at all today. A1/A2 above still need a fresh
-device re-shoot to confirm on scenes where the sky classifier *does* fire.
+(Classic/Gold) unchanged. Root cause #2 (**fixed same day**, see
+docs/PLAN_2026-07-21b_density-dial-and-baseline-grain.md): that specific window was not even classified as
+"sky" by `skyMask` (mask ≈ 0) - its dark, flat appearance came from the `plainBlue`/`shadowCol` and
+`vividBlue` paths, which had no per-look dial; `skyDepthBoost` now doubles as a density scale on those
+paths (window-crop family luma spread more than doubled on the real photo, Classic/Gold provably
+unchanged). A1/A2 above still need a fresh device re-shoot to confirm on scenes where the sky classifier
+*does* fire.
+
+**New watch item (2026-07-21b):** on Gold/Faded, dark foliage *reflected in window glass* renders green -
+the veg classifier fires on the reflection and gold's `veg`-keyed green push amplifies it. Pre-existing
+behaviour (visible in both before/after proof rows), not introduced this cycle. Candidate fix: gate the
+gold green push by the surface-smoothness signal already used for `cyanC`.
+
+**Grain note (2026-07-21b):** stocks now carry a small always-on baseline grain (`grainBase`), so grain
+personality checks in the M-table apply at DEFAULT settings, not only with the Grain slider raised.
 
 ---
 
