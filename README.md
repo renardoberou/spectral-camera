@@ -22,8 +22,9 @@ External IR/thermal hardware integration exists only as a UI framework (`SensorM
 
 ### Spectral presets: two structured film-look families
 
-Presets are not one-off shader hacks. Each family shares a single physically-
-motivated rendering engine (`monoLook()` / `aeroLook()` in
+Spectral Camera is a dedicated film-emulation tool: every preset belongs to
+one of two flagship families, and nothing else. Each family shares a single
+physically-motivated rendering engine (`monoLook()` / `aeroLook()` in
 `SpectralGlPipeline.kt`); every family member is a *data table entry* in
 `core/FilmLook.kt` (`FilmLookLibrary`) that reparameterizes the shared
 engine's tone curve, synthetic-NIR/Wood-effect strength, sky response, water
@@ -52,9 +53,7 @@ not new shader code. See `core/FilmLook.kt` for the full parameter set and
 | Aerochrome Gold (orange filter) | EIR with orange filter: golden foliage, teal sky. |
 | Aerochrome Faded / Vintage | Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character. |
 
-**Experimental** (simple channel-remap heuristics, not calibrated film models): Red 720nm-Style, Blue/Cyan Spectral, Fake Thermal Palette (clearly labelled stylised heat-map, not a thermal reading), Night Surveillance IR.
-
-All presets are shader functions in `SpectralGlPipeline.kt`; there is no separate native implementation per preset.
+All presets are shader functions in `SpectralGlPipeline.kt`; there is no separate native implementation per preset. There is no "experimental" or novelty category - every preset is a calibrated member of one of the two film families above.
 
 ### Manual controls
 

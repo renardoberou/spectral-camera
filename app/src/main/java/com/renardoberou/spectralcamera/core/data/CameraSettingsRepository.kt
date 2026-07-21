@@ -23,7 +23,11 @@ class CameraSettingsRepository(context: Context) {
 
     val settings: Flow<CameraSettings> = dataStore.data.map { prefs ->
         CameraSettings(
-            preset = SpectralPreset.valueOf(prefs[PRESET] ?: SpectralPreset.B_W_INFRARED.name),
+            // A preset removed from the enum (e.g. a retired experimental look) must
+            // not crash settings load for users who had it selected - fall back to
+            // the default rather than propagating IllegalArgumentException.
+            preset = prefs[PRESET]?.let { name -> runCatching { SpectralPreset.valueOf(name) }.getOrNull() }
+                ?: SpectralPreset.B_W_INFRARED,
             adjustments = ManualAdjustments(
                 contrast = prefs[CONTRAST] ?: 1.0f,
                 exposureCompensation = prefs[EXPOSURE] ?: 0f,
