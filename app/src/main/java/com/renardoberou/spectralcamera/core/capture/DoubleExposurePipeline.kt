@@ -8,13 +8,24 @@ import com.renardoberou.spectralcamera.core.hdr.HdrMath
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/** Pure, JVM-testable two-exposure density math. */
+object DoubleExposureMath {
+    /**
+     * Each source is treated as one stop under normal, then both linear-light
+     * exposures are added on the same virtual emulsion. This is equivalent to a
+     * symmetric 50/50 linear blend and leaves intentional bright overlap able to
+     * approach white, as a real balanced double exposure would.
+     */
+    fun blendLinear(first: Float, second: Float): Float =
+        ((first.coerceAtLeast(0f) + second.coerceAtLeast(0f)) * 0.5f).coerceIn(0f, 1f)
+}
+
 /**
  * Two-frame multiple exposure applied before the spectral film engine.
  *
- * Each source is treated as one stop under a normal exposure, then the two
- * linear-light exposures are added. This is the digital equivalent of making
- * two half-exposures on one frame rather than blending two already-processed
- * film looks.
+ * The first shutter stores a session-only source. The second shutter combines
+ * both compensated linear-light sources, then Aerochrome/monochrome IR is
+ * applied once to the composite rather than to each source separately.
  */
 object DoubleExposurePipeline {
     fun prepareFrame(source: Bitmap, mode: OutputMode): Bitmap {
@@ -103,8 +114,9 @@ object DoubleExposurePipeline {
     private fun blendChannel(first: Int, second: Int): Int {
         val firstLinear = HdrMath.srgbToLinear(first / 255f)
         val secondLinear = HdrMath.srgbToLinear(second / 255f)
-        // Two half-exposures: preserve headroom and avoid a crude screen blend.
-        val combined = (firstLinear + secondLinear) * 0.5f
-        return (HdrMath.linearToSrgb(combined).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+        return (
+            HdrMath.linearToSrgb(DoubleExposureMath.blendLinear(firstLinear, secondLinear))
+                .coerceIn(0f, 1f) * 255f + 0.5f
+            ).toInt()
     }
 }
