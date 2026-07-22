@@ -28,8 +28,8 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "45").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.17.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "46").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.18.0"
     }
 
     signingConfigs {
@@ -72,6 +72,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions {
+        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
     }
 }
 
