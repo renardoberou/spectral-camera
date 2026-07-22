@@ -1,0 +1,100 @@
+name: Apply scene-to-film refinement v2
+
+on:
+  push:
+    branches: [agent/aerochrome-tonal-refinement]
+    paths: [.github/workflows/apply-scene-film-refinement-v2.yml]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.head_ref == 'agent/aerochrome-tonal-refinement')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/aerochrome-tonal-refinement
+          fetch-depth: 0
+
+      - name: Execute reviewed patch with indentation-safe matching
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'BOOT'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow = Path('.github/workflows/apply-scene-film-refinement.yml').read_text()
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n"
+          script = dedent(workflow.split(start, 1)[1].split(end, 1)[0])
+
+          old_helper = '''def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one occurrence, found {count}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))'''
+
+          new_helper = '''def replace_once(path: str, old: str, new: str) -> None:
+              import re
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count == 1:
+                  p.write_text(text.replace(old, new, 1))
+                  return
+              if count > 1:
+                  raise SystemExit(f"{path}: expected one occurrence, found {count}: {old[:120]!r}")
+
+              pattern_lines = []
+              for line in old.splitlines():
+                  body = line.lstrip()
+                  pattern_lines.append(
+                      (r'^[ \\t]*' + re.escape(body) + r'[ \\t]*$') if body else r'^[ \\t]*$'
+                  )
+              pattern = '\\n'.join(pattern_lines)
+              matches = list(re.finditer(pattern, text, flags=re.MULTILINE))
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"{path}: indentation-safe match expected one occurrence, found {len(matches)}: {old[:120]!r}"
+                  )
+              match = matches[0]
+              matched_lines = match.group(0).splitlines()
+              first = next((line for line in matched_lines if line.strip()), '')
+              base_indent = first[:len(first) - len(first.lstrip())]
+              replacement = '\\n'.join(
+                  (base_indent + line if line else '') for line in new.splitlines()
+              )
+              p.write_text(text[:match.start()] + replacement + text[match.end():])'''
+
+          if old_helper not in script:
+              raise SystemExit('Could not find the original replace_once helper')
+          script = script.replace(old_helper, new_helper, 1)
+          exec(compile(script, 'scene-film-refinement-v2', 'exec'), {})
+
+          for temporary in (
+              '.github/workflows/apply-scene-film-refinement-v2.yml',
+              '.github/workflows/debug-scene-refinement.yml',
+              'docs/PATCH_DIAGNOSTIC_TEMP.txt',
+          ):
+              Path(temporary).unlink(missing_ok=True)
+          BOOT
+
+      - name: Verify engine and APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease
+
+      - name: Commit verified implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(engine): refine pre-film tone, red texture, highlight shoulder, and sky"
+          git push origin HEAD:agent/aerochrome-tonal-refinement
