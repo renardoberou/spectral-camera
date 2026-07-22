@@ -91,7 +91,20 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             glView.updateSettings(settings)
         }
 
-        LaunchedEffect(capabilities, settings.focusMode) {
+
+LaunchedEffect(capabilities?.activeLensId, settings.selectedLensId) {
+    val active = capabilities?.availableLenses
+        ?.firstOrNull { it.id == capabilities?.activeLensId }
+    if (active != null &&
+        (settings.selectedLensId != active.id ||
+            settings.selectedLensLabel != active.label ||
+            settings.frontFacing != active.frontFacing)
+    ) {
+        viewModel.setCameraLens(active)
+    }
+}
+
+LaunchedEffect(capabilities, settings.focusMode) {
             val supported = capabilities?.supportedOrFallback(settings.focusMode)
             if (supported != null && supported != settings.focusMode) {
                 viewModel.setFocusMode(supported)
@@ -287,6 +300,7 @@ private fun CameraSessionHost(
     DisposableEffect(
         lifecycleOwner,
         settings.frontFacing,
+        settings.selectedLensId,
         settings.outputMode,
         settings.hdrCaptureMode,
         settings.saveRawSidecar,
@@ -295,6 +309,7 @@ private fun CameraSessionHost(
             lifecycleOwner = lifecycleOwner,
             glView = glView,
             lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,
+            selectedLensId = settings.selectedLensId,
             outputMode = settings.outputMode,
             hdrCaptureMode = settings.hdrCaptureMode,
             rawSidecarRequested = settings.saveRawSidecar,

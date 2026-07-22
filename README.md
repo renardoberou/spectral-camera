@@ -91,6 +91,13 @@ Double Exposure is a two-shutter Standard workflow rather than an HDR bracket:
 
 The pending first frame can be cancelled. Changing lens or output mode clears it. Optional source saving writes both contributing JPEGs separately.
 
+
+## Lens selection
+
+The Live screen exposes every camera that CameraX can address: the logical rear camera, individually selectable physical rear lenses when Android reports them, and the front camera. A multi-camera logical rear device appears as **Auto rear** plus explicit entries such as **0.5× Ultra-wide**, **1× Main**, or **2× Tele**. Labels are derived from reported focal length and sensor size rather than hard-coded phone-model assumptions.
+
+Selecting a physical lens locks capture, focus capability detection, RAW/HDR capability checks, and metadata to that lens. If the phone maker does not expose an auxiliary camera to third-party apps, Spectral Camera cannot force it open and shows only the cameras Android makes available. The old front/rear switch remains as a cycle shortcut, while the Lens panel provides direct selection.
+
 ## Focus modes
 
 The Live screen now has a dedicated Focus panel. Modes are exposed only when the active camera reports the required hardware support.

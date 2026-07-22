@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.renardoberou.spectralcamera.core.CameraLensOption
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.CaptureResult
@@ -63,6 +64,7 @@ private data class DoubleExposureSession(
     val firstFrame: Bitmap,
     val outputMode: OutputMode,
     val frontFacing: Boolean,
+    val selectedLensId: String,
 )
 
 class SpectralViewModel(application: Application) : AndroidViewModel(application) {
@@ -108,10 +110,31 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setPreset(preset: SpectralPreset) = updateSettings { it.copy(preset = preset) }
     fun setSaveOriginal(enabled: Boolean) = updateSettings { it.copy(saveOriginal = enabled) }
 
-    fun setFrontFacing(enabled: Boolean) {
-        if (enabled != settings.value.frontFacing) cancelDoubleExposure()
-        updateSettings { it.copy(frontFacing = enabled) }
+
+fun setFrontFacing(enabled: Boolean) {
+    if (enabled != settings.value.frontFacing) cancelDoubleExposure()
+    updateSettings {
+        it.copy(
+            frontFacing = enabled,
+            selectedLensId = "",
+            selectedLensLabel = if (enabled) "Selfie" else "Rear camera",
+        )
     }
+}
+
+fun setCameraLens(lens: CameraLensOption) {
+    val current = settings.value
+    if (current.selectedLensId != lens.id || current.frontFacing != lens.frontFacing) {
+        cancelDoubleExposure()
+    }
+    updateSettings {
+        it.copy(
+            frontFacing = lens.frontFacing,
+            selectedLensId = lens.id,
+            selectedLensLabel = lens.label,
+        )
+    }
+}
 
     fun setOutputMode(mode: OutputMode) {
         if (mode != settings.value.outputMode) cancelDoubleExposure()
@@ -229,7 +252,8 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         val existing = doubleExposureSession
         if (existing != null &&
             (existing.outputMode != requestedSettings.outputMode ||
-                existing.frontFacing != requestedSettings.frontFacing)
+                existing.frontFacing != requestedSettings.frontFacing ||
+                existing.selectedLensId != requestedSettings.selectedLensId)
         ) {
             cancelDoubleExposure()
         }
@@ -260,6 +284,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                     firstFrame = prepared,
                     outputMode = captureSettings.outputMode,
                     frontFacing = captureSettings.frontFacing,
+                    selectedLensId = captureSettings.selectedLensId,
                 )
                 _doubleExposureState.value = DoubleExposureUiState(
                     waitingForSecond = true,

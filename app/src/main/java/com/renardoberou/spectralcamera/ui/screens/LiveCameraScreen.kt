@@ -92,12 +92,17 @@ fun LiveCameraScreen(
     var showPresets by remember { mutableStateOf(false) }
     var showExposure by remember { mutableStateOf(false) }
     var showFocus by remember { mutableStateOf(false) }
+    var showLenses by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
     var focusMessage by remember { mutableStateOf("Continuous autofocus active") }
     var capturing by remember { mutableStateOf(false) }
+    val lensOptions = capabilities?.availableLenses.orEmpty()
+    val activeLensLabel = capabilities?.activeLensLabel?.takeIf { it.isNotBlank() }
+        ?: settings.selectedLensLabel.takeIf { it.isNotBlank() }
+        ?: if (settings.frontFacing) "Selfie" else "Rear camera"
     val manualFocusLabel = FocusMath.positionLabel(
         settings.manualFocusPosition,
         capabilities?.minimumFocusDistanceDiopters ?: 0f,
@@ -222,6 +227,11 @@ fun LiveCameraScreen(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
+                            text = "Lens: $activeLensLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                        Text(
                             text = "Focus: ${settings.focusMode.label}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary,
@@ -243,7 +253,15 @@ fun LiveCameraScreen(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AssistChip(
+                        onClick = { showLenses = !showLenses },
+                        label = { Text("Lens: $activeLensLabel") },
+                        leadingIcon = { Icon(Icons.Outlined.Cameraswitch, null) },
+                    )
                     AssistChip(
                         onClick = onOpenGallery,
                         label = { Text("Gallery ($galleryCount)") },
@@ -262,8 +280,52 @@ fun LiveCameraScreen(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    if (showLenses && lensOptions.isNotEmpty()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
+            shape = MaterialTheme.shapes.large,
+        ) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Camera lens",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    lensOptions.forEach { lens ->
+                        FilterChip(
+                            selected = lens.id == capabilities?.activeLensId,
+                            onClick = {
+                                torchEnabled = false
+                                viewModel.setCameraLens(lens)
+                                showLenses = false
+                                captureLabel = "Switching to ${lens.label}…"
+                            },
+                            label = { Text(lens.label) },
+                        )
+                    }
+                }
+                val activeDescription = lensOptions
+                    .firstOrNull { it.id == capabilities?.activeLensId }
+                    ?.description
+                Text(
+                    activeDescription
+                        ?: "Only cameras exposed by Android can be selected. Some phone makers hide auxiliary lenses from third-party apps.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (capabilities?.exposureSupported == true) {
                         FilterChip(
                             selected = showExposure,
@@ -464,9 +526,26 @@ fun LiveCameraScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            IconButton(onClick = { viewModel.setFrontFacing(!settings.frontFacing) }) {
-                                Icon(Icons.Outlined.Cameraswitch, contentDescription = "Switch camera")
-                            }
+
+IconButton(onClick = {
+    val currentIndex = lensOptions.indexOfFirst {
+        it.id == capabilities?.activeLensId || it.id == settings.selectedLensId
+    }
+    val next = when {
+        lensOptions.isEmpty() -> null
+        currentIndex < 0 -> lensOptions.first()
+        else -> lensOptions[(currentIndex + 1) % lensOptions.size]
+    }
+    if (next != null) {
+        torchEnabled = false
+        viewModel.setCameraLens(next)
+        captureLabel = "Switching to ${next.label}…"
+    } else {
+        viewModel.setFrontFacing(!settings.frontFacing)
+    }
+}) {
+    Icon(Icons.Outlined.Cameraswitch, contentDescription = "Change lens")
+}
 
                             FilledTonalButton(
                                 enabled = !capturing,

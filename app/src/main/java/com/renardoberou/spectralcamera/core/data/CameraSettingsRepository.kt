@@ -49,6 +49,8 @@ class CameraSettingsRepository(context: Context) {
             ),
             saveOriginal = prefs[SAVE_ORIGINAL] ?: false,
             frontFacing = prefs[FRONT_FACING] ?: false,
+            selectedLensId = prefs[SELECTED_LENS_ID] ?: "",
+            selectedLensLabel = prefs[SELECTED_LENS_LABEL] ?: "",
             sensorMode = runCatching {
                 SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name)
             }.getOrDefault(SensorMode.SIMULATED_IR),
@@ -99,6 +101,8 @@ class CameraSettingsRepository(context: Context) {
             prefs[SWAP_MODE] = settings.adjustments.channelSwapMode.name
             prefs[SAVE_ORIGINAL] = settings.saveOriginal
             prefs[FRONT_FACING] = settings.frontFacing
+            prefs[SELECTED_LENS_ID] = settings.selectedLensId
+            prefs[SELECTED_LENS_LABEL] = settings.selectedLensLabel
             prefs[SENSOR_MODE] = settings.sensorMode.name
             prefs[OUTPUT_MODE] = settings.outputMode.name
             prefs[HDR_CAPTURE_MODE] = settings.hdrCaptureMode.name
@@ -133,6 +137,8 @@ class CameraSettingsRepository(context: Context) {
         val SWAP_MODE = stringPreferencesKey("swap_mode")
         val SAVE_ORIGINAL = booleanPreferencesKey("save_original")
         val FRONT_FACING = booleanPreferencesKey("front_facing")
+        val SELECTED_LENS_ID = stringPreferencesKey("selected_lens_id")
+        val SELECTED_LENS_LABEL = stringPreferencesKey("selected_lens_label")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
         val OUTPUT_MODE = stringPreferencesKey("output_mode")
         val HDR_CAPTURE_MODE = stringPreferencesKey("hdr_capture_mode")
