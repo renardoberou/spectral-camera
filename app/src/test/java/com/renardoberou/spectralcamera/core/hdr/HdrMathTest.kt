@@ -79,35 +79,46 @@ class HdrMathTest {
     }
 
     @Test
-    fun deghostWeightProtectsReferenceOnLargeDisagreement() {
-        val matching = HdrMath.deghostWeight(0.20f, 0.21f)
-        val moving = HdrMath.deghostWeight(0.20f, 1.20f)
-        assertTrue(matching > 0.95f)
-        assertTrue(moving < 0.20f)
+    fun recoveryGatesLeaveHealthyMidtonesAndHardEdgesOnTheReference() {
+        assertTrue(HdrMath.highlightRecoveryNeed(0.55f) < 0.01f)
+        assertTrue(HdrMath.shadowRecoveryNeed(0.45f) < 0.01f)
+        assertTrue(HdrMath.flatRegionGate(0.20f) < 0.01f)
+        assertTrue(HdrMath.highlightRecoveryNeed(0.995f) > 0.99f)
+        assertTrue(HdrMath.shadowRecoveryNeed(0.005f) > 0.99f)
     }
 
     @Test
-    fun translationEstimatorRecoversKnownShift() {
-        val width = 48
-        val height = 40
+    fun deghostWeightCanFullyRejectLargeDisagreement() {
+        val matching = HdrMath.deghostWeight(0.20f, 0.21f)
+        val moving = HdrMath.deghostWeight(0.20f, 1.20f)
+        assertTrue(matching > 0.95f)
+        assertTrue(moving < 0.01f)
+    }
+
+    @Test
+    fun medianThresholdEstimatorRecoversKnownShiftAcrossExposureOffset() {
+        val width = 64
+        val height = 52
         val expected = PixelShift(dx = 3, dy = -2)
         val reference = FloatArray(width * height) { index ->
             val x = index % width
             val y = index / width
-            (sin(x * 0.41) + sin(y * 0.57) + ((x * y) % 7) * 0.15).toFloat()
+            (sin(x * 0.31) + sin(y * 0.47) + ((x * y) % 11) * 0.11).toFloat()
         }
-        val candidate = FloatArray(width * height) { 6f }
-        for (y in 4 until height - 4) {
-            for (x in 4 until width - 4) {
+        val exposureOffset = 1.7f
+        val referenceMedian = reference.sorted()[reference.size / 2]
+        val candidate = FloatArray(width * height) { referenceMedian + exposureOffset }
+        for (y in 0 until height) {
+            for (x in 0 until width) {
                 val cx = x + expected.dx
                 val cy = y + expected.dy
                 if (cx in 0 until width && cy in 0 until height) {
-                    candidate[cy * width + cx] = reference[y * width + x]
+                    candidate[cy * width + cx] = reference[y * width + x] + exposureOffset
                 }
             }
         }
 
-        val actual = HdrTranslationEstimator.estimate(
+        val estimate = HdrTranslationEstimator.estimateDetailed(
             reference = reference,
             candidate = candidate,
             width = width,
@@ -115,7 +126,25 @@ class HdrMathTest {
             maxShift = 6,
             sampleStep = 1,
         )
-        assertTrue("expected=$expected actual=$actual", abs(actual.dx - expected.dx) <= 1)
-        assertTrue("expected=$expected actual=$actual", abs(actual.dy - expected.dy) <= 1)
+        assertTrue("estimate=$estimate", estimate.accepted)
+        assertTrue("expected=$expected actual=${estimate.shift}", abs(estimate.shift.dx - expected.dx) <= 1)
+        assertTrue("expected=$expected actual=${estimate.shift}", abs(estimate.shift.dy - expected.dy) <= 1)
+    }
+
+    @Test
+    fun flatOrAmbiguousSceneRejectsAlignmentInsteadOfInventingAShift() {
+        val width = 48
+        val height = 40
+        val estimate = HdrTranslationEstimator.estimateDetailed(
+            reference = FloatArray(width * height) { 0.4f },
+            candidate = FloatArray(width * height) { 1.4f },
+            width = width,
+            height = height,
+            maxShift = 6,
+            sampleStep = 1,
+        )
+        assertEquals(PixelShift(0, 0), estimate.shift)
+        assertEquals(0f, estimate.confidence, 0f)
+        assertTrue(!estimate.accepted)
     }
 }
