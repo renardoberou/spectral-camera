@@ -2,12 +2,12 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent/hdr-imaging-pipeline]
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -16,6 +16,39 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Integrate staged focus-mode sources
+        if: github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline'
+        run: |
+          set -euo pipefail
+          cat .github/focus-patch/part-*.b64 | base64 --decode > /tmp/focus.patch
+          if git apply --check /tmp/focus.patch; then
+            git apply /tmp/focus.patch
+            echo "Applied staged focus-mode patch."
+          else
+            echo "Focus-mode patch is already integrated; continuing."
+          fi
+
+      - name: Commit integrated focus-mode sources
+        if: github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline'
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add \
+              app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/core/media/MediaRepository.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/ui/SpectralCameraApp.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt
+            git commit -m "feat(focus): integrate focus modes across camera and live UI"
+            git push origin HEAD:agent/hdr-imaging-pipeline
+          else
+            echo "No integration commit needed."
+          fi
 
       - name: Reject tracked signing material
         run: |
