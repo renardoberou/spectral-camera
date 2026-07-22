@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.ManualAdjustments
@@ -59,10 +60,11 @@ class CameraSettingsRepository(context: Context) {
             hdrToneMap = prefs[HDR_TONE_MAP]?.let { name ->
                 runCatching { HdrToneMap.valueOf(name) }.getOrNull()
             } ?: HdrToneMap.NATURAL,
+            doubleExposureMode = prefs[DOUBLE_EXPOSURE_MODE]?.let { name ->
+                runCatching { DoubleExposureMode.valueOf(name) }.getOrNull()
+            } ?: DoubleExposureMode.OFF,
             ultraHdrExport = prefs[ULTRA_HDR_EXPORT] ?: false,
             saveRawSidecar = prefs[SAVE_RAW_SIDECAR] ?: false,
-            // Migration guard: hardwareEv was stored as a raw camera index before
-            // v1.6.0 and is stops now. Clearly legacy magnitudes reset to zero.
             hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
                 if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
             },
@@ -96,6 +98,7 @@ class CameraSettingsRepository(context: Context) {
             prefs[OUTPUT_MODE] = settings.outputMode.name
             prefs[HDR_CAPTURE_MODE] = settings.hdrCaptureMode.name
             prefs[HDR_TONE_MAP] = settings.hdrToneMap.name
+            prefs[DOUBLE_EXPOSURE_MODE] = settings.doubleExposureMode.name
             prefs[ULTRA_HDR_EXPORT] = settings.ultraHdrExport
             prefs[SAVE_RAW_SIDECAR] = settings.saveRawSidecar
             prefs[HARDWARE_EV] = settings.hardwareEv
@@ -127,10 +130,10 @@ class CameraSettingsRepository(context: Context) {
         val OUTPUT_MODE = stringPreferencesKey("output_mode")
         val HDR_CAPTURE_MODE = stringPreferencesKey("hdr_capture_mode")
         val HDR_TONE_MAP = stringPreferencesKey("hdr_tone_map")
+        val DOUBLE_EXPOSURE_MODE = stringPreferencesKey("double_exposure_mode")
         val ULTRA_HDR_EXPORT = booleanPreferencesKey("ultra_hdr_export")
         val SAVE_RAW_SIDECAR = booleanPreferencesKey("save_raw_sidecar")
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
-        val MANUAL_MODE = booleanPreferencesKey("manual_mode")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
         val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
         val INTENSITY = floatPreferencesKey("look_intensity")
