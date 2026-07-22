@@ -47,20 +47,24 @@ data class HdrMergeResult(
     val alignmentConfidence: List<Float>,
     val dynamicRangeStops: Float,
     val whitePoint: Float,
+    /** At least one bracket frame used conservative zero-shift, flat-region fusion. */
+    val motionProtected: Boolean,
 )
 
 /**
  * JPEG computational HDR.
  *
- * The normal exposure is the visual anchor. Darker/brighter frames contribute
- * only where the reference is clipped or very dark, only away from hard edges,
- * and only when exposure-invariant alignment is confident.
+ * The normal exposure is the visual anchor. A frame with uncertain global
+ * alignment is no longer rejected or allowed to cancel the HDR capture. It is
+ * kept at zero shift with a small confidence and can help only broad clipped or
+ * near-black flat regions. Edges and moving details remain reference-only.
  */
 object HdrPipeline {
     private const val THUMB_MAX_EDGE = 240
     private const val SAMPLE_STEP = 16
     private const val MAX_GAIN_STOPS = 4f
     private const val EPSILON = 1e-6f
+    private const val MOTION_FALLBACK_CONFIDENCE = 0.08f
 
     fun merge(
         frames: List<CapturedExposure>,
@@ -77,11 +81,15 @@ object HdrPipeline {
 
         val estimates = estimateAlignment(frames, referenceIndex, width, height)
         val alignment = estimates.map { it.shift }
-        val alignmentConfidence = FloatArray(frames.size) { index ->
-            if (index == referenceIndex) 1f else estimates[index].confidence
+        val motionProtected = estimates.indices.any { index ->
+            index != referenceIndex && !estimates[index].accepted
         }
-        require(alignmentConfidence.indices.any { it != referenceIndex && alignmentConfidence[it] > 0f }) {
-            "HDR alignment rejected every non-reference exposure"
+        val alignmentConfidence = FloatArray(frames.size) { index ->
+            when {
+                index == referenceIndex -> 1f
+                estimates[index].accepted -> estimates[index].confidence
+                else -> MOTION_FALLBACK_CONFIDENCE
+            }
         }
         val crop = commonCrop(width, height, alignment)
         require(crop.width > 32 && crop.height > 32) { "HDR alignment left no usable common image area" }
@@ -193,6 +201,7 @@ object HdrPipeline {
             alignmentConfidence = alignmentConfidence.toList(),
             dynamicRangeStops = dynamicRange,
             whitePoint = whitePoint,
+            motionProtected = motionProtected,
         )
     }
 
@@ -414,7 +423,6 @@ object HdrPipeline {
         rows.indices.forEach { index ->
             if (index == referenceIndex) return@forEach
             val confidence = alignmentConfidence[index]
-            if (confidence <= 0f) return@forEach
             val need = when {
                 evOffsets[index] < -0.05f -> highlightNeed
                 evOffsets[index] > 0.05f -> shadowNeed
