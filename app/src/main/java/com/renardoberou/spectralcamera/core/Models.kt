@@ -176,6 +176,10 @@ enum class FocusMode(
         label = "Infinity",
         description = "Hold the lens at its farthest focus position for distant landscapes, skies, and architecture.",
     ),
+    FIXED(
+        label = "Fixed Focus",
+        description = "This camera reports a non-moving lens; focus distance cannot be changed.",
+    ),
 }
 
 enum class FocusDistanceCalibration(val label: String) {
@@ -276,6 +280,7 @@ data class CameraCapabilities(
         FocusMode.MACRO -> macroFocusSupported
         FocusMode.MANUAL -> manualFocusSupported
         FocusMode.INFINITY -> infinityFocusSupported
+        FocusMode.FIXED -> !canFocus
     }
 
     fun supportedOrFallback(requested: FocusMode): FocusMode {
@@ -286,7 +291,8 @@ data class CameraCapabilities(
             FocusMode.MACRO,
             FocusMode.MANUAL,
             FocusMode.INFINITY,
-        ).firstOrNull(::supportsFocusMode) ?: FocusMode.CONTINUOUS
+            FocusMode.FIXED,
+        ).firstOrNull(::supportsFocusMode) ?: FocusMode.FIXED
     }
 }
 
