@@ -1,10 +1,8 @@
 # Validation: named failure scenes
 
-**Status:** living document. Every look or output-pipeline change should be checked against this list before it ships, not just against attractive demo frames. Physical-device checks remain mandatory where noted.
+**Status:** living document. Every look, capture, HDR, or output change must be checked here before release. Camera, motion, memory, gain-map encoding, and HDR-display checks require physical devices.
 
-This file describes expected behavior and unacceptable failure modes for both flagship film families and the pro output pipeline. It does not embed camera test images because the repository has no camera-capable CI; record release-specific pass/fail notes here after device testing.
-
-Engine references point at `monoLook()` / `irLuminance()` / `irHDCurve()` and `aeroLook()` / `aerochrome()` in `core/gl/SpectralGlPipeline.kt`, parameterized per stock by `core/FilmLook.kt`.
+The film engine remains in `core/gl/SpectralGlPipeline.kt`, parameterized by `core/FilmLook.kt`. HDR capture and source preparation live in `core/camera/CameraController.kt` and `core/hdr/`; output geometry and storage live in `core/export/` and `core/media/`.
 
 ---
 
@@ -12,20 +10,18 @@ Engine references point at `monoLook()` / `irLuminance()` / `irHDCurve()` and `a
 
 | # | Scene | Expected behavior | Unacceptable failure modes | Engine hook | Status |
 |---|---|---|---|---|---|
-| A1 | Blue sky with clouds | Deep cyan-blue clear sky; clouds stay bright and structurally readable; no visible gradient banding. | Washed-lavender sky; cloud texture loss; contour bands. | `skyMask` + `skyCol`; IGN dither | Reviewed in P1/P3; fresh device re-shoot required per release. |
-| A2 | Pale hazy sky | Paler and less saturated than clear sky, but still reads as sky without a hard horizon edge. | Hard seam; pure-white clip; muddy grey. | `clearBlue` / `lift` gates | Needs re-shoot. |
-| A3 | Skylit concrete / neutral walls | Pale neutral under cool light or pale warm cream under warm light. | Solid blue/purple shaded walls; neon/lime warm walls. | `greyC` neutral gate | Warm-cast bug fixed and checked on the real source; cool case needs re-shoot. |
-| A4 | Deep-shadow foliage | Shadow foliage remains red/magenta and textured. | Muddy brown fall-through; flat patch. | Chromaticity `veg` / `oliveVeg` | Reviewed; needs re-shoot. |
-| A5 | Skin | Waxy pale/sallow response, never foliage-red. | Skin goes red/magenta. | Red-dominant vegetation exclusion | Needs re-shoot. |
-| A6 | Red painted objects | Green/yellow-green EIR reversal response rather than native red. | Unprocessed red “sticker.” | `manMade` dye pull | Needs re-shoot. |
-| A7 | Water / pools / glass | Vivid indigo where appropriate; no foliage-red shoreline contamination. | Purple pool; red bleed; false vegetation. | `vividBlue` / `waterC`; water sanctity | Water-sanctity fix shipped; needs re-shoot. |
-| A8 | Mixed urban greenery | Species/vigor variation remains visible. | Every plant collapses to one crimson slab. | `species` continuum + `oliveVeg` | Reviewed; needs re-shoot. |
+| A1 | Blue sky with clouds | Deep cyan-blue clear sky; clouds bright and structurally readable; no contour bands. | Lavender sky; flattened clouds; visible banding. | `skyMask`, `skyCol`, IGN dither | Fresh release re-shoot required. |
+| A2 | Pale hazy sky | Paler and less saturated than clear sky, with a soft horizon transition. | Hard seam; pure-white clip; muddy grey. | `clearBlue`, `lift` | Needs re-shoot. |
+| A3 | Skylit concrete / neutral walls | Pale cool neutral or warm cream according to illumination. | Saturated blue/purple walls; neon/lime warm wall. | neutral gate | Warm-cast fix checked on real source; cool case needs re-shoot. |
+| A4 | Deep-shadow foliage | Shadow foliage remains red/magenta and textured. | Muddy-brown fall-through or flat patch. | chromaticity `veg` / `oliveVeg` | Needs re-shoot. |
+| A5 | Skin | Pale/sallow EIR response, never foliage-red. | Red/magenta skin. | red-dominant vegetation exclusion | Needs re-shoot. |
+| A6 | Red painted objects | Green/yellow-green reversal response rather than native red. | Unprocessed red “sticker.” | man-made dye pull | Needs re-shoot. |
+| A7 | Water / pools / glass | Indigo where appropriate; no foliage-red shoreline contamination. | Purple water; red bleed; false vegetation. | water classification/sanctity | Fix shipped; needs re-shoot. |
+| A8 | Mixed urban greenery | Visible species/vigor variation. | Every plant collapses to one crimson slab. | species continuum, `oliveVeg` | Needs re-shoot. |
 
-**Family-coherence check:** Classic/Soft/Dense must preserve the same material classification while visibly changing contrast, density, and saturation. Gold changes warmth/teal balance without changing scene assignment. Faded should resemble an aged print of Classic.
+**Family coherence:** Classic/Soft/Dense must preserve material assignment while changing contrast, density and saturation. Gold changes warmth/teal balance without changing classification. Faded should read as an aged Classic print.
 
-The 2026-07-21 real-device dusk-window test exposed two common-mode failures: warm stucco became neon yellow and the five dark-blue paths were nearly identical. The neutral gate and dark-path density control were fixed and numerically checked against that real image. Clear-sky A1/A2 still require new captures where the sky classifier actually fires.
-
-**Watch item:** Gold/Faded can render dark foliage reflected in glass green because the vegetation classifier fires on the reflection and the gold vegetation push amplifies it. Candidate fix: gate that push with the existing surface-smoothness signal.
+**Watch item:** Gold/Faded may render dark foliage reflected in glass green. Candidate fix remains a surface-smoothness gate on the gold vegetation push.
 
 ---
 
@@ -33,57 +29,84 @@ The 2026-07-21 real-device dusk-window test exposed two common-mode failures: wa
 
 | # | Scene | Expected behavior | Unacceptable failure modes | Engine hook | Status |
 |---|---|---|---|---|---|
-| M1 | Noon sky with cloud detail | Sky sits near Zone I–II while cloud structure remains visible. | Flat black plateau; seam; banding. | `skyDown` / `skyStr`; IGN dither | Fix shipped; needs re-shoot. |
-| M2 | Reflective water | Dark but alive, with Zone-I tone and specular ripple. | Void-black water with no sheen. | mono water floor + detail | Fix shipped; needs re-shoot. |
-| M3 | Wooded shadow | Intra-canopy structure survives the Wood lift. | Fused white foliage or dead dark canopy. | `toneMod` | Reviewed; needs re-shoot. |
-| M4 | Leaf detail against sky | Branch and leaf silhouettes stay separated without matte edges. | Hard cutout; sky mask bleed. | `skyMask` edge gate | Reviewed; needs re-shoot. |
-| M5 | Bark / masonry / stone | Midtone texture stays even and stable. | Chroma-classifier leopard spots. | bilateral `srcC` | Fix shipped; needs re-shoot. |
-| M6 | Pale skin | Mild smooth lift, not paper-white. | Blown skin or sky suppression on skin. | skin branch | Reviewed; needs re-shoot. |
-| M7 | Red clothing / bright objects | Plain film-tone response without classifier artifacts. | False vegetation/sky response. | chromaticity gates | Reviewed; needs re-shoot. |
-| M8 | Haze / overcast field | Soft, faithful low-contrast response with mild foliage glow. | Muddy grey or identical response to hard sun. | `skyHazy` | Reviewed; needs re-shoot. |
+| M1 | Noon sky with cloud detail | Sky near Zone I–II while cloud structure survives. | Flat black plateau; seam; banding. | `skyDown`, `skyStr`, dither | Needs re-shoot. |
+| M2 | Reflective water | Dark but alive, with Zone-I tone and specular ripple. | Void-black water. | water floor + detail | Needs re-shoot. |
+| M3 | Wooded shadow | Intra-canopy structure survives the Wood lift. | Fused white or dead dark canopy. | `toneMod` | Needs re-shoot. |
+| M4 | Leaves against sky | Fine silhouettes remain separate without matte edges. | Hard cutout or sky-mask bleed. | sky edge gate | Needs re-shoot. |
+| M5 | Bark / masonry / stone | Stable midtone texture. | Classifier leopard spots. | bilateral classification colour | Needs re-shoot. |
+| M6 | Pale skin | Mild smooth lift, not paper white. | Blown skin or sky suppression. | skin branch | Needs re-shoot. |
+| M7 | Red clothing / bright objects | Ordinary film-tone response without classifier artifacts. | False foliage or sky response. | chromaticity gates | Needs re-shoot. |
+| M8 | Haze / overcast field | Soft low-contrast response with mild foliage glow. | Muddy grey or same response as hard sun. | hazy-sky detector | Needs re-shoot. |
 
-**Stock-personality check:** Rollei/HIE/SFX/Moderate/Fine-Grain/Soft-Vintage must remain visibly distinct on the same source through sky density, highlight ceiling, halation spread, acutance, and grain clump scale. If two stocks are interchangeable, separate their `core/FilmLook.kt` parameters rather than adding a bespoke shader branch.
+**Stock personality:** Rollei/HIE/SFX/Moderate/Fine-Grain/Soft-Vintage must remain visibly distinct on one source through sky density, ceiling, halation, acutance and grain.
 
 ---
 
-## Pro output pipeline
+## Computational HDR pipeline
 
-Pure geometry is covered by `OutputGeometryTest`; stream negotiation, GPU output, and DNG persistence require a physical camera.
+Pure bracket, transfer, tone-map, deghost-weight and translation math is covered by `HdrMathTest`. Real exposure timing, alignment, motion and memory require camera testing.
 
 | # | Test | Expected behavior | Unacceptable failure modes | Implementation hook | Status |
 |---|---|---|---|---|---|
-| O1 | Full Resolution | Uses the highest practical 4:3 JPEG source, quality 100, and preserves the largest GPU-supported processed dimensions. | Silent 1080 cap; quality-95 source; stretched output. | `CameraController.buildImageCapture()` + `OutputMode.FULL_RESOLUTION` | Code complete; device verification required. |
-| O2 | HQ 1080 | High-resolution source is center-cropped to 16:9, fully rendered, then exported at exact 1920×1080 or 1080×1920. | Render after premature low-res scaling; wrong orientation; soft one-step resize artifacts. | `OutputPipeline.prepareForRender()` / `progressiveDownsampleToFullHd()` | Geometry unit-tested; visual/device verification required. |
-| O3 | Fast 1080 | Requests a low-latency 16:9 stream near Full HD and exports exact Full HD. | Still uses full-resolution latency; wrong aspect; non-exact dimensions. | `OutputMode.FAST_1080` capture selector | Code complete; device verification required. |
-| O4 | Mod-16 fallback | A 1920×1088 source becomes a centered 1920×1080 result, removing four rows from each side of the long dimension. | Stretching; off-center crop; 1920×1088 final file. | `OutputGeometry.centerCrop()` | JVM test passes when CI is green. |
-| O5 | Portrait output | Portrait source becomes exact 1080×1920 with a centered 9:16 crop. | Rotated result; 1920×1080 landscape file; asymmetric crop. | orientation-aware `fullHdSize()` | JVM test passes when CI is green. |
-| O6 | Preview/export intent | Material assignment and stock personality match preview; still-only auto-levels/HQ finishing may refine tone and detail. | Different preset appearance; foliage/sky/water classification flips between preview and export. | shared shader; still output wrapper | Needs paired device captures. |
-| O7 | RAW supported | Pro output screen enables DNG; one shutter saves processed JPEG plus a non-empty, externally readable DNG. | Empty/corrupt DNG; two shutter events; missing processed JPEG. | CameraX `OUTPUT_FORMAT_RAW_JPEG` dual-file capture | Code complete; supported-device verification required. |
-| O8 | RAW unsupported | DNG control is disabled; capture continues as JPEG without failure. | Camera refuses to bind; capture button fails; misleading RAW claim. | capability query + JPEG fallback | Code complete; unsupported-device verification required. |
-| O9 | RAW stream fallback | If RAW+JPEG is advertised but cannot bind beside preview, the controller rebuilds a JPEG-only session and reports RAW unavailable. | Black preview; crash loop; stale enabled capability. | `bindUseCases()` fallback | Code complete; hard to reproduce, device matrix required. |
-| O10 | RAW + Fast 1080 | DNG request keeps a high-quality sensor source while processed export remains exact Full HD. | Low-resolution DNG request; processed size drifts; UI implies fast latency. | RAW override in `buildImageCapture()` + Pro output copy | Code complete; device verification required. |
-| O11 | File identity | Names and metadata distinguish `proc`, `orig`, and `dng`, and include output mode. Legacy `raw` JPEG names still load as originals. | DNG called JPEG; original JPEG called RAW; old gallery disappears. | `MediaRepository` naming/parser | Code review complete; MediaStore verification required. |
-| O12 | Family regression | All 11 film presets preserve their established rendering in Full Resolution, HQ 1080, and Fast 1080 apart from expected scale/detail differences. | New output mode changes hue, material classification, halation, or stock order. | shared `SpectralGlPipeline` unchanged | Needs validation grid on device. |
+| H1 | Auto bracket timing | Each CameraX compensation future completes before its JPEG is captured; reference exposure is restored after the bracket. | Three identical exposures; stale EV; preview left dark/bright. | `captureHdrBracket()`, `setExposureCompensationIndex().await()` | Code complete; device test required. |
+| H2 | Manual shutter bracket | ISO remains fixed; shutter produces distinct under/reference/over frames; base shutter is restored. | AE re-enabled; ISO changes; duplicate frames; stuck shutter. | Camera2 request options + `await()` | Code complete; MANUAL_SENSOR device required. |
+| H3 | Limited EV range | Planner uses three distinct supported values where possible; otherwise capture truthfully falls back to Standard. | Duplicate exposures presented as HDR; capture failure. | `HdrBracketPlanner` | JVM covered; lens matrix required. |
+| H4 | Static tripod scene | Merge recovers highlights and shadow separation without changing object position or adding halos. | Double edges; flat conventional-HDR look; local halos. | translation alignment + global tone map | Device/reference test required. |
+| H5 | Handheld translation | Small camera movement aligns to a common crop with no exposed borders. | Black edge, wrap, stretched frame, gross softness. | log-radiance translation estimator + common crop | Math covered; handheld test required. |
+| H6 | Moving person / leaves | Disagreement biases toward the normal exposure. Motion may lose HDR range but should not become multiple ghosts. | Three silhouettes; colour fringes; checkerboard ghost. | radiance deghost weight | Weight JVM covered; motion test required. |
+| H7 | Water / waves | Moving texture stays coherent through reference fallback; film water rendering remains dark/credible. | Repeated ripples; glowing water; red EIR contamination. | deghost + final-luma gain gate | Device test required. |
+| H8 | Natural tone map | Better cloud/highlight information and modest shadow recovery while retaining photographic contrast. | Grey shadows; flat midtones; clipped highlights. | extended Reinhard luminance map | Monotonic JVM test; image test required. |
+| H9 | Filmic tone map | Deeper toe and long shoulder feed the stock curve without double-crushing shadows. | Black clipping; muddy mids; abrupt shoulder. | ACES-style global luminance map | Monotonic JVM test; image test required. |
+| H10 | Low Contrast tone map | Severe backlight fits in range for later manual grading. | Local halo; colour shift; posterization. | logarithmic global map | Monotonic JVM test; image test required. |
+| H11 | Classifier stability | HDR improves clipped foliage/sky inputs but does not make one material change class merely because a tone map changed. | Tone-map-dependent foliage/water/skin classification flips. | normalized HDR bitmap feeds unchanged film shader | Full family grid required. |
+| H12 | Memory pressure | HDR source remains within the configured practical stream; no OOM during capture, merge, render or save. | Process death; frozen preview; corrupt file. | HDR resolution policy + row-wise merge | Device heap/latency profiling required. |
 
-### How to run the output checklist
+### HDR scene protocol
 
-1. Use the same static scene and exposure for all three output modes.
-2. Record source and processed pixel dimensions, file size, capture latency, and active camera.
-3. Compare a matched 100% crop from Full Resolution and HQ 1080; HQ should be cleaner at delivery size, not differently graded.
-4. Test landscape and portrait orientation, including a device that exposes 1920×1088 or another aligned size if available.
-5. Toggle DNG on a RAW-capable rear camera, a non-RAW front camera, and after switching lenses.
-6. Open DNG output in at least one independent RAW developer and verify metadata/data integrity.
-7. Reprocess one gallery image through every output mode to confirm the same geometry rules apply to imports.
-8. Update the Status column with device, Android version, release/commit, and a one-line verdict.
+1. Lock framing and focus; shoot Standard plus all three HDR tone maps.
+2. Record each source EV/shutter, source dimensions, merge time, render time, peak memory and final dimensions.
+3. Include a clipped-cloud/backlit scene, deep foliage, a static interior/window, handheld translation, a walking subject, wind-blown leaves and moving water.
+4. Compare material classification, not only dynamic range.
+5. Verify exposure/manual state is restored after success, cancellation and error.
+
+---
+
+## Ultra HDR export and display
+
+| # | Test | Expected behavior | Unacceptable failure modes | Implementation hook | Status |
+|---|---|---|---|---|---|
+| U1 | Android 14+ encode | `uhdr` file is a valid JPEG, decodes normally, and `Bitmap.hasGainmap()` is true after round trip. | SDR-only file mislabeled Ultra HDR; corrupt JPEG; lost gain map. | `UltraHdrExporter`, Bitmap JPEG encode | Device round-trip required. |
+| U2 | SDR fallback viewer | Non-HDR/legacy viewer shows the processed SDR base with the intended film look. | Washed or dark fallback; unsupported-file error. | JPEG/R base image | Independent viewers required. |
+| U3 | HDR display viewer | Detail viewer switches window to HDR only for an actual decoded gain map, and restores the prior mode on close. | Whole app stuck HDR; mode enabled for SDR; no highlight increase. | `Bitmap.hasGainmap()`, dynamic window color mode | Android 14+ HDR display required. |
+| U4 | Post-film gain validity | Bright clouds/speculars may gain headroom; intentionally dark EIR sky, IR water and dense shadows remain dark. | Dark blue sky glows; black water becomes luminous; colour wash. | pre-film headroom × post-film luminance gate | Aero/mono grids required. |
+| U5 | Gain-map smoothness | Gain transition is low-frequency and visually smooth. | Gain-map block grid, halo, pumping or banding. | quarter-scale/bounded gain map | 100% and HDR-display inspection required. |
+| U6 | Platform fallback | Android <14 disables Ultra HDR control and saves normal SDR JPEG. | Crash on older API; misleading enabled control. | API guard | API 26/33 tests required. |
+| U7 | Share/export | Shared file retains gain-map capability in compatible destination and remains readable elsewhere. | Re-encoding strips gain silently in app share; unreadable destination. | direct URI share | App matrix required. |
+
+---
+
+## Pro output and RAW
+
+| # | Test | Expected behavior | Unacceptable failure modes | Status |
+|---|---|---|---|---|
+| O1 | Standard Full Resolution | Highest practical source, quality 100, largest GPU-supported processed dimensions. | Silent 1080 cap; quality-95 source; stretch. | Device test required. |
+| O2 | HQ 1080 | High-resolution render then exact `1920×1080` / `1080×1920` progressive reduction. | Premature low-res render; wrong orientation; non-exact size. | Geometry JVM covered; visual test required. |
+| O3 | Fast 1080 | Low-latency 16:9 source and exact Full HD result. | Full-res latency; 1920×1088 final; stretch. | Device test required. |
+| O4 | Mod-16 fallback | `1920×1088` center-crops to `1920×1080`. | Stretch or off-centre crop. | JVM covered. |
+| O5 | RAW supported | Standard capture saves processed JPEG plus externally readable DNG. | Empty/corrupt DNG; missing processed JPEG. | Device test required. |
+| O6 | RAW unsupported/fallback | JPEG remains usable and UI reports RAW unavailable. | Bind failure, crash loop, stale enabled state. | Device matrix required. |
+| O7 | RAW versus HDR policy | Enabling HDR disables RAW; enabling RAW returns to Standard and disables Ultra HDR. | Hidden triple-DNG capture; contradictory UI/metadata. | Settings setters + session bind | UI/device test required. |
+| O8 | File identity | `proc`, `uhdr`, `orig`, `dng`, output mode and `HDR3`/`SDR1` are truthful; older names still load. | DNG called JPEG; Standard mislabeled HDR; old gallery disappears. | Parser review complete; MediaStore test required. |
+| O9 | Family regression | All 11 presets retain established hue/material/stock identity across Standard/HDR and Full/HQ/Fast. | Output path changes film identity. | Full validation grid required. |
 
 ---
 
 ## General release procedure
 
-1. Shoot or reprocess every relevant scene with each preset in the family.
-2. Compare against Expected behavior; flag anything matching an unacceptable failure mode.
-3. Run all output-pipeline checks for any capture/export change.
-4. Update Status with the release/commit checked and a concise verdict.
-5. Create a dated plan document for failures, following the existing `docs/PLAN_<date>_<topic>.md` convention.
+1. Run every relevant Aerochrome and monochrome scene in Standard and Computational HDR.
+2. Run all output, RAW and Ultra HDR checks for capture/export changes.
+3. Verify dimensions, latency, memory, exposure restoration, file metadata and independent decode.
+4. Record device, Android version, lens, commit/release and verdict in the Status column.
+5. File a dated plan document for every failure rather than tuning from one attractive frame.
 
-Automated image assertions are still absent because the renderer is a live OpenGL pipeline driven by camera/gallery input. Physical-device verification remains mandatory.
+There is no camera-capable CI or automated HDR display. Green JVM/build CI is necessary but not sufficient for release.
