@@ -88,9 +88,6 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             HdrCaptureMode.OFF -> current.copy(hdrCaptureMode = mode, ultraHdrExport = false)
             HdrCaptureMode.THREE_FRAME -> current.copy(
                 hdrCaptureMode = mode,
-                // This cycle implements a JPEG exposure bracket. RAW remains a
-                // single-shutter sidecar workflow rather than silently making
-                // three large DNG files.
                 saveRawSidecar = false,
             )
         }
@@ -132,10 +129,9 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Full still pipeline:
-     *
-     * camera bracket -> output-mode geometry -> scene-linear HDR merge -> global
-     * normalization/tone map -> shared synthetic-NIR/film shader -> output-size
-     * finishing -> optional processed-image Ultra HDR gain map -> MediaStore.
+     * camera bracket -> geometry -> approximate scene-linear JPEG merge ->
+     * normalization/tone map -> synthetic-NIR/film shader -> finishing ->
+     * optional post-film Ultra HDR gain map -> MediaStore.
      */
     suspend fun captureAndSave(
         cameraController: CameraController,
@@ -143,14 +139,13 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     ): CaptureResult {
         val requestedSettings = settings.value
         val frame = cameraController.capture(requestedSettings)
-        val effectiveSettings = if (frame.isHdrBracket) {
+        var effectiveSettings = if (frame.isHdrBracket) {
             requestedSettings
         } else {
-            // A camera with insufficient bracket range can fall back to one
-            // frame; keep output metadata and auto-level behavior truthful.
             requestedSettings.copy(hdrCaptureMode = HdrCaptureMode.OFF, ultraHdrExport = false)
         }
 
+        val referenceOriginal = frame.referenceBitmap
         val prepared = mutableListOf<CapturedExposure>()
         var hdrMerge: HdrMergeResult? = null
         var filmInput: Bitmap? = null
@@ -158,23 +153,60 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         var finalOutput: Bitmap? = null
         var ultraHdr: UltraHdrImage? = null
         try {
-            frame.exposures.forEach { exposure ->
+            frame.exposures.forEachIndexed { index, exposure ->
                 val bitmap = withContext(Dispatchers.Default) {
                     OutputPipeline.prepareForRender(exposure.bitmap, effectiveSettings.outputMode)
                 }
                 prepared += CapturedExposure(bitmap, exposure.evOffset)
+
+                // Cropped/scaled HDR inputs no longer need the original bracket
+                // bitmap, except the normal exposure when the user asked to save it.
+                val keepOriginal = effectiveSettings.saveOriginal && index == frame.referenceIndex
+                if (bitmap !== exposure.bitmap && !keepOriginal && !exposure.bitmap.isRecycled) {
+                    exposure.bitmap.recycle()
+                }
             }
 
-            val working = if (frame.isHdrBracket) {
-                withContext(Dispatchers.Default) {
-                    HdrPipeline.merge(
-                        frames = prepared,
-                        referenceIndex = frame.referenceIndex,
-                        toneMap = effectiveSettings.hdrToneMap,
+            val working: Bitmap
+            if (frame.isHdrBracket) {
+                val merge = try {
+                    withContext(Dispatchers.Default) {
+                        HdrPipeline.merge(
+                            frames = prepared,
+                            referenceIndex = frame.referenceIndex,
+                            toneMap = effectiveSettings.hdrToneMap,
+                        )
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (merge != null) {
+                    hdrMerge = merge
+                    working = merge.workingBitmap
+                    // The merged bitmap owns the source result now. Recycle all
+                    // bracket/prepared pixels before the GL render to avoid a
+                    // 3-source + merge + render peak. Preserve only the optional
+                    // original/reference JPEG until MediaStore has written it.
+                    recycleDistinctExcept(
+                        keep = if (effectiveSettings.saveOriginal) referenceOriginal else null,
+                        bitmaps = buildList {
+                            addAll(frame.exposures.map { it.bitmap })
+                            addAll(prepared.map { it.bitmap })
+                        },
                     )
-                }.also { hdrMerge = it }.workingBitmap
+                } else {
+                    // Alignment or merge failure should not lose the photograph.
+                    // Render the normal exposure and label it Standard; never save
+                    // a false HDR/Ultra HDR claim.
+                    effectiveSettings = effectiveSettings.copy(
+                        hdrCaptureMode = HdrCaptureMode.OFF,
+                        ultraHdrExport = false,
+                    )
+                    working = prepared[frame.referenceIndex].bitmap
+                }
             } else {
-                prepared[frame.referenceIndex].bitmap
+                working = prepared[frame.referenceIndex].bitmap
             }
             filmInput = working
 
@@ -186,18 +218,29 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             finalOutput = finished
 
             if (effectiveSettings.ultraHdrExport && hdrMerge != null) {
-                ultraHdr = withContext(Dispatchers.Default) {
-                    UltraHdrExporter.attachIfSupported(finished, requireNotNull(hdrMerge).gainField)
+                ultraHdr = try {
+                    withContext(Dispatchers.Default) {
+                        UltraHdrExporter.attachIfSupported(finished, requireNotNull(hdrMerge).gainField)
+                    }
+                } catch (_: Exception) {
+                    // A gain-map failure must not discard the valid SDR film image.
+                    null
                 }
             }
+
             val saveBitmap = ultraHdr?.bitmap ?: finished
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
                     processed = saveBitmap,
-                    original = frame.referenceBitmap,
+                    original = if (effectiveSettings.saveOriginal) referenceOriginal else null,
                     rawSidecar = frame.rawSidecarFile,
                     settings = effectiveSettings,
                     ultraHdr = ultraHdr != null,
+                    hdrFrameCount = if (effectiveSettings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) {
+                        frame.exposures.size
+                    } else {
+                        1
+                    },
                 )
             }
             refreshGallery()
@@ -205,22 +248,23 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         } finally {
             frame.rawSidecarFile?.delete()
             ultraHdr?.recycle()
-            val allBitmaps = buildList {
-                addAll(frame.exposures.map { it.bitmap })
-                addAll(prepared.map { it.bitmap })
-                add(hdrMerge?.workingBitmap)
-                add(filmInput)
-                add(rendered)
-                add(finalOutput)
-            }
-            recycleDistinct(*allBitmaps.toTypedArray())
+            recycleDistinct(
+                *buildList {
+                    addAll(frame.exposures.map { it.bitmap })
+                    addAll(prepared.map { it.bitmap })
+                    add(hdrMerge?.workingBitmap)
+                    add(filmInput)
+                    add(rendered)
+                    add(finalOutput)
+                }.toTypedArray(),
+            )
         }
     }
 
     /**
-     * Gallery import remains a single display-referred source. Computational
-     * bracketing and Ultra HDR generation are capture-only until a DNG/multi-
-     * exposure import workflow exists.
+     * Gallery import remains a single display-referred source. Bracketing and
+     * generated Ultra HDR are capture-only until a multi-exposure/DNG import
+     * workflow exists.
      */
     suspend fun importAndSave(
         uri: Uri,
@@ -265,10 +309,11 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
                     processed = finalOutput,
-                    original = original,
+                    original = if (effectiveSettings.saveOriginal) original else null,
                     rawSidecar = null,
                     settings = effectiveSettings,
                     ultraHdr = false,
+                    hdrFrameCount = 1,
                 )
             }
             refreshGallery()
@@ -293,6 +338,16 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                         )
                     },
                 )
+        }
+    }
+
+    private fun recycleDistinctExcept(keep: Bitmap?, bitmaps: List<Bitmap?>) {
+        val seen = mutableListOf<Bitmap>()
+        bitmaps.forEach { bitmap ->
+            if (bitmap != null && bitmap !== keep && seen.none { it === bitmap }) {
+                seen += bitmap
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
         }
     }
 
