@@ -28,9 +28,11 @@ import com.renardoberou.spectralcamera.core.hdr.HdrGainField
 import com.renardoberou.spectralcamera.core.hdr.HdrMergeResult
 import com.renardoberou.spectralcamera.core.hdr.HdrPipeline
 import com.renardoberou.spectralcamera.core.hdr.RawHdrMergeResult
-import com.renardoberou.spectralcamera.core.hdr.RawHdrPipeline
+import com.renardoberou.spectralcamera.core.hdr.RawHdrSafetyPipeline
 import com.renardoberou.spectralcamera.core.hdr.UltraHdrExporter
 import com.renardoberou.spectralcamera.core.hdr.UltraHdrImage
+import com.renardoberou.spectralcamera.core.hdr.orientLikeBitmap
+import com.renardoberou.spectralcamera.core.hdr.prepareForOutput
 import com.renardoberou.spectralcamera.core.media.MediaRepository
 import java.io.File
 import kotlin.math.roundToInt
@@ -350,8 +352,9 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         try {
             val working: Bitmap = when {
                 frame.isRawHdrBracket -> {
+                    val referenceRaw = frame.rawExposures[frame.referenceIndex]
                     val merge = withContext(Dispatchers.Default) {
-                        RawHdrPipeline.merge(
+                        RawHdrSafetyPipeline.merge(
                             frames = frame.rawExposures,
                             referenceIndex = frame.referenceIndex,
                             toneMap = effectiveSettings.hdrToneMap,
@@ -359,7 +362,18 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                     rawMerge = merge
+                    val uprightWidth = merge.workingBitmap.width
+                    val uprightHeight = merge.workingBitmap.height
                     gainField = merge.gainField
+                        .orientLikeBitmap(
+                            rotationDegrees = referenceRaw.rotationDegrees,
+                            mirrorHorizontal = effectiveSettings.frontFacing,
+                        )
+                        .prepareForOutput(
+                            sourceWidth = uprightWidth,
+                            sourceHeight = uprightHeight,
+                            mode = effectiveSettings.outputMode,
+                        )
                     val prepared = withContext(Dispatchers.Default) {
                         OutputPipeline.prepareForRender(merge.workingBitmap, effectiveSettings.outputMode)
                     }
