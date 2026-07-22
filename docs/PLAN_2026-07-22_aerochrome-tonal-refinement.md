@@ -2,6 +2,7 @@
 
 **Date:** 2026-07-22  
 **Branch:** `agent/aerochrome-tonal-refinement`  
+**Draft PR:** #83  
 **Trigger:** three real Aerochrome field frames covering saturated red foregrounds, direct-sun backlight, urban greenery, sky, architecture, and deep shadow.
 
 ## Review of the requested plan
