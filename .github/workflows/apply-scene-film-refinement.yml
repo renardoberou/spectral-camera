@@ -1,0 +1,534 @@
+name: Apply scene-to-film response refinement
+
+on:
+  push:
+    branches: [agent/aerochrome-tonal-refinement]
+    paths: [.github/workflows/apply-scene-film-refinement.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out refinement branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/aerochrome-tonal-refinement
+          fetch-depth: 0
+
+      - name: Apply reviewed response changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one occurrence, found {count}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          shader = "app/src/main/java/com/renardoberou/spectralcamera/core/gl/SpectralGlPipeline.kt"
+
+          replace_once(
+              shader,
+              dedent('''
+              float lumaOf(vec3 c) {
+                  return dot(c, vec3(0.299, 0.587, 0.114));
+              }
+              ''').strip(),
+              dedent('''
+              float lumaOf(vec3 c) {
+                  return dot(c, vec3(0.299, 0.587, 0.114));
+              }
+
+              // Gentle scene-to-film exposure shaping BEFORE material classification
+              // and stock colour rendering. The rational curve is exactly anchored at
+              // middle grey (0.5), lifts low values slightly, and compresses high values.
+              // A hue-preserving headroom limit prevents saturated channels from clipping
+              // while the luminance is lifted.
+              float preFilmLuma(float x, float strength) {
+                  float v = clamp(x, 0.0, 1.0);
+                  float s = max(strength, 0.0);
+                  return clamp(v * (1.0 + 0.5 * s) / (1.0 + s * v), 0.0, 1.0);
+              }
+
+              vec3 applyPreFilmCurve(vec3 c, float strength) {
+                  vec3 safe = clamp(c, 0.0, 1.0);
+                  float sourceLuma = lumaOf(safe);
+                  float mappedLuma = preFilmLuma(sourceLuma, strength);
+                  float scale = mappedLuma / max(sourceLuma, 0.0001);
+                  float peak = max(safe.r, max(safe.g, safe.b));
+                  float headroomScale = 1.0 / max(peak, 0.0001);
+                  return safe * min(scale, headroomScale);
+              }
+
+              // Final hue-preserving shoulder. Values below the knee are untouched;
+              // extreme highlight energy approaches white asymptotically instead of
+              // being chopped by the final clamp. This also protects saturated red
+              // channels after exposure, contrast, sharpening and bloom controls.
+              vec3 softOutputShoulder(vec3 c) {
+                  vec3 safe = max(c, vec3(0.0));
+                  float peak = max(safe.r, max(safe.g, safe.b));
+                  if (peak <= 0.92) return safe;
+                  float mappedPeak = 0.92 + 0.08 * (1.0 - exp(-(peak - 0.92) / 0.08));
+                  return safe * (mappedPeak / max(peak, 0.0001));
+              }
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
+                  float hiRoll = smoothstep(0.62, 0.95, folL) * 0.5;
+                  vec3 folCol = mix(folMag, vec3(1.0, 0.62, 0.72), hiRoll) * folL;
+              ''').strip(),
+              dedent('''
+                  // Preserve leaf/petal structure with a restrained source-detail term.
+                  // Highlight reds move toward a paler dye response before they can
+                  // become a flat max-red patch.
+                  float folDetail = clamp(luma - smoothLuma, -0.08, 0.08);
+                  float folL = clamp((luma - 0.14) * 1.50 + folDetail * 0.32, 0.0, 1.0);
+                  float hiRoll = smoothstep(0.56, 0.92, folL) * 0.58;
+                  vec3 folCol = mix(folMag, vec3(1.0, 0.62, 0.72), hiRoll) * folL;
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  // slide-film S-curve: crushed toe, rolled shoulder. curveMix is the
+                  // per-look contrast-character dial (Soft/Faded flatten it, Dense hardens it).
+                  vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
+                  ir = mix(ir, s1, curveMix);
+              ''').strip(),
+              dedent('''
+                  // Slide-film S-curve with a protected toe. The pre-film scene curve
+                  // already supplies the long shoulder; this stage gives reversal-film
+                  // separation without deleting the lowest useful shadow texture.
+                  vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
+                  float toeProtect = (1.0 - smoothstep(0.04, 0.24, lumaOf(ir))) * 0.28;
+                  s1 = mix(s1, ir, toeProtect);
+                  ir = mix(ir, s1, curveMix);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
+
+
+                  // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
+              ''').strip(),
+              dedent('''
+                  ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
+
+                  // Red-dominant dye response: retain local source variation and taper
+                  // saturation as red highlights become dense. This applies to mapped
+                  // foliage and genuinely red subjects without changing neutrals, water,
+                  // skin or sky.
+                  float redMask = smoothstep(0.06, 0.28, ir.r - max(ir.g, ir.b)) * (1.0 - skyMask);
+                  float redLuma = lumaOf(ir);
+                  float redHighlight = redMask * smoothstep(0.52, 0.90, redLuma);
+                  float redSatScale = 1.0 - redHighlight * 0.30;
+                  vec3 redAdjusted = vec3(redLuma) + (ir - vec3(redLuma)) * redSatScale;
+                  float redDetail = clamp(luma - smoothLuma, -0.08, 0.08) * redMask;
+                  float redTargetLuma = clamp(lumaOf(redAdjusted) + redDetail * 0.16, 0.0, 1.0);
+                  float redScale = redTargetLuma / max(lumaOf(redAdjusted), 0.001);
+                  float redPeak = max(redAdjusted.r, max(redAdjusted.g, redAdjusted.b));
+                  ir = redAdjusted * min(redScale, 1.0 / max(redPeak, 0.001));
+
+                  // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              "    skyCol = clamp(skyCol + (luma - smoothLuma) * 0.6, 0.0, 1.0);",
+              dedent('''
+                  // Clear blue sky receives only a low-frequency brightness modulation;
+                  // cloud structure receives more detail. This reduces blue-channel noise
+                  // without smearing real clouds.
+                  float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
+                  float skyDetailGain = mix(0.44, 0.16, clearBlue);
+                  skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  vec3 raw = texture2D(uTexture, vTexCoord).rgb;
+                  float rawLuma = lumaOf(raw);
+                  // Capture-time auto-levels: gentle black/white points measured from the
+                  // still's own histogram (Kotlin side). Preview passes 0/1 = identity.
+                  vec3 src = clamp((raw - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+              ''').strip(),
+              dedent('''
+                  vec3 raw = texture2D(uTexture, vTexCoord).rgb;
+                  float rawLuma = lumaOf(raw);
+                  // Capture-time auto-levels: gentle black/white points measured from the
+                  // still's own histogram (Kotlin side). Preview passes 0/1 = identity.
+                  // Monochrome already has a full H&D curve, so it receives only a tiny
+                  // scene pre-shape. Aerochrome receives the stronger reversal-film input
+                  // shoulder requested by the field-frame review.
+                  float sceneCurveStrength = uPreset <= 5 ? 0.05 : (0.14 + uAeroTone.x * 0.12);
+                  vec3 src = applyPreFilmCurve(
+                      clamp((raw - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+                      sceneCurveStrength);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  // auto-levels must hit the classification colour identically
+                  srcC = clamp((srcC - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+              ''').strip(),
+              dedent('''
+                  // Auto-levels and the luminance-only pre-film curve must hit the
+                  // classification colour identically. Chromaticity remains unchanged.
+                  srcC = applyPreFilmCurve(
+                      clamp((srcC - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+                      sceneCurveStrength);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              "    vec3 blur = acc / wsum;\n\n    float bLuma = lumaOf(blur);",
+              dedent('''
+                  vec3 blur = acc / wsum;
+                  // Keep sky detection in the same normalized scene domain as src/srcC.
+                  blur = applyPreFilmCurve(
+                      clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+                      sceneCurveStrength);
+
+                  float bLuma = lumaOf(blur);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  // saturate the mask inside the sky so partially-treated chalky fringes
+                  // cannot appear around clouds; the soft edge lives only at the horizon
+                  skyMask = smoothstep(0.12, 0.45, skyMask);
+
+                  // Skin/warm guard: any pixel that is warm-toned (red >= green >= blue, the
+              ''').strip(),
+              dedent('''
+                  // Saturate the mask inside the sky so partially-treated chalky fringes
+                  // cannot appear around clouds; the soft edge lives only at the horizon.
+                  skyMask = smoothstep(0.12, 0.45, skyMask);
+
+                  // Explicit sky/foliage separation. Backlit leaves can be bright and blue-
+                  // influenced in the wide average; exposure-invariant vegetation chroma
+                  // therefore gets a direct veto before sky colour is applied.
+                  float skyTotalC = srcC.r + srcC.g + srcC.b + 0.001;
+                  float skyNr = srcC.r / skyTotalC;
+                  float skyNg = srcC.g / skyTotalC;
+                  float skyNb = srcC.b / skyTotalC;
+                  float skyNotBlue = 1.0 - smoothstep(0.0, 0.06, skyNb - max(skyNr, skyNg));
+                  float skyVegStrict = smoothstep(-0.01, 0.08, skyNg - skyNb)
+                      * smoothstep(0.0, 0.05, skyNg - skyNr) * skyNotBlue;
+                  float skyOlive = smoothstep(0.12, 0.22, skyNg - skyNb)
+                      * (1.0 - smoothstep(0.03, 0.09, abs(skyNg - skyNr))) * skyNotBlue;
+                  float skyChromaDist = max(max(abs(skyNr - 0.3333), abs(skyNg - 0.3333)), abs(skyNb - 0.3333));
+                  float skyFoliage = clamp(skyVegStrict + skyOlive, 0.0, 1.0)
+                      * smoothstep(0.035, 0.058, skyChromaDist);
+                  skyMask *= 1.0 - skyFoliage * 0.96;
+
+                  // Skin/warm guard: any pixel that is warm-toned (red >= green >= blue, the
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              "    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);",
+              dedent('''
+                  // The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
+                  // perturbation so classification does not become visible blue speckle.
+                  skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                      if (uPreset <= 5) {
+                          float d = (lumaOf(c) - 0.42) / 0.30;
+                          float densityWeight = exp(-d * d);
+                          grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
+                      }
+                      vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
+              ''').strip(),
+              dedent('''
+                      if (uPreset <= 5) {
+                          float d = (lumaOf(c) - 0.42) / 0.30;
+                          float densityWeight = exp(-d * d);
+                          grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
+                      } else {
+                          // Keep some film texture, but do not let uniform Aerochrome grain
+                          // masquerade as blue-channel noise in a smooth sky gradient.
+                          grainAmp *= mix(1.0, 0.42, skyMask);
+                      }
+                      vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
+              ''').strip(),
+          )
+
+          replace_once(
+              shader,
+              dedent('''
+                  c = mix(src, c, clamp(uIntensity, 0.0, 1.0));
+
+                  // Clipping zebras (preview only; the capture path passes uZebra = 0):
+              ''').strip(),
+              dedent('''
+                  c = mix(src, c, clamp(uIntensity, 0.0, 1.0));
+                  c = softOutputShoulder(c);
+
+                  // Clipping zebras (preview only; the capture path passes uZebra = 0):
+              ''').strip(),
+          )
+
+          # CPU reference math mirrors the shader for deterministic tests and calibration.
+          film_math = Path("app/src/main/java/com/renardoberou/spectralcamera/core/film/FilmResponseMath.kt")
+          film_math.parent.mkdir(parents=True, exist_ok=True)
+          film_math.write_text(dedent('''
+          package com.renardoberou.spectralcamera.core.film
+
+          import kotlin.math.exp
+
+          /** CPU reference for the GLSL scene-to-film response functions. */
+          object FilmResponseMath {
+              fun preFilmLuma(value: Float, strength: Float): Float {
+                  val v = value.coerceIn(0f, 1f)
+                  val s = strength.coerceAtLeast(0f)
+                  return (v * (1f + 0.5f * s) / (1f + s * v)).coerceIn(0f, 1f)
+              }
+
+              fun protectedReversalCurve(value: Float, curveMix: Float): Float {
+                  val v = value.coerceIn(0f, 1f)
+                  val smooth = v * v * (3f - 2f * v)
+                  val toeProtect = (1f - smoothstep(0.04f, 0.24f, v)) * 0.28f
+                  val protected = smooth + (v - smooth) * toeProtect
+                  val mix = curveMix.coerceIn(0f, 1f)
+                  return (v + (protected - v) * mix).coerceIn(0f, 1f)
+              }
+
+              fun softShoulderPeak(peak: Float): Float {
+                  val safe = peak.coerceAtLeast(0f)
+                  if (safe <= 0.92f) return safe
+                  return (0.92f + 0.08f * (1f - exp(-(safe - 0.92f) / 0.08f)))
+                      .coerceAtMost(1f)
+              }
+
+              fun redHighlightSaturationScale(outputLuma: Float, redDominance: Float): Float {
+                  val highlight = redDominance.coerceIn(0f, 1f) *
+                      smoothstep(0.52f, 0.90f, outputLuma.coerceIn(0f, 1f))
+                  return 1f - highlight * 0.30f
+              }
+
+              private fun smoothstep(edge0: Float, edge1: Float, value: Float): Float {
+                  if (edge0 == edge1) return if (value < edge0) 0f else 1f
+                  val t = ((value - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+                  return t * t * (3f - 2f * t)
+              }
+          }
+          ''').lstrip())
+
+          test = Path("app/src/test/java/com/renardoberou/spectralcamera/core/film/FilmResponseMathTest.kt")
+          test.parent.mkdir(parents=True, exist_ok=True)
+          test.write_text(dedent('''
+          package com.renardoberou.spectralcamera.core.film
+
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+
+          class FilmResponseMathTest {
+              @Test
+              fun preFilmCurveAnchorsMiddleGrey() {
+                  assertEquals(0.5f, FilmResponseMath.preFilmLuma(0.5f, 0.20f), 0.0001f)
+              }
+
+              @Test
+              fun preFilmCurveLiftsShadowsAndCompressesHighlights() {
+                  assertTrue(FilmResponseMath.preFilmLuma(0.10f, 0.20f) > 0.10f)
+                  assertTrue(FilmResponseMath.preFilmLuma(0.90f, 0.20f) < 0.90f)
+              }
+
+              @Test
+              fun preFilmCurveIsMonotonicAndBounded() {
+                  var previous = 0f
+                  for (step in 0..100) {
+                      val output = FilmResponseMath.preFilmLuma(step / 100f, 0.24f)
+                      assertTrue(output in 0f..1f)
+                      assertTrue(output + 0.00001f >= previous)
+                      previous = output
+                  }
+              }
+
+              @Test
+              fun protectedReversalCurveKeepsUsefulToeSeparation() {
+                  val low = FilmResponseMath.protectedReversalCurve(0.10f, 0.55f)
+                  val lower = FilmResponseMath.protectedReversalCurve(0.06f, 0.55f)
+                  assertTrue(low > lower)
+                  assertTrue(low > 0.06f)
+              }
+
+              @Test
+              fun outputShoulderIsIdentityBelowKneeAndAsymptoticAboveWhite() {
+                  assertEquals(0.80f, FilmResponseMath.softShoulderPeak(0.80f), 0f)
+                  assertTrue(FilmResponseMath.softShoulderPeak(1.0f) in 0.96f..0.98f)
+                  assertTrue(FilmResponseMath.softShoulderPeak(2.0f) < 1.0f)
+              }
+
+              @Test
+              fun redHighlightDesaturationIsSelective() {
+                  assertEquals(1f, FilmResponseMath.redHighlightSaturationScale(0.25f, 1f), 0.0001f)
+                  assertTrue(FilmResponseMath.redHighlightSaturationScale(0.90f, 1f) <= 0.71f)
+                  assertEquals(1f, FilmResponseMath.redHighlightSaturationScale(0.90f, 0f), 0.0001f)
+              }
+          }
+          ''').lstrip())
+
+          # Validation and implementation record.
+          plan = Path("docs/PLAN_2026-07-22_aerochrome-tonal-refinement.md")
+          plan.write_text(dedent('''
+          # Plan: scene-to-film tonal, red, highlight, and sky refinement
+
+          **Date:** 2026-07-22  
+          **Branch:** `agent/aerochrome-tonal-refinement`  
+          **Trigger:** three real Aerochrome field frames covering saturated red foregrounds, direct-sun backlight, urban greenery, sky, architecture, and deep shadow.
+
+          ## Review of the requested plan
+
+          The direction is valid, but the current engine already contains a reversal-film S-curve, headroom-limited saturation, tone-preserving foliage colourization, wide sky smoothing, and final dither. Adding another generic S-curve or a global red desaturation would double-process the image and regress the existing material model.
+
+          The implementation is therefore surgical:
+
+          1. A luminance-only scene curve is applied before synthetic NIR/material rendering. It anchors 0.5 exactly, slightly lifts shadows, compresses highlights, and preserves chromaticity.
+          2. The existing Aerochrome S-curve receives toe protection rather than being replaced.
+          3. Red-dominant output receives source-detail preservation and highlight-only saturation tapering. Neutrals, skin, water, and sky are excluded.
+          4. A final hue-preserving output shoulder replaces destructive highlight clipping after manual controls and bloom.
+          5. Sky classification receives an explicit foliage veto; clear-blue detail and grain are reduced while cloud structure remains.
+
+          ## Why no RNI purchase is required
+
+          The target is not undocumented imitation of a proprietary preset. Validation is based on measurable photographic behavior: highlight continuity, shadow separation, red texture, material assignment, sky gradient stability, and consistency across Standard, JPEG HDR, and True RAW HDR.
+
+          ## Device validation
+
+          Re-shoot or reprocess the same three diagnostic compositions and compare against the previous build:
+
+          - red flowers/foliage against a bright building and sky;
+          - direct sun and flare with deep foreground shadow;
+          - mixed architecture, clouds, red foliage, white fabric, and blue reflections.
+
+          Pass criteria:
+
+          - red petals/leaves keep visible internal density and do not form solid max-red areas;
+          - red highlights become slightly paler rather than clipping;
+          - deep shadows gain separation without a grey HDR wash;
+          - middle-grey architecture and fabric remain stable;
+          - clouds retain structure and clear blue sky becomes smoother;
+          - foliage is never partially recoloured as sky;
+          - extreme brightness rolls into the shoulder rather than forming a hard channel clip;
+          - Classic, Soft, Dense, Gold, and Faded retain their existing hierarchy;
+          - monochrome IR remains materially unchanged apart from the deliberately tiny shared input shaping.
+
+          ## Honest limitation
+
+          No tone curve can reconstruct information that the camera clipped before Spectral Camera received it. Standard JPEG capture with the sun inside the frame can still contain irreversible sensor/ISP clipping and optical flare. Computational HDR or True RAW HDR remains the appropriate source mode for those scenes.
+          ''').lstrip())
+
+          validation = "docs/VALIDATION.md"
+          replace_once(
+              validation,
+              "| A8 | Mixed urban greenery | Visible species/vigour variation. | Every plant collapses to one crimson slab. | species continuum, `oliveVeg` | Release re-shoot required. |",
+              dedent('''
+              | A8 | Mixed urban greenery | Visible species/vigour variation. | Every plant collapses to one crimson slab. | species continuum, `oliveVeg` | Release re-shoot required. |
+              | A9 | Saturated red flowers / sunlit foliage | Internal petal/leaf density survives; red highlights become paler and less saturated. | Solid max-red fill; textureless crimson upholstery; pink neutral spill. | pre-film curve, red highlight taper, detail preservation | Submitted-scene reprocess required. |
+              | A10 | Direct sun / severe backlight | Extreme brightness rolls smoothly; midtones remain stable; shadows retain some separation. | Hard white channel clip; grey HDR wash; dead-black lower frame. | pre-film curve, protected toe, output shoulder | Standard + HDR comparison required. |
+              | A11 | Clear blue sky gradient | Low-noise, hue-stable gradient with no foliage contamination or blue speckle. | Grainy blue field; contour bands; leaves partially recoloured as sky. | foliage veto, sky detail gate, sky grain suppression, IGN dither | Submitted-scene reprocess required. |
+              | A12 | Bright architecture + white fabric | Whites retain texture and approach white gradually while neutral mids remain anchored. | Abrupt clipping; colour cast; broad midtone shift. | 0.5-anchored scene curve, hue-preserving shoulder | Submitted-scene reprocess required. |
+              ''').strip(),
+          )
+
+          # Product documentation and version.
+          replace_once(
+              "README.md",
+              "**1.19.0 (versionCode 47)**",
+              "**1.19.1 (versionCode 48)**",
+          )
+          replace_once(
+              "README.md",
+              "- Compact, production-ready Live UI",
+              "- Compact, production-ready Live UI\n- Refined pre-film tone, red-detail, highlight-shoulder, and sky response",
+          )
+          replace_once(
+              "README.md",
+              "Normalization + tone mapping",
+              "Normalization + pre-film scene curve + tone mapping",
+          )
+          replace_once(
+              "README.md",
+              "All based on **film behavior**, not presets.\n\n---\n\n## Live UI (new)",
+              dedent('''
+              All based on **film behavior**, not presets.
+
+              ---
+
+              ## Scene-to-film response
+
+              The film engine now shapes the normalized scene before material rendering:
+
+              - a middle-grey-anchored curve lifts deep shadows slightly and compresses source highlights;
+              - red-dominant materials retain local texture and taper saturation only in highlights;
+              - a hue-preserving final shoulder prevents hard channel clipping;
+              - sky classification explicitly excludes foliage, reduces clear-blue noise, and preserves cloud structure.
+
+              This improves difficult Standard captures while remaining compatible with the larger source range supplied by Computational HDR and True RAW HDR. It cannot reconstruct detail already clipped by the sensor or phone ISP.
+
+              ---
+
+              ## Live UI (new)
+              ''').strip(),
+          )
+
+          replace_once(
+              "app/build.gradle.kts",
+              'versionCode = (System.getenv("VERSION_CODE") ?: "47").toInt()\n        versionName = System.getenv("VERSION_NAME") ?: "1.19.0"',
+              'versionCode = (System.getenv("VERSION_CODE") ?: "48").toInt()\n        versionName = System.getenv("VERSION_NAME") ?: "1.19.1"',
+          )
+
+          Path(".github/workflows/apply-scene-film-refinement.yml").unlink()
+          PY
+
+      - name: Verify engine and packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease
+
+      - name: Commit verified refinement
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(engine): refine pre-film tone, red texture, highlight shoulder, and sky"
+          git push origin HEAD:agent/aerochrome-tonal-refinement
