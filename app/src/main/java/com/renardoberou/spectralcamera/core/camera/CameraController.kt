@@ -5,9 +5,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
 import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.DisplayOrientedMeteringPointFactory
@@ -18,13 +25,6 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraMetadata
-import android.hardware.camera2.CaptureRequest
-import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.camera2.interop.CaptureRequestOptions
-import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -32,23 +32,32 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
-import java.io.ByteArrayInputStream
 import com.renardoberou.spectralcamera.core.CameraCapabilities
+import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import java.io.ByteArrayInputStream
+import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Owns the CameraX session. The live preview is delivered straight into the GPU
  * pipeline ([SpectralGlView]) through a SurfaceTexture, so no per-frame work
  * happens on the CPU. A tiny RGBA analysis stream is kept only for the
  * hardware-test screen and is gated by [setAnalysisEnabled].
+ *
+ * JPEG-only captures use the in-memory path. When the selected camera reports
+ * CameraX RAW+JPEG support and the user requests a sidecar, capture switches to
+ * the dual-file API: the companion JPEG still feeds the existing film renderer,
+ * while the untouched DNG is returned for durable MediaStore storage.
  */
 class CameraController(context: Context) {
     private val appContext = context.applicationContext
@@ -64,6 +73,14 @@ class CameraController(context: Context) {
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+    private var outputMode: OutputMode = OutputMode.FULL_RESOLUTION
+    private var rawSidecarRequested: Boolean = false
+
+    @Volatile
+    private var rawJpegActive: Boolean = false
+
+    @Volatile
+    private var rawJpegUsable: Boolean = false
 
     @Volatile
     private var analysisEnabled: Boolean = false
@@ -84,18 +101,14 @@ class CameraController(context: Context) {
         tryFulfillRequest()
     }
 
-    /**
-     * Called (on the main thread) whenever the GL surface is created or recreated
-     * and a fresh SurfaceTexture is ready to receive camera frames.
-     */
+    /** Called whenever the GL surface has a fresh SurfaceTexture for CameraX. */
     fun onSurfaceTextureAvailable(texture: SurfaceTexture) {
         surfaceTexture = texture
         if (pendingRequest != null) {
             tryFulfillRequest()
         } else {
             // The camera may be streaming into a surface that died with the old GL
-            // context. Detach then re-attach the provider to guarantee CameraX
-            // issues a fresh SurfaceRequest for the new texture.
+            // context. Force CameraX to issue a new SurfaceRequest.
             preview?.setSurfaceProvider(null)
             preview?.setSurfaceProvider(surfaceProvider)
         }
@@ -108,9 +121,6 @@ class CameraController(context: Context) {
         sourceResolution = resolution
         texture.setDefaultBufferSize(resolution.width, resolution.height)
 
-        // Seed the renderer with the best synchronous estimate we have, then
-        // let CameraX overwrite it with the authoritative transformation info
-        // as soon as that becomes available.
         updateSourceGeometry(currentRelativeRotation())
         request.setTransformationInfoListener(mainExecutor) { info ->
             updateSourceGeometry(info.rotationDegrees)
@@ -128,10 +138,6 @@ class CameraController(context: Context) {
         }
     }
 
-    /**
-     * Rotation needed to display the sensor buffer upright on the current display,
-     * fetched synchronously (no callback timing involved).
-     */
     private fun currentRelativeRotation(): Int {
         val info = camera?.cameraInfo ?: return sourceRotation
         val displayRotation = glView?.display?.rotation ?: Surface.ROTATION_0
@@ -146,11 +152,15 @@ class CameraController(context: Context) {
         lifecycleOwner: LifecycleOwner,
         glView: SpectralGlView,
         lensFacing: Int,
+        outputMode: OutputMode,
+        rawSidecarRequested: Boolean,
         onCapabilities: (CameraCapabilities) -> Unit,
         onAnalysisFrame: (Bitmap) -> Unit,
     ) {
         this.glView = glView
         this.lensFacing = lensFacing
+        this.outputMode = outputMode
+        this.rawSidecarRequested = rawSidecarRequested
         this.onCapabilities = onCapabilities
         this.onAnalysisFrame = onAnalysisFrame
 
@@ -169,12 +179,7 @@ class CameraController(context: Context) {
         camera?.cameraControl?.setExposureCompensationIndex(index)
     }
 
-    /**
-     * Full-manual exposure via Camera2 interop: AE off, sensor sensitivity (ISO)
-     * and exposure time set directly on the repeating request, so the live GPU
-     * preview shows exactly what will be captured. Disabling clears the options
-     * and returns the session to metered auto-exposure.
-     */
+    /** Full-manual exposure via Camera2 interop. */
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     fun setManualExposure(enabled: Boolean, iso: Int, shutterNs: Long) {
         val control = camera?.cameraControl ?: return
@@ -198,11 +203,7 @@ class CameraController(context: Context) {
         analysisEnabled = enabled
     }
 
-    /**
-     * Tap-to-focus. (x, y) are coordinates inside the on-screen preview of size
-     * viewWidth x viewHeight. The preview fill-crops the camera buffer, so the tap
-     * space is expanded to the uncropped content rect before mapping to the sensor.
-     */
+    /** Tap-to-focus in fill-cropped preview coordinates. */
     fun focusAt(x: Float, y: Float, viewWidth: Float, viewHeight: Float) {
         val camera = camera ?: return
         val display = glView?.display ?: return
@@ -224,41 +225,92 @@ class CameraController(context: Context) {
         camera.cameraControl.startFocusAndMetering(action)
     }
 
-    /** Captures a full-resolution still and returns it as an upright bitmap. */
-    suspend fun capture(): Bitmap = captureMutex.withLock {
-        suspendCancellableCoroutine { continuation ->
-            val capture = imageCapture
-            if (capture == null) {
-                continuation.resumeWithException(IllegalStateException("Camera not ready"))
-                return@suspendCancellableCoroutine
-            }
+    /** Captures the JPEG render source plus an optional untouched DNG sidecar. */
+    suspend fun capture(): CapturedFrame = captureMutex.withLock {
+        val capture = imageCapture ?: throw IllegalStateException("Camera not ready")
+        if (rawJpegActive) captureRawJpeg(capture) else captureJpeg(capture)
+    }
 
+    private suspend fun captureJpeg(capture: ImageCapture): CapturedFrame =
+        suspendCancellableCoroutine { continuation ->
             capture.takePicture(
                 captureExecutor,
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
                         try {
                             if (!continuation.isActive) return
-                            val bitmap = capturedImageToBitmap(image)
-                            continuation.resume(bitmap)
+                            continuation.resume(CapturedFrame(capturedImageToBitmap(image)))
                         } catch (t: Throwable) {
-                            if (continuation.isActive) {
-                                continuation.resumeWithException(t)
-                            }
+                            if (continuation.isActive) continuation.resumeWithException(t)
                         } finally {
                             image.close()
                         }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
-                        if (continuation.isActive) {
-                            continuation.resumeWithException(exception)
-                        }
+                        if (continuation.isActive) continuation.resumeWithException(exception)
                     }
                 },
             )
         }
-    }
+
+    private suspend fun captureRawJpeg(capture: ImageCapture): CapturedFrame =
+        suspendCancellableCoroutine { continuation ->
+            val directory = File(appContext.cacheDir, "spectral_raw_capture").apply {
+                if (!exists() && !mkdirs()) {
+                    continuation.resumeWithException(IllegalStateException("Unable to create RAW capture cache"))
+                    return@suspendCancellableCoroutine
+                }
+            }
+            val token = "${System.currentTimeMillis()}_${System.nanoTime()}"
+            val rawFile = File(directory, "capture_$token.dng")
+            val jpegFile = File(directory, "capture_$token.jpg")
+            val rawOptions = ImageCapture.OutputFileOptions.Builder(rawFile).build()
+            val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
+            val remaining = AtomicInteger(2)
+            val completed = AtomicBoolean(false)
+
+            fun cleanAll() {
+                rawFile.delete()
+                jpegFile.delete()
+            }
+
+            continuation.invokeOnCancellation {
+                if (completed.compareAndSet(false, true)) cleanAll()
+            }
+
+            capture.takePicture(
+                rawOptions,
+                jpegOptions,
+                captureExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        if (remaining.decrementAndGet() != 0 || !completed.compareAndSet(false, true)) return
+                        try {
+                            val bytes = jpegFile.readBytes()
+                            val decoded = decodeCompressedImage(bytes)
+                            val bitmap = rotateBitmap(decoded, jpegRotationDegrees(bytes, 0))
+                            jpegFile.delete()
+                            if (continuation.isActive) {
+                                continuation.resume(CapturedFrame(bitmap, rawFile))
+                            } else {
+                                bitmap.recycle()
+                                rawFile.delete()
+                            }
+                        } catch (t: Throwable) {
+                            cleanAll()
+                            if (continuation.isActive) continuation.resumeWithException(t)
+                        }
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        if (!completed.compareAndSet(false, true)) return
+                        cleanAll()
+                        if (continuation.isActive) continuation.resumeWithException(exception)
+                    }
+                },
+            )
+        }
 
     fun release() {
         pendingRequest?.willNotProvideSurface()
@@ -271,54 +323,34 @@ class CameraController(context: Context) {
         provider.unbindAll()
 
         val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        val cameraInfo = provider.getCameraInfo(selector)
+        val advertisedFormats = runCatching {
+            ImageCapture.getImageCaptureCapabilities(cameraInfo).supportedOutputFormats
+        }.getOrDefault(setOf(ImageCapture.OUTPUT_FORMAT_JPEG))
+        rawJpegUsable = advertisedFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
 
-        val previewUseCase = Preview.Builder()
-            .setResolutionSelector(
-                ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            Size(1920, 1080),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                        ),
-                    )
-                    .build(),
-            )
-            .setTargetRotation(targetRotation)
-            .build()
-            .also { it.setSurfaceProvider(surfaceProvider) }
+        val previewUseCase = buildPreview(targetRotation)
         preview = previewUseCase
 
-        val captureUseCase = ImageCapture.Builder()
-            .setResolutionSelector(
-                ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                    .setResolutionStrategy(
-                        // Ask for the sensor's full-resolution mode (50MP class on
-                        // the Edge 60 Fusion). If the HAL only exposes the binned
-                        // 12.5MP stream, the fallback rule picks that gracefully.
-                        ResolutionStrategy(
-                            Size(8160, 6144),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                        ),
-                    )
-                    .build(),
-            )
-            .setTargetRotation(targetRotation)
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setJpegQuality(95)
-            .build()
+        var enableRaw = rawSidecarRequested && rawJpegUsable
+        var captureUseCase = buildImageCapture(targetRotation, outputMode, enableRaw)
 
-        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         camera = try {
-            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase, buildAnalysis(targetRotation))
-        } catch (t: Exception) {
-            // Some LEGACY-level devices refuse three concurrent use cases. Drop the
-            // analysis stream (only the hardware-test screen loses live data).
+            bindPreferred(provider, lifecycleOwner, selector, previewUseCase, captureUseCase)
+        } catch (rawConfigurationError: Exception) {
+            if (!enableRaw) throw rawConfigurationError
+            // Some cameras advertise RAW+JPEG but cannot sustain it beside this
+            // preview stream. Fall back to the normal JPEG session rather than
+            // leaving the camera unusable; capability UI is updated accordingly.
             provider.unbindAll()
-            previewUseCase.setSurfaceProvider(surfaceProvider)
-            provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase)
+            enableRaw = false
+            rawJpegUsable = false
+            captureUseCase = buildImageCapture(targetRotation, outputMode, enableRaw = false)
+            bindPreferred(provider, lifecycleOwner, selector, previewUseCase, captureUseCase)
         }
+
+        rawJpegActive = enableRaw
         imageCapture = captureUseCase
         sourceResolution?.let { resolution ->
             sourceRotation = currentRelativeRotation()
@@ -327,46 +359,124 @@ class CameraController(context: Context) {
         updateCapabilities()
     }
 
-    private fun buildAnalysis(targetRotation: Int): ImageAnalysis =
-        ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setResolutionSelector(
-                ResolutionSelector.Builder()
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            Size(320, 240),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                        ),
-                    )
-                    .build(),
-            )
+    private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()
+        .setResolutionSelector(
+            ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(1920, 1080),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    ),
+                )
+                .build(),
+        )
+        .setTargetRotation(targetRotation)
+        .build()
+        .also { it.setSurfaceProvider(surfaceProvider) }
+
+    private fun buildImageCapture(
+        targetRotation: Int,
+        mode: OutputMode,
+        enableRaw: Boolean,
+    ): ImageCapture {
+        val useFastSource = mode == OutputMode.FAST_1080 && !enableRaw
+        val resolutionSelector = if (useFastSource) {
+            ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(1920, 1080),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    ),
+                )
+                .build()
+        } else {
+            ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    // Ask for a full-resolution sensor stream. The HAL can fall
+                    // back to its highest binned size where unbinned output is absent.
+                    ResolutionStrategy(
+                        Size(8160, 6144),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    ),
+                )
+                .build()
+        }
+
+        return ImageCapture.Builder()
+            .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
-            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+            .setCaptureMode(
+                if (useFastSource) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY,
+            )
+            .setJpegQuality(if (useFastSource) 95 else 100)
+            .apply {
+                if (enableRaw) setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            }
             .build()
-            .also { useCase ->
-                useCase.setAnalyzer(analyzerExecutor) { proxy ->
-                    try {
-                        if (analysisEnabled) {
-                            val now = SystemClock.elapsedRealtime()
-                            if (now - lastAnalysisFrameAt >= 150L) {
-                                lastAnalysisFrameAt = now
-                                val bitmap = rgbaProxyToBitmap(proxy)
-                                onAnalysisFrame?.invoke(bitmap)
-                            }
+    }
+
+    private fun bindPreferred(
+        provider: ProcessCameraProvider,
+        lifecycleOwner: LifecycleOwner,
+        selector: CameraSelector,
+        previewUseCase: Preview,
+        captureUseCase: ImageCapture,
+    ): Camera = try {
+        provider.bindToLifecycle(
+            lifecycleOwner,
+            selector,
+            previewUseCase,
+            captureUseCase,
+            buildAnalysis(previewUseCase.targetRotation),
+        )
+    } catch (threeUseCaseError: Exception) {
+        // Some LEGACY-level devices refuse three concurrent streams. Analysis
+        // only powers the hardware-test screen, so capture quality wins.
+        provider.unbindAll()
+        previewUseCase.setSurfaceProvider(surfaceProvider)
+        provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase)
+    }
+
+    private fun buildAnalysis(targetRotation: Int): ImageAnalysis = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .setResolutionSelector(
+            ResolutionSelector.Builder()
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(320, 240),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    ),
+                )
+                .build(),
+        )
+        .setTargetRotation(targetRotation)
+        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+        .build()
+        .also { useCase ->
+            useCase.setAnalyzer(analyzerExecutor) { proxy ->
+                try {
+                    if (analysisEnabled) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastAnalysisFrameAt >= 150L) {
+                            lastAnalysisFrameAt = now
+                            onAnalysisFrame?.invoke(rgbaProxyToBitmap(proxy))
                         }
-                    } finally {
-                        proxy.close()
                     }
+                } finally {
+                    proxy.close()
                 }
             }
+        }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private fun updateCapabilities() {
         val camera = camera ?: return
         val info = camera.cameraInfo
         val exposureRange = info.exposureState.exposureCompensationRange
-        // The camera reports its true EV step (usually 1/3 or 1/6 stop); this was
-        // previously hardcoded to 1f, so the EV control was never calibrated.
         val stepRational = info.exposureState.exposureCompensationStep
         val exposureStep = if (stepRational.denominator != 0) {
             stepRational.numerator.toFloat() / stepRational.denominator.toFloat()
@@ -395,7 +505,7 @@ class CameraController(context: Context) {
                 CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR,
             ) == true
         } catch (t: Exception) {
-            // interop is best-effort; display-only data
+            // Interop is best-effort; display-only data.
         }
         onCapabilities?.invoke(
             CameraCapabilities(
@@ -408,6 +518,7 @@ class CameraController(context: Context) {
                 isoRange = isoRange,
                 exposureTimeRange = exposureTimeRange,
                 manualExposureSupported = manualExposureSupported,
+                rawJpegCaptureSupported = rawJpegUsable,
             ),
         )
     }
@@ -422,9 +533,7 @@ class CameraController(context: Context) {
         val buffer = image.planes.firstOrNull()?.buffer
             ?: throw IllegalStateException("Captured image has no data plane")
         buffer.rewind()
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-        return bytes
+        return ByteArray(buffer.remaining()).also { buffer.get(it) }
     }
 
     private fun decodeCompressedImage(bytes: ByteArray): Bitmap {
@@ -435,22 +544,20 @@ class CameraController(context: Context) {
             ?: throw IllegalStateException("Failed to decode captured image")
     }
 
-    private fun jpegRotationDegrees(bytes: ByteArray, fallbackDegrees: Int): Int {
-        return runCatching {
+    private fun jpegRotationDegrees(bytes: ByteArray, fallbackDegrees: Int): Int =
+        runCatching {
             ExifInterface(ByteArrayInputStream(bytes)).rotationDegreesOrNull()
         }.getOrNull() ?: fallbackDegrees
-    }
 
-    private fun ExifInterface.rotationDegreesOrNull(): Int {
-        return when (getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)) {
+    private fun ExifInterface.rotationDegreesOrNull(): Int =
+        when (getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)) {
             ExifInterface.ORIENTATION_ROTATE_90 -> 90
             ExifInterface.ORIENTATION_ROTATE_180 -> 180
             ExifInterface.ORIENTATION_ROTATE_270 -> 270
             else -> 0
         }
-    }
 
-    /** Converts an RGBA_8888 ImageProxy to a Bitmap, honouring the row stride. */
+    /** Converts an RGBA_8888 ImageProxy to a Bitmap, honouring row stride. */
     private fun rgbaProxyToBitmap(image: ImageProxy): Bitmap {
         val plane = image.planes[0]
         val buffer: ByteBuffer = plane.buffer
@@ -462,9 +569,9 @@ class CameraController(context: Context) {
         val rowBytes = width * pixelStride
 
         if (rowStride == rowBytes) {
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-            return bitmap
+            return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                it.copyPixelsFromBuffer(buffer)
+            }
         }
 
         val packed = ByteBuffer.allocateDirect(rowBytes * height)
@@ -476,9 +583,9 @@ class CameraController(context: Context) {
             packed.put(row, 0, rowBytes)
         }
         packed.rewind()
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        bitmap.copyPixelsFromBuffer(packed)
-        return bitmap
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+            it.copyPixelsFromBuffer(packed)
+        }
     }
 
     private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
@@ -486,11 +593,11 @@ class CameraController(context: Context) {
         if (rotationDegrees == 0 && !isFront) return bitmap
         val matrix = Matrix().apply {
             postRotate(rotationDegrees.toFloat())
-            // Un-mirror front-camera captures: the sensor image is mirrored by
-            // convention, but the SAVED file should read like reality (text the
-            // right way round), matching every serious camera app.
+            // Saved front-camera files are unmirrored so text reads correctly.
             if (isFront) postScale(-1f, 1f)
         }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also {
+            if (it !== bitmap) bitmap.recycle()
+        }
     }
 }
