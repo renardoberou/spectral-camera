@@ -114,7 +114,7 @@ There is not yet a full Robolectric, instrumentation, or screenshot-test suite. 
 
 ## Requirements
 
-- Android 8.0+ (`minSdk 26`), compiled against SDK 35.
+- Android 8.0+ (`minSdk 26`), compiled against SDK 36 and targeting SDK 35.
 - Camera permission.
 - `READ_MEDIA_IMAGES` on Android 13+ for full image-library access.
 - `READ_MEDIA_VISUAL_USER_SELECTED` handling on Android 14+ for selected-photo access.
