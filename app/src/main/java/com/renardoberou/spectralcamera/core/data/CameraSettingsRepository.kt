@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.ManualAdjustments
+import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import kotlinx.coroutines.flow.Flow
@@ -41,11 +42,19 @@ class CameraSettingsRepository(context: Context) {
                 blueSkySuppression = prefs[BLUE_SUPPRESS] ?: 0f,
                 hueRotation = prefs[HUE_ROTATION] ?: 0f,
                 saturation = prefs[SATURATION] ?: 1.0f,
-                channelSwapMode = ChannelSwapMode.valueOf(prefs[SWAP_MODE] ?: ChannelSwapMode.NONE.name),
+                channelSwapMode = runCatching {
+                    ChannelSwapMode.valueOf(prefs[SWAP_MODE] ?: ChannelSwapMode.NONE.name)
+                }.getOrDefault(ChannelSwapMode.NONE),
             ),
             saveOriginal = prefs[SAVE_ORIGINAL] ?: false,
             frontFacing = prefs[FRONT_FACING] ?: false,
-            sensorMode = SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name),
+            sensorMode = runCatching {
+                SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name)
+            }.getOrDefault(SensorMode.SIMULATED_IR),
+            outputMode = prefs[OUTPUT_MODE]?.let { name ->
+                runCatching { OutputMode.valueOf(name) }.getOrNull()
+            } ?: OutputMode.FULL_RESOLUTION,
+            saveRawSidecar = prefs[SAVE_RAW_SIDECAR] ?: false,
             // Migration guard: hardwareEv was stored as a raw camera index before
             // v1.6.0 and is stops now. A magnitude beyond 2 is clearly a legacy
             // index and would pin the camera at max EV (chronic overexposure) -
@@ -80,6 +89,8 @@ class CameraSettingsRepository(context: Context) {
             prefs[SAVE_ORIGINAL] = settings.saveOriginal
             prefs[FRONT_FACING] = settings.frontFacing
             prefs[SENSOR_MODE] = settings.sensorMode.name
+            prefs[OUTPUT_MODE] = settings.outputMode.name
+            prefs[SAVE_RAW_SIDECAR] = settings.saveRawSidecar
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
             prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
@@ -106,6 +117,8 @@ class CameraSettingsRepository(context: Context) {
         val SAVE_ORIGINAL = booleanPreferencesKey("save_original")
         val FRONT_FACING = booleanPreferencesKey("front_facing")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
+        val OUTPUT_MODE = stringPreferencesKey("output_mode")
+        val SAVE_RAW_SIDECAR = booleanPreferencesKey("save_raw_sidecar")
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
         val MANUAL_MODE = booleanPreferencesKey("manual_mode")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
