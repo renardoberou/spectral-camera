@@ -3,6 +3,7 @@ package com.renardoberou.spectralcamera.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -22,7 +24,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,11 +54,13 @@ import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
 import com.renardoberou.spectralcamera.ui.screens.HardwareTestScreen
 import com.renardoberou.spectralcamera.ui.screens.LiveCameraScreen
+import com.renardoberou.spectralcamera.ui.screens.ProOutputScreen
 import com.renardoberou.spectralcamera.ui.theme.SpectralCameraTheme
 import kotlin.math.roundToInt
 
 private sealed class Route(val route: String, val label: String) {
     data object Live : Route("live", "Live")
+    data object Output : Route("output", "Output")
     data object Gallery : Route("gallery", "Gallery")
     data object Hardware : Route("hardware", "Hardware")
 }
@@ -99,8 +102,7 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             }
         }
 
-        // Full-manual exposure: applied to the live session (re-applied after
-        // every rebind because capabilities re-emits then).
+        // Full-manual exposure: re-applied after every camera session rebind.
         LaunchedEffect(capabilities, settings.manualMode, settings.manualIso, settings.manualShutterNs) {
             val iso = settings.manualIso.coerceIn(
                 capabilities?.isoRange?.first ?: 50,
@@ -173,7 +175,7 @@ private fun AppShell(
     Scaffold(
         bottomBar = {
             NavigationBar {
-                listOf(Route.Live, Route.Gallery, Route.Hardware).forEach { route ->
+                listOf(Route.Live, Route.Output, Route.Gallery, Route.Hardware).forEach { route ->
                     NavigationBarItem(
                         selected = currentRoute == route.route,
                         onClick = {
@@ -186,6 +188,7 @@ private fun AppShell(
                         icon = {
                             when (route) {
                                 Route.Live -> Icon(Icons.Outlined.CameraAlt, contentDescription = null)
+                                Route.Output -> Icon(Icons.Outlined.Tune, contentDescription = null)
                                 Route.Gallery -> Icon(Icons.Outlined.Collections, contentDescription = null)
                                 Route.Hardware -> Icon(Icons.Outlined.Memory, contentDescription = null)
                             }
@@ -232,6 +235,13 @@ private fun AppShell(
                         onOpenHardware = { navController.navigate(Route.Hardware.route) },
                     )
                 }
+                composable(Route.Output.route) {
+                    ProOutputScreen(
+                        viewModel = viewModel,
+                        settings = settings,
+                        capabilities = capabilities,
+                    )
+                }
                 composable(Route.Gallery.route) {
                     GalleryScreen(
                         viewModel = viewModel,
@@ -262,11 +272,20 @@ private fun CameraSessionHost(
     onAnalysisFrame: (android.graphics.Bitmap) -> Unit,
     onCapabilities: (CameraCapabilities) -> Unit,
 ) {
-    DisposableEffect(lifecycleOwner, settings.frontFacing) {
+    // Output mode and RAW change ImageCapture stream configuration, so they
+    // intentionally trigger a session rebind; ordinary look changes do not.
+    DisposableEffect(
+        lifecycleOwner,
+        settings.frontFacing,
+        settings.outputMode,
+        settings.saveRawSidecar,
+    ) {
         cameraController.bind(
             lifecycleOwner = lifecycleOwner,
             glView = glView,
             lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,
+            outputMode = settings.outputMode,
+            rawSidecarRequested = settings.saveRawSidecar,
             onCapabilities = onCapabilities,
             onAnalysisFrame = onAnalysisFrame,
         )
