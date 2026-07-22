@@ -3,16 +3,23 @@ package com.renardoberou.spectralcamera.core.camera
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.DngCreator
+import android.hardware.camera2.TotalCaptureResult
 import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
@@ -37,34 +44,41 @@ import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
+import com.renardoberou.spectralcamera.core.hdr.BayerArrangement
+import com.renardoberou.spectralcamera.core.hdr.BayerChannel
 import com.renardoberou.spectralcamera.core.hdr.HdrBracketPlanner
+import com.renardoberou.spectralcamera.core.hdr.RawHdrMath
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
+import kotlin.math.log2
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Owns the CameraX session and capture-domain imaging policy.
+ * Owns CameraX and all capture-domain source acquisition.
  *
- * Standard JPEG and RAW+JPEG captures retain the existing one-frame workflow.
- * Computational HDR performs a real three-exposure bracket around the current
- * auto or manual exposure, waiting for every repeating request to take effect
- * before taking the next JPEG. The frames are returned untouched to the
- * scene-linear merger; the film shader never sees a conventional phone-HDR
- * rendition.
+ * Standard and JPEG HDR use decoded JPEG frames. True RAW HDR configures
+ * ImageCapture for in-memory RAW_SENSOR output, fixes ISO, brackets shutter,
+ * copies the native Bayer plane, and optionally writes each still-open RAW
+ * image to DNG using its exact TotalCaptureResult.
  */
 class CameraController(context: Context) {
     private val appContext = context.applicationContext
+    private val cameraManager = appContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
     private val analyzerExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val captureExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -81,23 +95,40 @@ class CameraController(context: Context) {
     private var hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF
     private var rawSidecarRequested: Boolean = false
 
-    @Volatile
-    private var rawJpegActive: Boolean = false
+    @Volatile private var rawJpegActive: Boolean = false
+    @Volatile private var rawJpegUsable: Boolean = false
+    @Volatile private var rawCaptureUsable: Boolean = false
+    @Volatile private var rawHdrActive: Boolean = false
+    @Volatile private var analysisEnabled: Boolean = false
+    @Volatile private var lastAnalysisFrameAt = 0L
 
-    @Volatile
-    private var rawJpegUsable: Boolean = false
-
-    @Volatile
-    private var analysisEnabled: Boolean = false
-
-    @Volatile
-    private var lastAnalysisFrameAt = 0L
-
+    private var activeCharacteristics: CameraCharacteristics? = null
     private var activeExposureRange: IntRange = 0..0
     private var activeExposureStep: Float = 1f / 3f
     private var activeIsoRange: IntRange? = null
     private var activeExposureTimeRange: LongRange? = null
     private var activeManualExposureSupported: Boolean = false
+    private var activeAwbLockSupported: Boolean = false
+
+    private val latestCaptureResult = AtomicReference<TotalCaptureResult?>(null)
+    private val captureResultsByTimestamp = ConcurrentHashMap<Long, TotalCaptureResult>()
+
+    private val metadataCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult,
+        ) {
+            latestCaptureResult.set(result)
+            val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+            if (timestamp != null) {
+                captureResultsByTimestamp[timestamp] = result
+                if (captureResultsByTimestamp.size > 64) {
+                    captureResultsByTimestamp.keys.sorted().take(16).forEach(captureResultsByTimestamp::remove)
+                }
+            }
+        }
+    }
 
     // Preview surface plumbing. Main-thread only.
     private var surfaceTexture: SurfaceTexture? = null
@@ -148,7 +179,7 @@ class CameraController(context: Context) {
         val displayRotation = glView?.display?.rotation ?: Surface.ROTATION_0
         return try {
             info.getSensorRotationDegrees(displayRotation)
-        } catch (t: Exception) {
+        } catch (_: Exception) {
             sourceRotation
         }
     }
@@ -173,8 +204,7 @@ class CameraController(context: Context) {
 
         val providerFuture = ProcessCameraProvider.getInstance(appContext)
         providerFuture.addListener({
-            val provider = providerFuture.get()
-            bindUseCases(provider, lifecycleOwner)
+            bindUseCases(providerFuture.get(), lifecycleOwner)
         }, mainExecutor)
     }
 
@@ -194,7 +224,7 @@ class CameraController(context: Context) {
             camera2.clearCaptureRequestOptions()
             return
         }
-        camera2.setCaptureRequestOptions(manualExposureOptions(iso, shutterNs))
+        camera2.setCaptureRequestOptions(manualExposureOptions(iso, shutterNs, lockAwb = false))
     }
 
     fun setAnalysisEnabled(enabled: Boolean) {
@@ -202,10 +232,9 @@ class CameraController(context: Context) {
     }
 
     fun focusAt(x: Float, y: Float, viewWidth: Float, viewHeight: Float) {
-        val camera = camera ?: return
+        val activeCamera = camera ?: return
         val display = glView?.display ?: return
         if (viewWidth <= 0f || viewHeight <= 0f) return
-
         val resolution = sourceResolution
         val rotated = sourceRotation == 90 || sourceRotation == 270
         val contentW = (if (rotated) resolution?.height else resolution?.width)?.toFloat() ?: viewWidth
@@ -214,27 +243,33 @@ class CameraController(context: Context) {
         val scale = maxOf(viewWidth / contentW, viewHeight / contentH)
         val fullW = contentW * scale
         val fullH = contentH * scale
-        val factory = DisplayOrientedMeteringPointFactory(display, camera.cameraInfo, fullW, fullH)
+        val factory = DisplayOrientedMeteringPointFactory(display, activeCamera.cameraInfo, fullW, fullH)
         val point = factory.createPoint(x + (fullW - viewWidth) / 2f, y + (fullH - viewHeight) / 2f)
         val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
             .build()
-        camera.cameraControl.startFocusAndMetering(action)
+        activeCamera.cameraControl.startFocusAndMetering(action)
     }
 
     suspend fun capture(settings: CameraSettings): CapturedFrame = captureMutex.withLock {
         val capture = imageCapture ?: throw IllegalStateException("Camera not ready")
         when {
-            settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME -> captureHdrBracket(capture, settings)
+            settings.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME && rawHdrActive ->
+                captureRawHdrBracket(capture, settings)
+            settings.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME ->
+                CapturedFrame(exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
+            settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME -> captureJpegHdrBracket(capture, settings)
             rawJpegActive -> captureRawJpeg(capture)
-            else -> CapturedFrame(listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
+            else -> CapturedFrame(exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
         }
     }
 
-    private suspend fun captureHdrBracket(
+    private suspend fun captureJpegHdrBracket(
         capture: ImageCapture,
         settings: CameraSettings,
     ): CapturedFrame {
-        val activeCamera = camera ?: return CapturedFrame(listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
+        val activeCamera = camera ?: return CapturedFrame(
+            exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)),
+        )
         val captured = mutableListOf<CapturedExposure>()
         return try {
             if (settings.manualMode && activeManualExposureSupported && activeExposureTimeRange != null) {
@@ -247,81 +282,128 @@ class CameraController(context: Context) {
                     supportedRange = requireNotNull(activeExposureTimeRange),
                 )
                 if (plan.size < 2) {
-                    return CapturedFrame(listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
+                    return CapturedFrame(exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
                 }
                 plan.forEach { (shutter, evOffset) ->
-                    applyManualExposureAndAwait(iso, shutter)
+                    applyManualExposureAndAwait(iso, shutter, lockAwb = true)
                     captured += CapturedExposure(captureJpegBitmap(capture), evOffset)
                 }
-                applyManualExposureAndAwait(iso, settings.manualShutterNs)
             } else {
                 val baseIndex = activeCamera.cameraInfo.exposureState.exposureCompensationIndex
                     .coerceIn(activeExposureRange.first, activeExposureRange.last)
-                val plan = HdrBracketPlanner.planAuto(
-                    baseIndex = baseIndex,
-                    supportedRange = activeExposureRange,
-                    exposureStep = activeExposureStep,
-                )
+                val plan = HdrBracketPlanner.planAuto(baseIndex, activeExposureRange, activeExposureStep)
                 if (plan.size < 2) {
-                    return CapturedFrame(listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
+                    return CapturedFrame(exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
                 }
                 plan.forEach { step ->
-                    activeCamera.cameraControl
-                        .setExposureCompensationIndex(step.compensationIndex)
-                        .await()
+                    activeCamera.cameraControl.setExposureCompensationIndex(step.compensationIndex).await()
                     captured += CapturedExposure(captureJpegBitmap(capture), step.evOffset)
                 }
-                activeCamera.cameraControl.setExposureCompensationIndex(baseIndex).await()
             }
-
             val reference = captured.indices.minByOrNull { abs(captured[it].evOffset) } ?: 0
             CapturedFrame(exposures = captured.toList(), referenceIndex = reference)
         } catch (error: Throwable) {
-            captured.forEach { exposure ->
-                if (!exposure.bitmap.isRecycled) exposure.bitmap.recycle()
-            }
+            captured.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
             throw error
         } finally {
-            // Restoration is best-effort here because the camera may have been
-            // closed during cancellation. The normal UI effects also reapply the
-            // persisted exposure when the session becomes active again.
-            if (settings.manualMode && activeManualExposureSupported) {
-                try {
-                    applyManualExposureAndAwait(settings.manualIso, settings.manualShutterNs)
-                } catch (_: Throwable) {
-                    Unit
-                }
-            } else {
-                val state = activeCamera.cameraInfo.exposureState
-                val target = activeExposureRange.let { range ->
-                    Math.round(settings.hardwareEv / activeExposureStep.coerceAtLeast(1f / 6f))
-                        .coerceIn(range.first, range.last)
-                }
-                try {
-                    activeCamera.cameraControl.setExposureCompensationIndex(target).await()
-                } catch (_: Throwable) {
-                    Unit
-                }
+            restoreExposure(settings)
+        }
+    }
+
+    /** Captures three minimally processed RAW_SENSOR mosaics at fixed ISO. */
+    private suspend fun captureRawHdrBracket(
+        capture: ImageCapture,
+        settings: CameraSettings,
+    ): CapturedFrame {
+        val baseResult = awaitRecentCaptureResult()
+        val baseShutter = if (settings.manualMode) {
+            settings.manualShutterNs
+        } else {
+            baseResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: settings.manualShutterNs
+        }
+        val baseIso = if (settings.manualMode) {
+            settings.manualIso
+        } else {
+            baseResult?.get(CaptureResult.SENSOR_SENSITIVITY) ?: settings.manualIso
+        }
+        val range = activeExposureTimeRange
+            ?: throw IllegalStateException("True RAW HDR requires a reported sensor exposure-time range")
+        val safeIso = activeIsoRange?.let { baseIso.coerceIn(it.first, it.last) } ?: baseIso
+        val plan = HdrBracketPlanner.planManual(baseShutter, range)
+        if (plan.size < 2) {
+            throw IllegalStateException("The active camera cannot form a distinct RAW exposure bracket")
+        }
+
+        val frames = mutableListOf<RawSensorFrame>()
+        return try {
+            plan.forEachIndexed { index, (shutter, plannedEv) ->
+                applyManualExposureAndAwait(safeIso, shutter, lockAwb = true)
+                frames += captureRawSensor(
+                    capture = capture,
+                    plannedEvOffset = plannedEv,
+                    saveDng = settings.saveRawSidecar,
+                    bracketIndex = index,
+                )
             }
+            val reference = frames.indices.minByOrNull { abs(frames[it].evOffset) } ?: 0
+            CapturedFrame(rawExposures = frames.toList(), referenceIndex = reference)
+        } catch (error: Throwable) {
+            frames.mapNotNull { it.dngFile }.forEach(File::delete)
+            throw error
+        } finally {
+            restoreExposure(settings)
+        }
+    }
+
+    private suspend fun awaitRecentCaptureResult(): TotalCaptureResult? {
+        repeat(50) {
+            latestCaptureResult.get()?.let { return it }
+            delay(10)
+        }
+        return latestCaptureResult.get()
+    }
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private suspend fun restoreExposure(settings: CameraSettings) {
+        val activeCamera = camera ?: return
+        try {
+            if (settings.manualMode && activeManualExposureSupported) {
+                applyManualExposureAndAwait(settings.manualIso, settings.manualShutterNs, lockAwb = false)
+            } else {
+                Camera2CameraControl.from(activeCamera.cameraControl).clearCaptureRequestOptions().await()
+                val target = Math.round(settings.hardwareEv / activeExposureStep.coerceAtLeast(1f / 6f))
+                    .coerceIn(activeExposureRange.first, activeExposureRange.last)
+                activeCamera.cameraControl.setExposureCompensationIndex(target).await()
+            }
+        } catch (_: Throwable) {
+            Unit
         }
     }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-    private suspend fun applyManualExposureAndAwait(iso: Int, shutterNs: Long) {
-        val activeCamera = camera ?: throw IllegalStateException("Camera closed during HDR bracket")
+    private suspend fun applyManualExposureAndAwait(iso: Int, shutterNs: Long, lockAwb: Boolean) {
+        val activeCamera = camera ?: throw IllegalStateException("Camera closed during exposure bracket")
         val safeIso = activeIsoRange?.let { iso.coerceIn(it.first, it.last) } ?: iso
         val safeShutter = activeExposureTimeRange?.let { shutterNs.coerceIn(it.first, it.last) } ?: shutterNs
         Camera2CameraControl.from(activeCamera.cameraControl)
-            .setCaptureRequestOptions(manualExposureOptions(safeIso, safeShutter))
+            .setCaptureRequestOptions(manualExposureOptions(safeIso, safeShutter, lockAwb))
             .await()
     }
 
-    private fun manualExposureOptions(iso: Int, shutterNs: Long): CaptureRequestOptions =
-        CaptureRequestOptions.Builder()
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
-            .build()
+    private fun manualExposureOptions(
+        iso: Int,
+        shutterNs: Long,
+        lockAwb: Boolean,
+    ): CaptureRequestOptions = CaptureRequestOptions.Builder()
+        .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+        .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+        .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
+        .apply {
+            if (activeAwbLockSupported) {
+                setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
+            }
+        }
+        .build()
 
     private suspend fun captureJpegBitmap(capture: ImageCapture): Bitmap =
         suspendCancellableCoroutine { continuation ->
@@ -346,11 +428,184 @@ class CameraController(context: Context) {
             )
         }
 
+    private suspend fun captureRawSensor(
+        capture: ImageCapture,
+        plannedEvOffset: Float,
+        saveDng: Boolean,
+        bracketIndex: Int,
+    ): RawSensorFrame = suspendCancellableCoroutine { continuation ->
+        capture.takePicture(
+            captureExecutor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    var dngFile: File? = null
+                    try {
+                        if (!continuation.isActive) return
+                        if (image.format != ImageFormat.RAW_SENSOR) {
+                            throw IllegalStateException("Expected RAW_SENSOR, received format ${image.format}")
+                        }
+                        val result = waitForCaptureResult(image.imageInfo.timestamp)
+                            ?: throw IllegalStateException("RAW capture metadata did not arrive")
+                        val characteristics = activeCharacteristics
+                            ?: throw IllegalStateException("RAW camera characteristics unavailable")
+                        if (saveDng) {
+                            dngFile = writeTemporaryDng(image, characteristics, result, bracketIndex)
+                        }
+                        continuation.resume(
+                            copyRawSensorFrame(
+                                image = image,
+                                result = result,
+                                plannedEvOffset = plannedEvOffset,
+                                dngFile = dngFile,
+                            ),
+                        )
+                    } catch (t: Throwable) {
+                        dngFile?.delete()
+                        if (continuation.isActive) continuation.resumeWithException(t)
+                    } finally {
+                        image.close()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    if (continuation.isActive) continuation.resumeWithException(exception)
+                }
+            },
+        )
+    }
+
+    private fun waitForCaptureResult(timestamp: Long): TotalCaptureResult? {
+        captureResultsByTimestamp.remove(timestamp)?.let { return it }
+        repeat(40) {
+            Thread.sleep(5)
+            captureResultsByTimestamp.remove(timestamp)?.let { return it }
+        }
+        return latestCaptureResult.get()
+    }
+
+    private fun writeTemporaryDng(
+        proxy: ImageProxy,
+        characteristics: CameraCharacteristics,
+        result: TotalCaptureResult,
+        bracketIndex: Int,
+    ): File? = runCatching {
+        val mediaImage = proxy.image ?: return@runCatching null
+        val directory = File(appContext.cacheDir, "spectral_raw_hdr").apply {
+            if (!exists() && !mkdirs()) error("Unable to create RAW HDR cache")
+        }
+        val file = File(directory, "raw_hdr_${System.currentTimeMillis()}_${bracketIndex}.dng")
+        file.outputStream().use { output ->
+            DngCreator(characteristics, result).use { creator -> creator.writeImage(output, mediaImage) }
+        }
+        file
+    }.getOrNull()
+
+    private fun copyRawSensorFrame(
+        image: ImageProxy,
+        result: TotalCaptureResult,
+        plannedEvOffset: Float,
+        dngFile: File?,
+    ): RawSensorFrame {
+        val characteristics = activeCharacteristics
+            ?: throw IllegalStateException("RAW camera characteristics unavailable")
+        val cfaValue = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
+            ?: throw IllegalStateException("RAW CFA arrangement unavailable")
+        val arrangement = BayerArrangement.fromCameraValue(cfaValue)
+            ?: throw IllegalStateException("Only four-channel Bayer RAW is supported")
+        val staticBlack = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+            ?: throw IllegalStateException("RAW black level unavailable")
+        val staticBlackValues = IntArray(4).also { staticBlack.copyTo(it, 0) }
+        val dynamicBlack = result.get(CaptureResult.SENSOR_DYNAMIC_BLACK_LEVEL)
+        val blackByParity = FloatArray(4) { parity ->
+            val x = parity and 1
+            val y = parity ushr 1
+            val channel = RawHdrMath.channelAt(arrangement, x, y)
+            if (dynamicBlack != null && dynamicBlack.size >= 4) {
+                dynamicBlack[channelResultIndex(channel)]
+            } else {
+                staticBlackValues[parity].toFloat()
+            }
+        }
+        val whiteLevel = result.get(CaptureResult.SENSOR_DYNAMIC_WHITE_LEVEL)
+            ?: characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL)?.toFloat()
+            ?: throw IllegalStateException("RAW white level unavailable")
+        val gainsVector = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            ?: latestCaptureResult.get()?.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            ?: throw IllegalStateException("RAW white-balance gains unavailable")
+        val gains = FloatArray(4).also { gainsVector.copyTo(it, 0) }
+        val transformValue = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
+            ?: latestCaptureResult.get()?.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
+            ?: throw IllegalStateException("RAW sensor-to-linear-sRGB transform unavailable")
+        val transform = FloatArray(9) { index ->
+            val row = index / 3
+            val column = index % 3
+            transformValue.getElement(column, row).toFloat()
+        }
+        val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            ?: throw IllegalStateException("RAW exposure time unavailable")
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+            ?: throw IllegalStateException("RAW sensitivity unavailable")
+        val crop = image.cropRect
+        val plane = image.planes.firstOrNull()
+            ?: throw IllegalStateException("RAW image has no plane")
+        val source = plane.buffer.duplicate().order(ByteOrder.nativeOrder())
+        val pixels = ShortArray(image.width * image.height)
+        for (y in 0 until image.height) {
+            val rowStart = y * plane.rowStride
+            for (x in 0 until image.width) {
+                val offset = rowStart + x * plane.pixelStride
+                if (offset + 1 >= source.capacity()) {
+                    throw IllegalStateException("RAW plane stride exceeds buffer")
+                }
+                pixels[y * image.width + x] = source.getShort(offset)
+            }
+        }
+        val actualEv = latestCaptureResult.get()?.let { latest ->
+            val latestExposure = latest.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            val latestIso = latest.get(CaptureResult.SENSOR_SENSITIVITY)
+            if (latestExposure != null && latestIso != null) {
+                log2(
+                    RawHdrMath.exposureProduct(exposureTime, iso) /
+                        RawHdrMath.exposureProduct(latestExposure, latestIso),
+                ).toFloat()
+            } else {
+                plannedEvOffset
+            }
+        } ?: plannedEvOffset
+        return RawSensorFrame(
+            width = image.width,
+            height = image.height,
+            pixels = pixels,
+            cropLeft = crop.left.coerceIn(0, image.width - 1),
+            cropTop = crop.top.coerceIn(0, image.height - 1),
+            cropWidth = crop.width().coerceIn(1, image.width - crop.left.coerceAtLeast(0)),
+            cropHeight = crop.height().coerceIn(1, image.height - crop.top.coerceAtLeast(0)),
+            cfaArrangement = cfaValue,
+            blackLevels = blackByParity,
+            whiteLevel = whiteLevel,
+            exposureTimeNs = exposureTime,
+            sensitivityIso = iso,
+            whiteBalanceGains = gains,
+            colorTransform = transform,
+            rotationDegrees = image.imageInfo.rotationDegrees,
+            timestampNs = image.imageInfo.timestamp,
+            evOffset = actualEv,
+            dngFile = dngFile,
+        )
+    }
+
+    private fun channelResultIndex(channel: BayerChannel): Int = when (channel) {
+        BayerChannel.RED -> 0
+        BayerChannel.GREEN_EVEN -> 1
+        BayerChannel.GREEN_ODD -> 2
+        BayerChannel.BLUE -> 3
+    }
+
     private suspend fun captureRawJpeg(capture: ImageCapture): CapturedFrame =
         suspendCancellableCoroutine { continuation ->
             val directory = File(appContext.cacheDir, "spectral_raw_capture").apply {
                 if (!exists() && !mkdirs()) {
-                    continuation.resumeWithException(IllegalStateException("Unable to create RAW capture cache"))
+                    continuation.resumeWithException(IllegalStateException("Unable to create RAW cache"))
                     return@suspendCancellableCoroutine
                 }
             }
@@ -416,33 +671,60 @@ class CameraController(context: Context) {
         captureExecutor.shutdownNow()
     }
 
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private fun bindUseCases(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         provider.unbindAll()
+        captureResultsByTimestamp.clear()
+        latestCaptureResult.set(null)
         val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val cameraInfo = provider.getCameraInfo(selector)
+        val camera2Info = Camera2CameraInfo.from(cameraInfo)
+        activeCharacteristics = runCatching {
+            cameraManager.getCameraCharacteristics(camera2Info.cameraId)
+        }.getOrNull()
         val advertisedFormats = runCatching {
             ImageCapture.getImageCaptureCapabilities(cameraInfo).supportedOutputFormats
         }.getOrDefault(setOf(ImageCapture.OUTPUT_FORMAT_JPEG))
         rawJpegUsable = advertisedFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+        rawCaptureUsable = advertisedFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW) || rawJpegUsable
 
         val previewUseCase = buildPreview(targetRotation)
         preview = previewUseCase
-        var enableRaw = rawSidecarRequested && rawJpegUsable && hdrCaptureMode == HdrCaptureMode.OFF
-        var captureUseCase = buildImageCapture(targetRotation, outputMode, hdrCaptureMode, enableRaw)
+        val staticRawSupport = rawStaticMetadataSupported(activeCharacteristics)
+        val manualSupport = characteristicsManualSensorSupported(activeCharacteristics)
+        var enableRawHdr = hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME &&
+            rawCaptureUsable && staticRawSupport && manualSupport
+        var enableRawSidecar = rawSidecarRequested && rawJpegUsable && hdrCaptureMode == HdrCaptureMode.OFF
+        var captureUseCase = buildImageCapture(
+            targetRotation,
+            outputMode,
+            hdrCaptureMode,
+            enableRawSidecar,
+            enableRawHdr,
+        )
 
         camera = try {
             bindPreferred(provider, lifecycleOwner, selector, previewUseCase, captureUseCase)
         } catch (rawConfigurationError: Exception) {
-            if (!enableRaw) throw rawConfigurationError
+            if (!enableRawSidecar && !enableRawHdr) throw rawConfigurationError
             provider.unbindAll()
-            enableRaw = false
-            rawJpegUsable = false
-            captureUseCase = buildImageCapture(targetRotation, outputMode, hdrCaptureMode, enableRaw = false)
+            enableRawSidecar = false
+            enableRawHdr = false
+            if (hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME) rawCaptureUsable = false
+            else rawJpegUsable = false
+            captureUseCase = buildImageCapture(
+                targetRotation,
+                outputMode,
+                HdrCaptureMode.OFF,
+                enableRaw = false,
+                enableRawHdr = false,
+            )
             bindPreferred(provider, lifecycleOwner, selector, previewUseCase, captureUseCase)
         }
 
-        rawJpegActive = enableRaw
+        rawJpegActive = enableRawSidecar
+        rawHdrActive = enableRawHdr
         imageCapture = captureUseCase
         sourceResolution?.let { resolution ->
             sourceRotation = currentRelativeRotation()
@@ -467,13 +749,15 @@ class CameraController(context: Context) {
         .build()
         .also { it.setSurfaceProvider(surfaceProvider) }
 
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private fun buildImageCapture(
         targetRotation: Int,
         mode: OutputMode,
         hdrMode: HdrCaptureMode,
         enableRaw: Boolean,
+        enableRawHdr: Boolean,
     ): ImageCapture {
-        val useFastSource = mode == OutputMode.FAST_1080 && !enableRaw
+        val useFastSource = mode == OutputMode.FAST_1080 && !enableRaw && !enableRawHdr
         val resolutionSelector = when {
             useFastSource -> ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
@@ -484,12 +768,9 @@ class CameraController(context: Context) {
                     ),
                 )
                 .build()
-            hdrMode == HdrCaptureMode.THREE_FRAME -> ResolutionSelector.Builder()
+            hdrMode != HdrCaptureMode.OFF -> ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(
-                    // Three 50 MP JPEG bitmaps are unsafe on ordinary phones.
-                    // Use the camera's high-quality binned/12 MP-class stream;
-                    // HQ 1080 still retains this resolution through film render.
                     ResolutionStrategy(
                         Size(4032, 3024),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
@@ -507,7 +788,7 @@ class CameraController(context: Context) {
                 .build()
         }
 
-        return ImageCapture.Builder()
+        val builder = ImageCapture.Builder()
             .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
             .setCaptureMode(
@@ -515,10 +796,12 @@ class CameraController(context: Context) {
                 else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY,
             )
             .setJpegQuality(if (useFastSource) 95 else 100)
-            .apply {
-                if (enableRaw) setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
-            }
-            .build()
+        Camera2Interop.Extender(builder).setSessionCaptureCallback(metadataCallback)
+        when {
+            enableRawHdr -> builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW)
+            enableRaw -> builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+        }
+        return builder.build()
     }
 
     private fun bindPreferred(
@@ -535,7 +818,7 @@ class CameraController(context: Context) {
             captureUseCase,
             buildAnalysis(previewUseCase.targetRotation),
         )
-    } catch (threeUseCaseError: Exception) {
+    } catch (_: Exception) {
         provider.unbindAll()
         previewUseCase.setSurfaceProvider(surfaceProvider)
         provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, captureUseCase)
@@ -590,19 +873,25 @@ class CameraController(context: Context) {
         var manualExposureSupported = false
         try {
             val camera2Info = Camera2CameraInfo.from(info)
-            aperture = camera2Info
-                .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
-                ?.firstOrNull()
-            val iso = camera2Info
-                .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            aperture = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES,
+            )?.firstOrNull()
+            val iso = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE,
+            )
             if (iso != null) isoRange = iso.lower..iso.upper
-            val expTime = camera2Info
-                .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            val expTime = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE,
+            )
             if (expTime != null) exposureTimeRange = expTime.lower..expTime.upper
-            val caps = camera2Info
-                .getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val caps = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
+            )
             manualExposureSupported = caps?.contains(
                 CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR,
+            ) == true
+            activeAwbLockSupported = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE,
             ) == true
         } catch (_: Exception) {
             Unit
@@ -616,6 +905,8 @@ class CameraController(context: Context) {
         val autoBracketSupported = exposureRange.upper - exposureRange.lower >= 2
         val manualBracketSupported = manualExposureSupported && exposureTimeRange != null &&
             exposureTimeRange.upper > exposureTimeRange.lower
+        val trueRawSupported = rawCaptureUsable && manualExposureSupported &&
+            rawStaticMetadataSupported(activeCharacteristics)
 
         onCapabilities?.invoke(
             CameraCapabilities(
@@ -630,8 +921,21 @@ class CameraController(context: Context) {
                 manualExposureSupported = manualExposureSupported,
                 rawJpegCaptureSupported = rawJpegUsable,
                 hdrBracketSupported = autoBracketSupported || manualBracketSupported,
+                trueRawHdrSupported = trueRawSupported,
             ),
         )
+    }
+
+    private fun characteristicsManualSensorSupported(characteristics: CameraCharacteristics?): Boolean =
+        characteristics?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.contains(
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR,
+        ) == true
+
+    private fun rawStaticMetadataSupported(characteristics: CameraCharacteristics?): Boolean {
+        val cfa = characteristics?.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
+        return cfa != null && BayerArrangement.fromCameraValue(cfa) != null &&
+            characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN) != null &&
+            characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) != null
     }
 
     private fun capturedImageToBitmap(image: ImageProxy): Bitmap {
@@ -674,13 +978,11 @@ class CameraController(context: Context) {
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowBytes = width * pixelStride
-
         if (rowStride == rowBytes) {
             return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
                 it.copyPixelsFromBuffer(buffer)
             }
         }
-
         val packed = ByteBuffer.allocateDirect(rowBytes * height)
         val row = ByteArray(rowBytes)
         for (y in 0 until height) {
