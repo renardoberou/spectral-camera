@@ -9,7 +9,9 @@ import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.CaptureResult
+import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.HardwareTestState
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
@@ -18,6 +20,7 @@ import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
 import com.renardoberou.spectralcamera.core.camera.CapturedExposure
+import com.renardoberou.spectralcamera.core.capture.DoubleExposurePipeline
 import com.renardoberou.spectralcamera.core.data.CameraSettingsRepository
 import com.renardoberou.spectralcamera.core.export.OutputPipeline
 import com.renardoberou.spectralcamera.core.hardware.HardwareTestAnalyzer
@@ -48,6 +51,17 @@ data class GalleryUiState(
     val errorMessage: String? = null,
 )
 
+data class DoubleExposureUiState(
+    val waitingForSecond: Boolean = false,
+    val overlayBitmap: Bitmap? = null,
+)
+
+private data class DoubleExposureSession(
+    val firstFrame: Bitmap,
+    val outputMode: OutputMode,
+    val frontFacing: Boolean,
+)
+
 class SpectralViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = CameraSettingsRepository(application)
     private val mediaRepository = MediaRepository(application)
@@ -67,6 +81,10 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     private val _hardwareState = MutableStateFlow(HardwareTestState.idle())
     val hardwareState = _hardwareState.asStateFlow()
 
+    private val _doubleExposureState = MutableStateFlow(DoubleExposureUiState())
+    val doubleExposureState = _doubleExposureState.asStateFlow()
+    private var doubleExposureSession: DoubleExposureSession? = null
+
     init {
         refreshGallery()
     }
@@ -76,7 +94,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun resetHardwareTest() {
-        _hardwareState.value = hardwareAnalyzer.reset()
+        _hardwareState.value = HardwareTestState.idle()
     }
 
     fun updateSettings(transform: (CameraSettings) -> CameraSettings) {
@@ -86,21 +104,58 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
 
     fun setPreset(preset: SpectralPreset) = updateSettings { it.copy(preset = preset) }
     fun setSaveOriginal(enabled: Boolean) = updateSettings { it.copy(saveOriginal = enabled) }
-    fun setFrontFacing(enabled: Boolean) = updateSettings { it.copy(frontFacing = enabled) }
-    fun setOutputMode(mode: OutputMode) = updateSettings { it.copy(outputMode = mode) }
 
-    fun setHdrCaptureMode(mode: HdrCaptureMode) = updateSettings { current ->
-        when (mode) {
-            HdrCaptureMode.OFF -> current.copy(hdrCaptureMode = mode, ultraHdrExport = false)
-            HdrCaptureMode.THREE_FRAME -> current.copy(
-                hdrCaptureMode = mode,
-                saveRawSidecar = false,
-            )
-            HdrCaptureMode.RAW_THREE_FRAME -> current.copy(
-                hdrCaptureMode = mode,
-                saveOriginal = false,
-                saveRawSidecar = true,
-            )
+    fun setFrontFacing(enabled: Boolean) {
+        if (enabled != settings.value.frontFacing) cancelDoubleExposure()
+        updateSettings { it.copy(frontFacing = enabled) }
+    }
+
+    fun setOutputMode(mode: OutputMode) {
+        if (mode != settings.value.outputMode) cancelDoubleExposure()
+        updateSettings { it.copy(outputMode = mode) }
+    }
+
+    fun setHdrCaptureMode(mode: HdrCaptureMode) {
+        if (mode != HdrCaptureMode.OFF) cancelDoubleExposure()
+        updateSettings { current ->
+            when (mode) {
+                HdrCaptureMode.OFF -> current.copy(hdrCaptureMode = mode, ultraHdrExport = false)
+                HdrCaptureMode.THREE_FRAME -> current.copy(
+                    hdrCaptureMode = mode,
+                    doubleExposureMode = DoubleExposureMode.OFF,
+                    saveRawSidecar = false,
+                )
+                HdrCaptureMode.RAW_THREE_FRAME -> current.copy(
+                    hdrCaptureMode = mode,
+                    doubleExposureMode = DoubleExposureMode.OFF,
+                    saveOriginal = false,
+                    saveRawSidecar = true,
+                )
+            }
+        }
+    }
+
+    fun setDoubleExposureMode(mode: DoubleExposureMode) {
+        cancelDoubleExposure()
+        updateSettings { current ->
+            when (mode) {
+                DoubleExposureMode.OFF -> current.copy(doubleExposureMode = mode)
+                DoubleExposureMode.FILM_BALANCED -> current.copy(
+                    doubleExposureMode = mode,
+                    hdrCaptureMode = HdrCaptureMode.OFF,
+                    ultraHdrExport = false,
+                    saveRawSidecar = false,
+                )
+            }
+        }
+    }
+
+    fun cancelDoubleExposure() {
+        val session = doubleExposureSession
+        doubleExposureSession = null
+        _doubleExposureState.value = DoubleExposureUiState()
+        session?.firstFrame?.let { bitmap ->
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 
@@ -113,16 +168,20 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun setSaveRawSidecar(enabled: Boolean) = updateSettings { current ->
-        when {
-            current.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME ->
-                current.copy(saveRawSidecar = enabled)
-            enabled -> current.copy(
-                saveRawSidecar = true,
-                hdrCaptureMode = HdrCaptureMode.OFF,
-                ultraHdrExport = false,
-            )
-            else -> current.copy(saveRawSidecar = false)
+    fun setSaveRawSidecar(enabled: Boolean) {
+        if (enabled) cancelDoubleExposure()
+        updateSettings { current ->
+            when {
+                current.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME ->
+                    current.copy(saveRawSidecar = enabled)
+                enabled -> current.copy(
+                    saveRawSidecar = true,
+                    hdrCaptureMode = HdrCaptureMode.OFF,
+                    doubleExposureMode = DoubleExposureMode.OFF,
+                    ultraHdrExport = false,
+                )
+                else -> current.copy(saveRawSidecar = false)
+            }
         }
     }
 
@@ -132,24 +191,147 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
     fun setIntensity(value: Float) = updateSettings { it.copy(intensity = value) }
     fun setZebra(enabled: Boolean) = updateSettings { it.copy(zebraEnabled = enabled) }
-    fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) =
+
+    fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) {
+        if (mode != settings.value.sensorMode) cancelDoubleExposure()
         updateSettings { it.copy(sensorMode = mode) }
+    }
 
     fun updateAdjustments(transform: (com.renardoberou.spectralcamera.core.ManualAdjustments) -> com.renardoberou.spectralcamera.core.ManualAdjustments) {
         updateSettings { current -> current.copy(adjustments = transform(current.adjustments)) }
     }
 
-    /**
-     * End-to-end still path. True RAW HDR branches before any Bitmap/JPEG source
-     * preparation; its Bayer merge and demosaic produce the first RGB bitmap.
-     */
     suspend fun captureAndSave(
         cameraController: CameraController,
         process: suspend (Bitmap, CameraSettings) -> Bitmap,
-    ): CaptureResult {
+    ): CaptureActionResult {
         val requestedSettings = settings.value
+        return if (requestedSettings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
+            captureDoubleExposure(cameraController, requestedSettings, process)
+        } else {
+            CaptureActionResult.Saved(
+                captureSingleOrHdr(cameraController, requestedSettings, process),
+            )
+        }
+    }
+
+    private suspend fun captureDoubleExposure(
+        cameraController: CameraController,
+        requestedSettings: CameraSettings,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureActionResult {
+        val existing = doubleExposureSession
+        if (existing != null &&
+            (existing.outputMode != requestedSettings.outputMode ||
+                existing.frontFacing != requestedSettings.frontFacing)
+        ) {
+            cancelDoubleExposure()
+        }
+        val captureSettings = requestedSettings.copy(
+            hdrCaptureMode = HdrCaptureMode.OFF,
+            ultraHdrExport = false,
+            saveRawSidecar = false,
+        )
+
+        if (doubleExposureSession == null) {
+            val frame = cameraController.capture(captureSettings)
+            val source = requireNotNull(frame.referenceBitmap) {
+                "Double exposure requires a Standard JPEG source"
+            }
+            var prepared: Bitmap? = null
+            try {
+                prepared = withContext(Dispatchers.Default) {
+                    DoubleExposurePipeline.prepareFrame(source, captureSettings.outputMode)
+                }
+                frame.exposures.map { it.bitmap }.forEach { bitmap ->
+                    if (bitmap !== prepared && !bitmap.isRecycled) bitmap.recycle()
+                }
+                frame.rawFiles.forEach(File::delete)
+                val overlay = withContext(Dispatchers.Default) {
+                    DoubleExposurePipeline.makeOverlay(prepared)
+                }
+                doubleExposureSession = DoubleExposureSession(
+                    firstFrame = prepared,
+                    outputMode = captureSettings.outputMode,
+                    frontFacing = captureSettings.frontFacing,
+                )
+                _doubleExposureState.value = DoubleExposureUiState(
+                    waitingForSecond = true,
+                    overlayBitmap = overlay,
+                )
+                return CaptureActionResult.AwaitingSecondExposure(
+                    "Double Exposure • frame 1 stored • recompose and capture frame 2",
+                )
+            } catch (error: Throwable) {
+                prepared?.let { if (!it.isRecycled) it.recycle() }
+                frame.exposures.map { it.bitmap }.forEach { bitmap ->
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+                frame.rawFiles.forEach(File::delete)
+                throw error
+            }
+        }
+
+        val session = requireNotNull(doubleExposureSession)
+        val secondFrame = cameraController.capture(captureSettings)
+        val secondSource = requireNotNull(secondFrame.referenceBitmap) {
+            "Double exposure requires a Standard JPEG source"
+        }
+        var secondPrepared: Bitmap? = null
+        var combined: Bitmap? = null
+        var rendered: Bitmap? = null
+        var finalOutput: Bitmap? = null
+        var saved = false
+        try {
+            secondPrepared = withContext(Dispatchers.Default) {
+                DoubleExposurePipeline.prepareFrame(secondSource, captureSettings.outputMode)
+            }
+            secondFrame.exposures.map { it.bitmap }.forEach { bitmap ->
+                if (bitmap !== secondPrepared && !bitmap.isRecycled) bitmap.recycle()
+            }
+            secondFrame.rawFiles.forEach(File::delete)
+
+            combined = withContext(Dispatchers.Default) {
+                DoubleExposurePipeline.combine(session.firstFrame, secondPrepared)
+            }
+            val filmRender = renderWithAdaptiveGpuFallback(combined, captureSettings, process)
+            rendered = filmRender
+            val finished = withContext(Dispatchers.Default) {
+                OutputPipeline.finalizeExport(filmRender, captureSettings.outputMode)
+            }
+            finalOutput = finished
+            val result = withContext(Dispatchers.IO) {
+                mediaRepository.saveCapture(
+                    processed = finished,
+                    originals = if (captureSettings.saveOriginal) {
+                        listOf(session.firstFrame, secondPrepared)
+                    } else {
+                        emptyList()
+                    },
+                    rawSidecars = emptyList(),
+                    settings = captureSettings,
+                    ultraHdr = false,
+                    frameCount = 2,
+                    motionProtected = false,
+                )
+            }
+            saved = true
+            refreshGallery()
+            return CaptureActionResult.Saved(result)
+        } finally {
+            secondFrame.rawFiles.forEach(File::delete)
+            recycleDistinct(secondPrepared, combined, rendered, finalOutput)
+            if (saved) cancelDoubleExposure()
+        }
+    }
+
+    private suspend fun captureSingleOrHdr(
+        cameraController: CameraController,
+        requestedSettings: CameraSettings,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureResult {
         val frame = cameraController.capture(requestedSettings)
-        var effectiveSettings = when {
+        val effectiveSettings = when {
             frame.isRawHdrBracket -> requestedSettings.copy(hdrCaptureMode = HdrCaptureMode.RAW_THREE_FRAME)
             frame.isHdrBracket -> requestedSettings.copy(hdrCaptureMode = HdrCaptureMode.THREE_FRAME)
             else -> requestedSettings.copy(hdrCaptureMode = HdrCaptureMode.OFF, ultraHdrExport = false)
@@ -198,35 +380,23 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                     if (frame.isHdrBracket) {
-                        val merge = try {
-                            withContext(Dispatchers.Default) {
-                                HdrPipeline.merge(
-                                    frames = preparedJpegs,
-                                    referenceIndex = frame.referenceIndex,
-                                    toneMap = effectiveSettings.hdrToneMap,
-                                )
-                            }
-                        } catch (_: Exception) {
-                            null
-                        }
-                        if (merge != null) {
-                            jpegMerge = merge
-                            gainField = merge.gainField
-                            recycleDistinctExcept(
-                                keep = if (effectiveSettings.saveOriginal) referenceOriginal else null,
-                                bitmaps = buildList {
-                                    addAll(frame.exposures.map { it.bitmap })
-                                    addAll(preparedJpegs.map { it.bitmap })
-                                },
+                        val merge = withContext(Dispatchers.Default) {
+                            HdrPipeline.merge(
+                                frames = preparedJpegs,
+                                referenceIndex = frame.referenceIndex,
+                                toneMap = effectiveSettings.hdrToneMap,
                             )
-                            merge.workingBitmap
-                        } else {
-                            effectiveSettings = effectiveSettings.copy(
-                                hdrCaptureMode = HdrCaptureMode.OFF,
-                                ultraHdrExport = false,
-                            )
-                            preparedJpegs[frame.referenceIndex].bitmap
                         }
+                        jpegMerge = merge
+                        gainField = merge.gainField
+                        recycleDistinctExcept(
+                            keep = if (effectiveSettings.saveOriginal) referenceOriginal else null,
+                            bitmaps = buildList {
+                                addAll(frame.exposures.map { it.bitmap })
+                                addAll(preparedJpegs.map { it.bitmap })
+                            },
+                        )
+                        merge.workingBitmap
                     } else {
                         preparedJpegs[frame.referenceIndex].bitmap
                     }
@@ -256,19 +426,25 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             }
 
             val saveBitmap = ultraHdr?.bitmap ?: finished
-            val hdrFrameCount = when (effectiveSettings.hdrCaptureMode) {
+            val frameCount = when (effectiveSettings.hdrCaptureMode) {
                 HdrCaptureMode.THREE_FRAME -> frame.exposures.size
                 HdrCaptureMode.RAW_THREE_FRAME -> frame.rawExposures.size
                 HdrCaptureMode.OFF -> 1
             }
+            val motionProtected = jpegMerge?.motionProtected == true || rawMerge?.motionProtected == true
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
                     processed = saveBitmap,
-                    original = if (effectiveSettings.saveOriginal) referenceOriginal else null,
+                    originals = if (effectiveSettings.saveOriginal && referenceOriginal != null) {
+                        listOf(referenceOriginal)
+                    } else {
+                        emptyList()
+                    },
                     rawSidecars = rawFiles,
                     settings = effectiveSettings,
                     ultraHdr = ultraHdr != null,
-                    hdrFrameCount = hdrFrameCount,
+                    frameCount = frameCount,
+                    motionProtected = motionProtected,
                 )
             }
             refreshGallery()
@@ -290,12 +466,6 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * A large offscreen RGBA target can exceed mobile GPU memory even when its
-     * dimensions are below GL_MAX_TEXTURE_SIZE. Full/HQ capture now retries the
-     * film render at descending, aspect-preserving sizes instead of discarding
-     * the completed bracket with `Capture framebuffer incomplete: 0`.
-     */
     private suspend fun renderWithAdaptiveGpuFallback(
         input: Bitmap,
         settings: CameraSettings,
@@ -354,6 +524,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     ): CaptureResult {
         val effectiveSettings = settings.value.copy(
             hdrCaptureMode = HdrCaptureMode.OFF,
+            doubleExposureMode = DoubleExposureMode.OFF,
             ultraHdrExport = false,
         )
         val app = getApplication<Application>()
@@ -391,11 +562,12 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
                     processed = final,
-                    original = if (effectiveSettings.saveOriginal) original else null,
+                    originals = if (effectiveSettings.saveOriginal) listOf(original) else emptyList(),
                     rawSidecars = emptyList(),
                     settings = effectiveSettings,
                     ultraHdr = false,
-                    hdrFrameCount = 1,
+                    frameCount = 1,
+                    motionProtected = false,
                 )
             }
             refreshGallery()
@@ -421,6 +593,11 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                     },
                 )
         }
+    }
+
+    override fun onCleared() {
+        cancelDoubleExposure()
+        super.onCleared()
     }
 
     private fun recycleDistinctExcept(keep: Bitmap?, bitmaps: List<Bitmap?>) {
