@@ -3,9 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Production signing is opt-in and must be supplied completely through the
-// environment. Ordinary local and CI builds never fall back to a committed or
-// hard-coded signing key.
 val releaseSigningEnvironment: Map<String, String?> = mapOf(
     "KEYSTORE_FILE" to System.getenv("KEYSTORE_FILE"),
     "KEYSTORE_PASS" to System.getenv("KEYSTORE_PASS"),
@@ -31,8 +28,8 @@ android {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
         targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "44").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.16.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "45").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.17.0"
     }
 
     signingConfigs {
@@ -48,8 +45,7 @@ android {
 
     buildTypes {
         debug {
-            // Use the Android toolchain's normal debug key. Debug artifacts are
-            // ephemeral and are never presented as update-compatible releases.
+            // Ephemeral Android debug key only.
         }
         release {
             isMinifyEnabled = false
@@ -99,6 +95,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0")
 
     testImplementation("junit:junit:4.13.2")
 
