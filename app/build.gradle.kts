@@ -25,7 +25,7 @@ if (hasAnyReleaseSigningValue && !hasCompleteReleaseSigning) {
 
 android {
     namespace = "com.renardoberou.spectralcamera"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.renardoberou.spectralcamera"
