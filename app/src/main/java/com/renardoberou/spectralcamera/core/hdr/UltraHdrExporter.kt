@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Gainmap
 import android.os.Build
 import androidx.annotation.RequiresApi
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -36,6 +37,14 @@ object UltraHdrExporter {
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private fun attachApi34(processed: Bitmap, gainField: HdrGainField): UltraHdrImage? {
+        // A gain field with the reciprocal/raw-sensor aspect can paint recovered
+        // brightness onto unrelated parts of a portrait image. Save a correct
+        // SDR JPEG instead of attaching any spatially inconsistent gain map.
+        val processedAspect = processed.width.toFloat() / processed.height
+        val fieldAspect = gainField.width.toFloat() / gainField.height
+        val relativeAspectError = abs(fieldAspect / processedAspect - 1f)
+        if (relativeAspectError > 0.08f) return null
+
         val longEdge = max(processed.width, processed.height)
         val scale = min(0.25f, 1024f / longEdge.toFloat())
             .coerceAtLeast(1f / longEdge.toFloat())
