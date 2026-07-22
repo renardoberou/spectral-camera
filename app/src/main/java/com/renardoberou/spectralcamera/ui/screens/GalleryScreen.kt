@@ -110,7 +110,7 @@ fun GalleryScreen(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
         )
         Text(
-            text = "Captures are saved to DCIM/SpectralCamera. Ultra HDR files remain ordinary SDR-compatible JPEGs in non-HDR viewers; the detail viewer enables HDR only when the decoded bitmap actually carries a gain map.",
+            text = "Each image shows whether it was Standard, Computational HDR, True RAW HDR, or Double Exposure. Ultra HDR files remain SDR-compatible JPEGs in non-HDR viewers; the detail viewer enables HDR only when the decoded bitmap actually carries a gain map.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
@@ -236,6 +236,11 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
             }
             Column(Modifier.padding(12.dp)) {
                 Text(item.presetLabel, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    item.captureModeLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
                 Text(
                     when {
@@ -266,6 +271,11 @@ private fun GalleryDetailDialog(
             Column(Modifier.padding(16.dp)) {
                 Text(item.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(item.presetLabel, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Capture: ${item.captureModeLabel}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
                 if (item.isUltraHdr) {
                     Text("Ultra HDR gain-map JPEG", style = MaterialTheme.typography.labelMedium)
