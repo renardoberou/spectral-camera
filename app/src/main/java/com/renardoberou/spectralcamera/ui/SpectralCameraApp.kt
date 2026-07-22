@@ -3,7 +3,6 @@ package com.renardoberou.spectralcamera.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -88,12 +87,10 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             permissionsGranted = hasRequiredPermissions(context)
         }
 
-        // Push every settings change straight into the GPU pipeline.
         LaunchedEffect(settings) {
             glView.updateSettings(settings)
         }
 
-        // Hardware exposure compensation lives on the camera itself.
         LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
             if (!settings.manualMode) {
                 val index = capabilities?.stopsToIndex(settings.hardwareEv)
@@ -102,7 +99,6 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             }
         }
 
-        // Full-manual exposure: re-applied after every camera session rebind.
         LaunchedEffect(capabilities, settings.manualMode, settings.manualIso, settings.manualShutterNs) {
             val iso = settings.manualIso.coerceIn(
                 capabilities?.isoRange?.first ?: 50,
@@ -115,7 +111,6 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             cameraController.setManualExposure(settings.manualMode, iso, shutter)
         }
 
-        // GLSurfaceView needs explicit pause/resume to keep its render thread healthy.
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
@@ -167,7 +162,6 @@ private fun AppShell(
 ) {
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route ?: Route.Live.route
 
-    // The small analysis stream only feeds the hardware-test screen.
     LaunchedEffect(currentRoute) {
         cameraController.setAnalysisEnabled(currentRoute == Route.Hardware.route)
     }
@@ -272,12 +266,13 @@ private fun CameraSessionHost(
     onAnalysisFrame: (android.graphics.Bitmap) -> Unit,
     onCapabilities: (CameraCapabilities) -> Unit,
 ) {
-    // Output mode and RAW change ImageCapture stream configuration, so they
-    // intentionally trigger a session rebind; ordinary look changes do not.
+    // Output mode, HDR bracket policy, RAW, and lens facing alter ImageCapture
+    // stream/session behavior and intentionally trigger a CameraX rebind.
     DisposableEffect(
         lifecycleOwner,
         settings.frontFacing,
         settings.outputMode,
+        settings.hdrCaptureMode,
         settings.saveRawSidecar,
     ) {
         cameraController.bind(
@@ -285,6 +280,7 @@ private fun CameraSessionHost(
             glView = glView,
             lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,
             outputMode = settings.outputMode,
+            hdrCaptureMode = settings.hdrCaptureMode,
             rawSidecarRequested = settings.saveRawSidecar,
             onCapabilities = onCapabilities,
             onAnalysisFrame = onAnalysisFrame,
