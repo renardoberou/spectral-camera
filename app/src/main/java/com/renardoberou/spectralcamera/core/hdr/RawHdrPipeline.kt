@@ -20,22 +20,23 @@ data class RawHdrMergeResult(
     val alignmentConfidence: List<Float>,
     val dynamicRangeStops: Float,
     val whitePoint: Float,
+    /** At least one RAW bracket member used conservative zero-shift fusion. */
+    val motionProtected: Boolean,
 )
 
 /**
  * True RAW HDR path.
  *
- * RAW_SENSOR code values are black-subtracted, white-level normalized and
- * exposure-normalized while still in the Bayer mosaic. Alignment is constrained
- * to whole 2x2 CFA cells. The normal exposure remains the visual anchor; bracket
- * frames replace only clipped/very-dark, locally-flat sensor regions and only
- * when alignment is confident.
+ * RAW_SENSOR values are merged before demosaic. An uncertain frame is retained
+ * at zero CFA-cell shift with very low confidence. It can recover broad clipped
+ * or near-black flat areas, while edges and moving detail remain reference-only.
  */
 object RawHdrPipeline {
     private const val THUMB_MAX_EDGE = 220
     private const val SAMPLE_CELL_STEP = 12
     private const val MAX_GAIN_STOPS = 5f
     private const val EPSILON = 1e-7f
+    private const val MOTION_FALLBACK_CONFIDENCE = 0.06f
 
     fun merge(
         frames: List<RawSensorFrame>,
@@ -56,11 +57,15 @@ object RawHdrPipeline {
 
         val cellEstimates = estimateCellAlignment(frames, referenceIndex, arrangement)
         val shifts = cellEstimates.map { estimate -> PixelShift(estimate.shift.dx * 2, estimate.shift.dy * 2) }
-        val alignmentConfidence = FloatArray(frames.size) { index ->
-            if (index == referenceIndex) 1f else cellEstimates[index].confidence
+        val motionProtected = cellEstimates.indices.any { index ->
+            index != referenceIndex && !cellEstimates[index].accepted
         }
-        require(alignmentConfidence.indices.any { it != referenceIndex && alignmentConfidence[it] > 0f }) {
-            "RAW HDR alignment rejected every non-reference exposure"
+        val alignmentConfidence = FloatArray(frames.size) { index ->
+            when {
+                index == referenceIndex -> 1f
+                cellEstimates[index].accepted -> cellEstimates[index].confidence
+                else -> MOTION_FALLBACK_CONFIDENCE
+            }
         }
         val crop = commonEvenCrop(frames, shifts)
         require(crop.width >= 8 && crop.height >= 8) { "RAW alignment left no usable active area" }
@@ -210,6 +215,7 @@ object RawHdrPipeline {
             alignmentConfidence = alignmentConfidence.toList(),
             dynamicRangeStops = dynamicRange,
             whitePoint = whitePoint,
+            motionProtected = motionProtected,
         )
     }
 
@@ -456,7 +462,6 @@ object RawHdrPipeline {
         frames.indices.forEach { index ->
             if (index == referenceIndex) return@forEach
             val confidence = alignmentConfidence[index]
-            if (confidence <= 0f) return@forEach
             val scale = exposureScales[index]
             val need = when {
                 scale < 0.95 -> highlightNeed
