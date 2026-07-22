@@ -9,6 +9,7 @@ import android.provider.MediaStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.GalleryItem
+import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
@@ -21,10 +22,6 @@ import java.util.Locale
 
 class MediaRepository(private val context: Context) {
     private val resolver = context.contentResolver
-
-    // New captures use DCIM so they appear prominently in Google Photos and
-    // other gallery apps. Earlier builds used Pictures/SpectralCamera, which is
-    // still queried exactly so historical captures remain recoverable.
     private val currentPicturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
     private val formerPicturesPath = "${Environment.DIRECTORY_PICTURES}/SpectralCamera"
 
@@ -48,10 +45,12 @@ class MediaRepository(private val context: Context) {
         original: Bitmap?,
         rawSidecar: File?,
         settings: CameraSettings,
+        ultraHdr: Boolean,
     ): CaptureResult {
         val timestamp = Instant.now()
-        val processedName = fileName(settings, CaptureAsset.PROCESSED, timestamp)
-        val processedUri = insertBitmap(processed, processedName, settings, CaptureAsset.PROCESSED)
+        val processedAsset = if (ultraHdr) CaptureAsset.ULTRA_HDR else CaptureAsset.PROCESSED
+        val processedName = fileName(settings, processedAsset, timestamp)
+        val processedUri = insertBitmap(processed, processedName, settings, processedAsset)
         val originalUri = if (settings.saveOriginal && original != null) {
             val originalName = fileName(settings, CaptureAsset.ORIGINAL_JPEG, timestamp)
             insertBitmap(original, originalName, settings, CaptureAsset.ORIGINAL_JPEG)
@@ -67,6 +66,7 @@ class MediaRepository(private val context: Context) {
             originalUri = originalUri,
             rawUri = rawUri,
             displayName = processedName,
+            ultraHdr = ultraHdr,
         )
     }
 
@@ -110,7 +110,6 @@ class MediaRepository(private val context: Context) {
             while (cursor.moveToNext() && items.size < limit) {
                 val id = cursor.getLong(idCol)
                 val name = cursor.getString(nameCol) ?: continue
-                // DNG sidecars intentionally stay out of the in-app JPEG gallery.
                 val meta = parseName(name) ?: continue
                 val dateTaken = if (cursor.isNull(dateCol)) 0L else cursor.getLong(dateCol)
                 val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon()
@@ -123,6 +122,7 @@ class MediaRepository(private val context: Context) {
                     presetLabel = meta.preset.label,
                     sensorModeLabel = meta.sensorMode.label,
                     isOriginal = meta.isOriginal,
+                    isUltraHdr = meta.isUltraHdr,
                 )
             }
         }
@@ -146,6 +146,8 @@ class MediaRepository(private val context: Context) {
 
         try {
             resolver.openOutputStream(uri, "w")?.use { stream ->
+                // On Android 14+, Bitmap JPEG encoding preserves an attached
+                // Gainmap as a backward-compatible Ultra HDR JPEG/R file.
                 if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
                     throw IOException("Failed to compress bitmap")
                 }
@@ -200,10 +202,7 @@ class MediaRepository(private val context: Context) {
             if (!legacyCurrentDirectory.exists() && !legacyCurrentDirectory.mkdirs()) {
                 throw IOException("Failed to create legacy SpectralCamera directory")
             }
-            put(
-                MediaStore.Images.Media.DATA,
-                File(legacyCurrentDirectory, displayName).absolutePath,
-            )
+            put(MediaStore.Images.Media.DATA, File(legacyCurrentDirectory, displayName).absolutePath)
         }
     }
 
@@ -215,12 +214,19 @@ class MediaRepository(private val context: Context) {
         }
     }
 
-    private fun description(settings: CameraSettings, asset: CaptureAsset): String =
-        "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • ${asset.description}"
+    private fun description(settings: CameraSettings, asset: CaptureAsset): String {
+        val hdr = if (settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) {
+            "Computational HDR • ${settings.hdrToneMap.label} tone map"
+        } else {
+            "Standard capture"
+        }
+        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • $hdr • ${asset.description}"
+    }
 
     private fun fileName(settings: CameraSettings, asset: CaptureAsset, instant: Instant): String {
         val stamp = timestampFormatter.format(instant)
-        return "spectral_${asset.token}_${settings.sensorMode.name}_${settings.preset.name}_${settings.outputMode.name}_$stamp.${asset.extension}"
+        val hdrToken = if (settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) "HDR3" else "SDR1"
+        return "spectral_${asset.token}_${settings.sensorMode.name}_${settings.preset.name}_${settings.outputMode.name}_${hdrToken}_$stamp.${asset.extension}"
     }
 
     private enum class CaptureAsset(
@@ -228,8 +234,9 @@ class MediaRepository(private val context: Context) {
         val extension: String,
         val description: String,
     ) {
-        PROCESSED("proc", "jpg", "Processed export"),
-        ORIGINAL_JPEG("orig", "jpg", "Original JPEG source"),
+        PROCESSED("proc", "jpg", "Processed SDR JPEG"),
+        ULTRA_HDR("uhdr", "jpg", "Processed Ultra HDR JPEG/R"),
+        ORIGINAL_JPEG("orig", "jpg", "Reference-exposure original JPEG"),
         RAW_DNG("dng", "dng", "Untouched RAW DNG sidecar"),
     }
 
@@ -238,14 +245,15 @@ class MediaRepository(private val context: Context) {
         val isOriginal: Boolean,
         val sensorMode: SensorMode,
         val outputMode: OutputMode,
+        val isUltraHdr: Boolean,
     )
 
     private fun parseName(displayName: String): ParsedName? {
-        val newRegex = Regex(
-            "^spectral_(proc|orig)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_(FULL_RESOLUTION|HQ_1080|FAST_1080)_([0-9]{8}_[0-9]{6})\\.jpg$",
+        val hdrRegex = Regex(
+            "^spectral_(proc|uhdr|orig)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_(FULL_RESOLUTION|HQ_1080|FAST_1080)_(HDR3|SDR1)_([0-9]{8}_[0-9]{6})\\.jpg$",
             RegexOption.IGNORE_CASE,
         )
-        newRegex.find(displayName)?.let { match ->
+        hdrRegex.find(displayName)?.let { match ->
             val preset = runCatching {
                 SpectralPreset.valueOf(match.groupValues[3].uppercase(Locale.US))
             }.getOrNull() ?: return null
@@ -260,11 +268,35 @@ class MediaRepository(private val context: Context) {
                 isOriginal = match.groupValues[1].equals("orig", ignoreCase = true),
                 sensorMode = sensorMode,
                 outputMode = outputMode,
+                isUltraHdr = match.groupValues[1].equals("uhdr", ignoreCase = true),
             )
         }
 
-        // Backward compatibility: earlier builds called the untouched JPEG
-        // "raw" even though it was never a RAW/DNG sensor file.
+        val proOutputRegex = Regex(
+            "^spectral_(proc|orig)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_(FULL_RESOLUTION|HQ_1080|FAST_1080)_([0-9]{8}_[0-9]{6})\\.jpg$",
+            RegexOption.IGNORE_CASE,
+        )
+        proOutputRegex.find(displayName)?.let { match ->
+            val preset = runCatching {
+                SpectralPreset.valueOf(match.groupValues[3].uppercase(Locale.US))
+            }.getOrNull() ?: return null
+            val sensorMode = runCatching {
+                SensorMode.valueOf(match.groupValues[2].uppercase(Locale.US))
+            }.getOrDefault(SensorMode.SIMULATED_IR)
+            val outputMode = runCatching {
+                OutputMode.valueOf(match.groupValues[4].uppercase(Locale.US))
+            }.getOrDefault(OutputMode.FULL_RESOLUTION)
+            return ParsedName(
+                preset = preset,
+                isOriginal = match.groupValues[1].equals("orig", ignoreCase = true),
+                sensorMode = sensorMode,
+                outputMode = outputMode,
+                isUltraHdr = false,
+            )
+        }
+
+        // Backward compatibility: very early builds called an original JPEG
+        // "raw" even though it was not sensor RAW.
         val legacyRegex = Regex(
             "^spectral_(raw|proc)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_([0-9]{8}_[0-9]{6})\\.jpg$",
             RegexOption.IGNORE_CASE,
@@ -281,6 +313,7 @@ class MediaRepository(private val context: Context) {
             isOriginal = match.groupValues[1].equals("raw", ignoreCase = true),
             sensorMode = sensorMode,
             outputMode = OutputMode.FULL_RESOLUTION,
+            isUltraHdr = false,
         )
     }
 }
