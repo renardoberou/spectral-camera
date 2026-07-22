@@ -151,6 +151,48 @@ enum class DoubleExposureMode(
     ),
 }
 
+/** Photographer-facing focus behavior. Unsupported modes are disabled per active lens. */
+enum class FocusMode(
+    val label: String,
+    val description: String,
+) {
+    CONTINUOUS(
+        label = "Continuous AF",
+        description = "The camera continuously follows focus. A tap briefly prioritizes one subject, then continuous focus resumes.",
+    ),
+    TAP_LOCK(
+        label = "Tap & Lock",
+        description = "Tap a subject once and hold that focus distance until you unlock it or choose another mode.",
+    ),
+    MACRO(
+        label = "Macro AF",
+        description = "Tap to run a close-range autofocus scan and hold it. Available only on lenses that report a macro autofocus mode.",
+    ),
+    MANUAL(
+        label = "Manual Focus",
+        description = "Move the focus-position control directly from infinity toward the lens's nearest supported distance.",
+    ),
+    INFINITY(
+        label = "Infinity",
+        description = "Hold the lens at its farthest focus position for distant landscapes, skies, and architecture.",
+    ),
+}
+
+enum class FocusDistanceCalibration(val label: String) {
+    UNCALIBRATED("Uncalibrated"),
+    APPROXIMATE("Approximate"),
+    CALIBRATED("Calibrated"),
+}
+
+enum class FocusTapResult {
+    FOCUSED,
+    LOCKED,
+    FAILED,
+    METERED,
+    IGNORED,
+    UNSUPPORTED,
+}
+
 data class ManualAdjustments(
     val contrast: Float = 1.0f,
     val exposureCompensation: Float = 0f,
@@ -184,6 +226,9 @@ data class CameraSettings(
     val manualMode: Boolean = false,
     val manualIso: Int = 400,
     val manualShutterNs: Long = 8_000_000L,
+    val focusMode: FocusMode = FocusMode.CONTINUOUS,
+    /** Normalized lens position: 0 = infinity, 1 = nearest supported focus. */
+    val manualFocusPosition: Float = 0.15f,
     val intensity: Float = 1f,
     val zebraEnabled: Boolean = false,
 ) {
@@ -208,6 +253,13 @@ data class CameraCapabilities(
     val hdrBracketSupported: Boolean = false,
     /** RAW_SENSOR + MANUAL_SENSOR + Bayer metadata sufficient for an in-app RAW merge. */
     val trueRawHdrSupported: Boolean = false,
+    val continuousFocusSupported: Boolean = false,
+    val tapFocusSupported: Boolean = false,
+    val macroFocusSupported: Boolean = false,
+    val manualFocusSupported: Boolean = false,
+    val infinityFocusSupported: Boolean = false,
+    val minimumFocusDistanceDiopters: Float = 0f,
+    val focusDistanceCalibration: FocusDistanceCalibration = FocusDistanceCalibration.UNCALIBRATED,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
@@ -217,6 +269,25 @@ data class CameraCapabilities(
         Math.round(stops / safeStep).coerceIn(exposureRange.first, exposureRange.last)
 
     val exposureSupported: Boolean get() = exposureRange.first != exposureRange.last
+
+    fun supportsFocusMode(mode: FocusMode): Boolean = when (mode) {
+        FocusMode.CONTINUOUS -> continuousFocusSupported
+        FocusMode.TAP_LOCK -> tapFocusSupported
+        FocusMode.MACRO -> macroFocusSupported
+        FocusMode.MANUAL -> manualFocusSupported
+        FocusMode.INFINITY -> infinityFocusSupported
+    }
+
+    fun supportedOrFallback(requested: FocusMode): FocusMode {
+        if (supportsFocusMode(requested)) return requested
+        return listOf(
+            FocusMode.CONTINUOUS,
+            FocusMode.TAP_LOCK,
+            FocusMode.MACRO,
+            FocusMode.MANUAL,
+            FocusMode.INFINITY,
+        ).firstOrNull(::supportsFocusMode) ?: FocusMode.CONTINUOUS
+    }
 }
 
 data class GalleryItem(
