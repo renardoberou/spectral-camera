@@ -24,22 +24,23 @@ jobs:
         if: (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/hdr-imaging-pipeline') || (github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline')
         run: |
           set -euo pipefail
-          if [ ! -d .github/focus-patch ]; then
+          encoded=.github/focus-patch/focus.patch.gz.b64
+          if [ ! -f "$encoded" ]; then
             echo "No staged focus patch remains."
             exit 0
           fi
-          : > /tmp/focus.patch
-          for part in .github/focus-patch/part-*.b64; do
-            base64 --decode "$part" >> /tmp/focus.patch
-          done
-          grep '^diff --git ' /tmp/focus.patch || true
-          if git apply --3way /tmp/focus.patch; then
-            echo "Applied staged focus-mode patch with Git three-way merge support."
+          tr -d '\n\r ' < "$encoded" > /tmp/focus.patch.gz.b64
+          echo "bc6f19053859e4bb05ec5b745c5f6f4b0611046d1c428abe2340c8fbd38681ad  /tmp/focus.patch.gz.b64" | sha256sum --check
+          base64 --decode /tmp/focus.patch.gz.b64 | gzip --decompress > /tmp/focus.patch
+          echo "ad6ea60364e314a01bd17ce1841117226514d2272b52615db430306109007a3c  /tmp/focus.patch" | sha256sum --check
+          if git apply --check /tmp/focus.patch; then
+            git apply /tmp/focus.patch
+            echo "Applied verified focus-mode patch."
           elif git apply --reverse --check /tmp/focus.patch; then
             echo "Focus-mode patch is already integrated."
           else
-            echo "::error::Staged focus patch could not be merged into the current tree."
-            git status --short
+            echo "::error::Verified focus patch does not apply to the current source tree."
+            git apply --check --verbose /tmp/focus.patch
             exit 1
           fi
 
@@ -50,7 +51,12 @@ jobs:
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
+            git add \
+              app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/core/media/MediaRepository.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/ui/SpectralCameraApp.kt \
+              app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt
             git commit -m "feat(focus): integrate focus modes across camera and live UI"
             git push origin HEAD:agent/hdr-imaging-pipeline
           else
