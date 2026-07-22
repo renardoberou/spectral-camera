@@ -74,7 +74,8 @@ class HdrGainFieldTransformsTest {
             mode = OutputMode.HQ_1080,
         )
 
-        assertTrue(cropped.width.toFloat() / cropped.height > 1.6f)
+        // A tiny 8x6 field rounds the ideal 16:9 crop to 8x5 (1.6:1).
+        assertTrue(cropped.width.toFloat() / cropped.height >= 1.55f)
         assertTrue(cropped.width.toFloat() / cropped.height < 1.9f)
         // The 16:9 crop removes the extreme top and bottom of the 4:3 field.
         assertTrue(cropped.stops.first() > 0f)
