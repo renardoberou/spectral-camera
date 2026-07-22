@@ -17,10 +17,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Integrate staged focus-mode sources
-        if: github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline'
+        if: (github.event_name == 'pull_request' && github.head_ref == 'agent/hdr-imaging-pipeline') || (github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline')
         run: |
           set -euo pipefail
           cat .github/focus-patch/part-*.b64 | base64 --decode > /tmp/focus.patch
@@ -32,7 +32,7 @@ jobs:
           fi
 
       - name: Commit integrated focus-mode sources
-        if: github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline'
+        if: (github.event_name == 'pull_request' && github.head_ref == 'agent/hdr-imaging-pipeline') || (github.event_name == 'push' && github.ref_name == 'agent/hdr-imaging-pipeline')
         run: |
           set -euo pipefail
           if ! git diff --quiet; then
