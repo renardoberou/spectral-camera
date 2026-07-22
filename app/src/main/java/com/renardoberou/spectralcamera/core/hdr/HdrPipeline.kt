@@ -3,6 +3,7 @@ package com.renardoberou.spectralcamera.core.hdr
 import android.graphics.Bitmap
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.camera.CapturedExposure
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.ln
 import kotlin.math.log2
@@ -43,17 +44,19 @@ data class HdrMergeResult(
     val workingBitmap: Bitmap,
     val gainField: HdrGainField,
     val alignment: List<PixelShift>,
+    val alignmentConfidence: List<Float>,
     val dynamicRangeStops: Float,
     val whitePoint: Float,
 )
 
 /**
- * Computational HDR stage.
+ * JPEG computational HDR.
  *
- * JPEG brackets are inverse-transferred to an exposure-normalized linear-light
- * radiance estimate. This is materially better than encoded-RGB averaging but
- * remains an approximation to true sensor-linear RAW because the phone ISP has
- * already applied camera response, white balance and local processing.
+ * The normal exposure is now the visual anchor. Darker/brighter frames are
+ * allowed to contribute only where the reference is genuinely clipped or very
+ * dark, only away from hard edges, and only when alignment is confident. This
+ * prevents the translucent triple-image failure seen on the real device while
+ * retaining useful cloud and shadow recovery in flat regions.
  */
 object HdrPipeline {
     private const val THUMB_MAX_EDGE = 240
@@ -74,12 +77,25 @@ object HdrPipeline {
             "HDR exposures must have identical prepared dimensions"
         }
 
-        val alignment = estimateAlignment(frames, referenceIndex, width, height)
+        val estimates = estimateAlignment(frames, referenceIndex, width, height)
+        val alignment = estimates.map { it.shift }
+        val alignmentConfidence = FloatArray(frames.size) { index ->
+            if (index == referenceIndex) 1f else estimates[index].confidence
+        }
         val crop = commonCrop(width, height, alignment)
         require(crop.width > 32 && crop.height > 32) { "HDR alignment left no usable common image area" }
 
         val exposureScales = FloatArray(frames.size) { index -> 2f.pow(frames[index].evOffset) }
-        val sampleValues = sampleRadianceLuma(frames, alignment, crop, exposureScales, referenceIndex)
+        val evOffsets = FloatArray(frames.size) { index -> frames[index].evOffset }
+        val sampleValues = sampleRadianceLuma(
+            frames = frames,
+            alignment = alignment,
+            crop = crop,
+            exposureScales = exposureScales,
+            evOffsets = evOffsets,
+            referenceIndex = referenceIndex,
+            alignmentConfidence = alignmentConfidence,
+        )
         sampleValues.sort()
         val black = HdrMath.percentile(sampleValues, 0.005f).coerceAtLeast(0f)
         val median = HdrMath.percentile(sampleValues, 0.50f)
@@ -97,16 +113,47 @@ object HdrPipeline {
         val gainSums = FloatArray(gainWidth * gainHeight)
         val gainCounts = IntArray(gainWidth * gainHeight)
         val rows = Array(frames.size) { IntArray(crop.width) }
+        val referencePrevious = IntArray(crop.width)
+        val referenceNext = IntArray(crop.width)
         val radiance = FloatArray(4)
         val outputRow = IntArray(crop.width)
         val bitmap = Bitmap.createBitmap(crop.width, crop.height, Bitmap.Config.ARGB_8888)
 
-        // Write one row directly into the Bitmap instead of holding a second
-        // full-frame IntArray. At 12 MP this removes roughly 48 MB of peak heap.
         for (y in 0 until crop.height) {
             loadAlignedRows(frames, alignment, crop, y, rows)
+            loadReferenceRow(
+                frame = frames[referenceIndex],
+                shift = alignment[referenceIndex],
+                crop = crop,
+                outputY = (y - 1).coerceAtLeast(0),
+                destination = referencePrevious,
+            )
+            loadReferenceRow(
+                frame = frames[referenceIndex],
+                shift = alignment[referenceIndex],
+                crop = crop,
+                outputY = (y + 1).coerceAtMost(crop.height - 1),
+                destination = referenceNext,
+            )
+            val referenceCurrent = rows[referenceIndex]
+
             for (x in 0 until crop.width) {
-                mergeRadiance(rows, x, exposureScales, referenceIndex, radiance)
+                val referenceEdge = referenceEdgeStrength(
+                    row = referenceCurrent,
+                    previous = referencePrevious,
+                    next = referenceNext,
+                    x = x,
+                )
+                mergeRadiance(
+                    rows = rows,
+                    x = x,
+                    exposureScales = exposureScales,
+                    evOffsets = evOffsets,
+                    referenceIndex = referenceIndex,
+                    alignmentConfidence = alignmentConfidence,
+                    referenceEdgeStrength = referenceEdge,
+                    out = radiance,
+                )
                 val sceneLuma = radiance[3]
                 val normalizedLuma = (sceneLuma - black).coerceAtLeast(0f) * keyScale
                 val sceneScale = if (sceneLuma > EPSILON) normalizedLuma / sceneLuma else 0f
@@ -142,6 +189,7 @@ object HdrPipeline {
             workingBitmap = bitmap,
             gainField = HdrGainField(gainWidth, gainHeight, gainStops, MAX_GAIN_STOPS),
             alignment = alignment,
+            alignmentConfidence = alignmentConfidence.toList(),
             dynamicRangeStops = dynamicRange,
             whitePoint = whitePoint,
         )
@@ -152,28 +200,34 @@ object HdrPipeline {
         referenceIndex: Int,
         fullWidth: Int,
         fullHeight: Int,
-    ): List<PixelShift> {
+    ): List<AlignmentEstimate> {
         val thumbSize = thumbnailSize(fullWidth, fullHeight)
         val logLuma = frames.map { frame -> logRadianceThumbnail(frame, thumbSize.first, thumbSize.second) }
         val reference = logLuma[referenceIndex]
         return frames.indices.map { index ->
             if (index == referenceIndex) {
-                PixelShift(0, 0)
+                AlignmentEstimate(PixelShift(0, 0), 1f, 0f, 1f)
             } else {
-                val thumbShift = HdrTranslationEstimator.estimate(
+                val estimate = HdrTranslationEstimator.estimateDetailed(
                     reference = reference,
                     candidate = logLuma[index],
                     width = thumbSize.first,
                     height = thumbSize.second,
-                    maxShift = 12,
+                    maxShift = 8,
                     sampleStep = 2,
                 )
-                val fullDx = (thumbShift.dx * fullWidth.toFloat() / thumbSize.first).roundToInt()
-                val fullDy = (thumbShift.dy * fullHeight.toFloat() / thumbSize.second).roundToInt()
-                PixelShift(
-                    dx = fullDx.coerceIn(-fullWidth / 16, fullWidth / 16),
-                    dy = fullDy.coerceIn(-fullHeight / 16, fullHeight / 16),
-                )
+                if (!estimate.accepted) {
+                    estimate
+                } else {
+                    val fullDx = (estimate.shift.dx * fullWidth.toFloat() / thumbSize.first).roundToInt()
+                    val fullDy = (estimate.shift.dy * fullHeight.toFloat() / thumbSize.second).roundToInt()
+                    val tooLarge = abs(fullDx) > fullWidth * 0.035f || abs(fullDy) > fullHeight * 0.035f
+                    if (tooLarge) {
+                        AlignmentEstimate(PixelShift(0, 0), 0f, estimate.normalizedError, estimate.validFraction)
+                    } else {
+                        estimate.copy(shift = PixelShift(fullDx, fullDy))
+                    }
+                }
             }
         }
     }
@@ -224,7 +278,9 @@ object HdrPipeline {
         alignment: List<PixelShift>,
         crop: CommonCrop,
         exposureScales: FloatArray,
+        evOffsets: FloatArray,
         referenceIndex: Int,
+        alignmentConfidence: FloatArray,
     ): FloatArray {
         val sampleWidth = ceil(crop.width / SAMPLE_STEP.toDouble()).toInt()
         val sampleHeight = ceil(crop.height / SAMPLE_STEP.toDouble()).toInt()
@@ -237,7 +293,16 @@ object HdrPipeline {
             loadAlignedRows(frames, alignment, crop, y, rows)
             var x = 0
             while (x < crop.width) {
-                mergeRadiance(rows, x, exposureScales, referenceIndex, radiance)
+                mergeRadiance(
+                    rows = rows,
+                    x = x,
+                    exposureScales = exposureScales,
+                    evOffsets = evOffsets,
+                    referenceIndex = referenceIndex,
+                    alignmentConfidence = alignmentConfidence,
+                    referenceEdgeStrength = 0f,
+                    out = radiance,
+                )
                 values[count++] = radiance[3]
                 x += SAMPLE_STEP
             }
@@ -268,26 +333,95 @@ object HdrPipeline {
         }
     }
 
-    /** Writes linear radiance r, g, b and luma into [out]. */
+    private fun loadReferenceRow(
+        frame: CapturedExposure,
+        shift: PixelShift,
+        crop: CommonCrop,
+        outputY: Int,
+        destination: IntArray,
+    ) {
+        frame.bitmap.getPixels(
+            destination,
+            0,
+            crop.width,
+            crop.left + shift.dx,
+            crop.top + outputY + shift.dy,
+            crop.width,
+            1,
+        )
+    }
+
+    private fun referenceEdgeStrength(
+        row: IntArray,
+        previous: IntArray,
+        next: IntArray,
+        x: Int,
+    ): Float {
+        val center = encodedLuma(row[x])
+        val left = encodedLuma(row[(x - 1).coerceAtLeast(0)])
+        val right = encodedLuma(row[(x + 1).coerceAtMost(row.lastIndex)])
+        val up = encodedLuma(previous[x])
+        val down = encodedLuma(next[x])
+        return max(
+            max(abs(center - left), abs(center - right)),
+            max(abs(center - up), abs(center - down)),
+        )
+    }
+
+    private fun encodedLuma(pixel: Int): Float {
+        val r = ((pixel ushr 16) and 0xFF) / 255f
+        val g = ((pixel ushr 8) and 0xFF) / 255f
+        val b = (pixel and 0xFF) / 255f
+        return 0.2126f * r + 0.7152f * g + 0.0722f * b
+    }
+
+    /** Writes reference-anchored linear radiance r, g, b and luma into [out]. */
     private fun mergeRadiance(
         rows: Array<IntArray>,
         x: Int,
         exposureScales: FloatArray,
+        evOffsets: FloatArray,
         referenceIndex: Int,
+        alignmentConfidence: FloatArray,
+        referenceEdgeStrength: Float,
         out: FloatArray,
     ) {
         val referencePixel = rows[referenceIndex][x]
+        val referenceSr = ((referencePixel ushr 16) and 0xFF) / 255f
+        val referenceSg = ((referencePixel ushr 8) and 0xFF) / 255f
+        val referenceSb = (referencePixel and 0xFF) / 255f
         val referenceScale = exposureScales[referenceIndex]
-        val referenceR = HdrMath.srgbToLinear(((referencePixel ushr 16) and 0xFF) / 255f) / referenceScale
-        val referenceG = HdrMath.srgbToLinear(((referencePixel ushr 8) and 0xFF) / 255f) / referenceScale
-        val referenceB = HdrMath.srgbToLinear((referencePixel and 0xFF) / 255f) / referenceScale
+        val referenceR = HdrMath.srgbToLinear(referenceSr) / referenceScale
+        val referenceG = HdrMath.srgbToLinear(referenceSg) / referenceScale
+        val referenceB = HdrMath.srgbToLinear(referenceSb) / referenceScale
         val referenceLuma = HdrMath.linearLuma(referenceR, referenceG, referenceB)
+        val referenceEncodedLuma = 0.2126f * referenceSr + 0.7152f * referenceSg + 0.0722f * referenceSb
+        val referenceMaximum = max(referenceSr, max(referenceSg, referenceSb))
+        val highlightNeed = HdrMath.highlightRecoveryNeed(referenceMaximum)
+        val shadowNeed = HdrMath.shadowRecoveryNeed(referenceEncodedLuma)
+        val maximumNeed = max(highlightNeed, shadowNeed)
+        val referenceReliability = HdrMath.wellExposedWeight(referenceEncodedLuma) *
+            HdrMath.encodedChannelReliability(referenceSr, referenceSg, referenceSb)
+        val referenceWeight = (0.10f + 1.90f * (1f - maximumNeed)) *
+            (0.35f + 0.65f * referenceReliability)
 
-        var sumR = 0f
-        var sumG = 0f
-        var sumB = 0f
-        var sumWeight = 0f
+        var sumR = referenceR * referenceWeight
+        var sumG = referenceG * referenceWeight
+        var sumB = referenceB * referenceWeight
+        var sumWeight = referenceWeight
+        val flatGate = HdrMath.flatRegionGate(referenceEdgeStrength)
+
         rows.indices.forEach { index ->
+            if (index == referenceIndex) return@forEach
+            val confidence = alignmentConfidence[index]
+            if (confidence <= 0f) return@forEach
+            val need = when {
+                evOffsets[index] < -0.05f -> highlightNeed
+                evOffsets[index] > 0.05f -> shadowNeed
+                else -> 0f
+            }
+            if (need <= 0.001f || flatGate <= 0.001f) return@forEach
+
             val pixel = rows[index][x]
             val sr = ((pixel ushr 16) and 0xFF) / 255f
             val sg = ((pixel ushr 8) and 0xFF) / 255f
@@ -295,21 +429,18 @@ object HdrPipeline {
             val linearR = HdrMath.srgbToLinear(sr)
             val linearG = HdrMath.srgbToLinear(sg)
             val linearB = HdrMath.srgbToLinear(sb)
-            val encodedLuma = 0.2126f * sr + 0.7152f * sg + 0.0722f * sb
             val scale = exposureScales[index]
             val radianceR = linearR / scale
             val radianceG = linearG / scale
             val radianceB = linearB / scale
             val radianceLuma = HdrMath.linearLuma(radianceR, radianceG, radianceB)
-            var weight = HdrMath.wellExposedWeight(encodedLuma) *
+            val encodedLuma = 0.2126f * sr + 0.7152f * sg + 0.0722f * sb
+            val reliability = HdrMath.wellExposedWeight(encodedLuma) *
                 HdrMath.encodedChannelReliability(sr, sg, sb)
-            if (index == referenceIndex) {
-                // Reference is the stable fallback, but a clipped reference must
-                // not overpower a well-exposed bracket frame.
-                weight = max(weight, 0.12f * HdrMath.encodedChannelReliability(sr, sg, sb))
-            } else {
-                weight *= HdrMath.deghostWeight(referenceLuma, radianceLuma)
-            }
+            val strictConsistency = HdrMath.deghostWeight(referenceLuma, radianceLuma)
+            val consistency = strictConsistency * (1f - need) +
+                (0.45f + 0.55f * strictConsistency) * need
+            val weight = reliability * need * flatGate * confidence * consistency
             sumR += radianceR * weight
             sumG += radianceG * weight
             sumB += radianceB * weight
