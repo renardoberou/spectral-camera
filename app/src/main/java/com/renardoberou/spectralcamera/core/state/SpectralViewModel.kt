@@ -111,16 +111,19 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         var rendered: Bitmap? = null
         var processed: Bitmap? = null
         try {
-            renderInput = withContext(Dispatchers.Default) {
+            val prepared = withContext(Dispatchers.Default) {
                 OutputPipeline.prepareForRender(frame.bitmap, currentSettings.outputMode)
             }
-            rendered = process(renderInput, currentSettings)
-            processed = withContext(Dispatchers.Default) {
-                OutputPipeline.finalizeExport(rendered, currentSettings.outputMode)
+            renderInput = prepared
+            val filmRender = process(prepared, currentSettings)
+            rendered = filmRender
+            val finalOutput = withContext(Dispatchers.Default) {
+                OutputPipeline.finalizeExport(filmRender, currentSettings.outputMode)
             }
+            processed = finalOutput
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
-                    processed = processed,
+                    processed = finalOutput,
                     original = frame.bitmap,
                     rawSidecar = frame.rawSidecarFile,
                     settings = currentSettings,
@@ -166,16 +169,19 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         var rendered: Bitmap? = null
         var processed: Bitmap? = null
         try {
-            renderInput = withContext(Dispatchers.Default) {
+            val prepared = withContext(Dispatchers.Default) {
                 OutputPipeline.prepareForRender(original, currentSettings.outputMode)
             }
-            rendered = process(renderInput, currentSettings)
-            processed = withContext(Dispatchers.Default) {
-                OutputPipeline.finalizeExport(rendered, currentSettings.outputMode)
+            renderInput = prepared
+            val filmRender = process(prepared, currentSettings)
+            rendered = filmRender
+            val finalOutput = withContext(Dispatchers.Default) {
+                OutputPipeline.finalizeExport(filmRender, currentSettings.outputMode)
             }
+            processed = finalOutput
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
-                    processed = processed,
+                    processed = finalOutput,
                     original = original,
                     rawSidecar = null,
                     settings = currentSettings,
