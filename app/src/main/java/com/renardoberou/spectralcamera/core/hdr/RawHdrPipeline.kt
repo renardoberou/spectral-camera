@@ -4,12 +4,12 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.camera.RawSensorFrame
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /** Result of the sensor-linear Bayer-domain HDR path. */
@@ -17,6 +17,7 @@ data class RawHdrMergeResult(
     val workingBitmap: Bitmap,
     val gainField: HdrGainField,
     val alignmentRawPixels: List<PixelShift>,
+    val alignmentConfidence: List<Float>,
     val dynamicRangeStops: Float,
     val whitePoint: Float,
 )
@@ -25,9 +26,10 @@ data class RawHdrMergeResult(
  * True RAW HDR path.
  *
  * RAW_SENSOR code values are black-subtracted, white-level normalized and
- * exposure-normalized while still in the Bayer mosaic. Translation alignment
- * is constrained to whole 2x2 CFA cells so every merged sample remains the same
- * colour channel. Fusion therefore occurs before demosaic and colour conversion.
+ * exposure-normalized while still in the Bayer mosaic. Alignment is constrained
+ * to whole 2x2 CFA cells. The normal exposure remains the visual anchor; bracket
+ * frames replace only clipped/very-dark, locally-flat sensor regions and only
+ * when alignment is confident.
  */
 object RawHdrPipeline {
     private const val THUMB_MAX_EDGE = 220
@@ -52,8 +54,14 @@ object RawHdrPipeline {
                 it.cfaArrangement == reference.cfaArrangement
         }) { "RAW HDR frames must share dimensions and CFA arrangement" }
 
-        val cellShifts = estimateCellAlignment(frames, referenceIndex, arrangement)
-        val shifts = cellShifts.map { PixelShift(it.dx * 2, it.dy * 2) }
+        val cellEstimates = estimateCellAlignment(frames, referenceIndex, arrangement)
+        val shifts = cellEstimates.map { estimate -> PixelShift(estimate.shift.dx * 2, estimate.shift.dy * 2) }
+        val alignmentConfidence = FloatArray(frames.size) { index ->
+            if (index == referenceIndex) 1f else cellEstimates[index].confidence
+        }
+        require(alignmentConfidence.indices.any { it != referenceIndex && alignmentConfidence[it] > 0f }) {
+            "RAW HDR alignment rejected every non-reference exposure"
+        }
         val crop = commonEvenCrop(frames, shifts)
         require(crop.width >= 8 && crop.height >= 8) { "RAW alignment left no usable active area" }
 
@@ -74,6 +82,7 @@ object RawHdrPipeline {
             crop = crop,
             exposureScales = exposureScales,
             referenceIndex = referenceIndex,
+            alignmentConfidence = alignmentConfidence,
             arrangement = arrangement,
             reference = reference,
         )
@@ -100,9 +109,33 @@ object RawHdrPipeline {
 
         val output = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
         val outputRow = IntArray(outputWidth)
-        var previous = mergedMosaicRow(frames, shifts, crop, 0, exposureScales, referenceIndex)
-        var current = mergedMosaicRow(frames, shifts, crop, 1, exposureScales, referenceIndex)
-        var next = mergedMosaicRow(frames, shifts, crop, 2, exposureScales, referenceIndex)
+        var previous = mergedMosaicRow(
+            frames,
+            shifts,
+            crop,
+            0,
+            exposureScales,
+            referenceIndex,
+            alignmentConfidence,
+        )
+        var current = mergedMosaicRow(
+            frames,
+            shifts,
+            crop,
+            1,
+            exposureScales,
+            referenceIndex,
+            alignmentConfidence,
+        )
+        var next = mergedMosaicRow(
+            frames,
+            shifts,
+            crop,
+            2,
+            exposureScales,
+            referenceIndex,
+            alignmentConfidence,
+        )
         val greenGain = (reference.whiteBalanceGains[1] + reference.whiteBalanceGains[2]) * 0.5f
 
         for (outY in 0 until outputHeight) {
@@ -161,6 +194,7 @@ object RawHdrPipeline {
                     outY + 3,
                     exposureScales,
                     referenceIndex,
+                    alignmentConfidence,
                 )
             }
         }
@@ -173,6 +207,7 @@ object RawHdrPipeline {
             workingBitmap = upright,
             gainField = HdrGainField(gainWidth, gainHeight, gainStops, MAX_GAIN_STOPS),
             alignmentRawPixels = shifts,
+            alignmentConfidence = alignmentConfidence.toList(),
             dynamicRangeStops = dynamicRange,
             whitePoint = whitePoint,
         )
@@ -204,7 +239,7 @@ object RawHdrPipeline {
         frames: List<RawSensorFrame>,
         referenceIndex: Int,
         arrangement: BayerArrangement,
-    ): List<PixelShift> {
+    ): List<AlignmentEstimate> {
         val reference = frames[referenceIndex]
         val cellWidth = reference.cropWidth / 2
         val cellHeight = reference.cropHeight / 2
@@ -215,22 +250,28 @@ object RawHdrPipeline {
         val referenceThumb = thumbs[referenceIndex]
         return frames.indices.map { index ->
             if (index == referenceIndex) {
-                PixelShift(0, 0)
+                AlignmentEstimate(PixelShift(0, 0), 1f, 0f, 1f)
             } else {
-                val thumbShift = HdrTranslationEstimator.estimate(
+                val estimate = HdrTranslationEstimator.estimateDetailed(
                     reference = referenceThumb,
                     candidate = thumbs[index],
                     width = thumbWidth,
                     height = thumbHeight,
-                    maxShift = 12,
+                    maxShift = 8,
                     sampleStep = 2,
                 )
-                PixelShift(
-                    dx = (thumbShift.dx * cellWidth.toFloat() / thumbWidth).roundToInt()
-                        .coerceIn(-cellWidth / 16, cellWidth / 16),
-                    dy = (thumbShift.dy * cellHeight.toFloat() / thumbHeight).roundToInt()
-                        .coerceIn(-cellHeight / 16, cellHeight / 16),
-                )
+                if (!estimate.accepted) {
+                    estimate
+                } else {
+                    val cellDx = (estimate.shift.dx * cellWidth.toFloat() / thumbWidth).roundToInt()
+                    val cellDy = (estimate.shift.dy * cellHeight.toFloat() / thumbHeight).roundToInt()
+                    val tooLarge = abs(cellDx) > cellWidth * 0.035f || abs(cellDy) > cellHeight * 0.035f
+                    if (tooLarge) {
+                        AlignmentEstimate(PixelShift(0, 0), 0f, estimate.normalizedError, estimate.validFraction)
+                    } else {
+                        estimate.copy(shift = PixelShift(cellDx, cellDy))
+                    }
+                }
             }
         }
     }
@@ -275,7 +316,7 @@ object RawHdrPipeline {
         var r = 0f
         var g = 0f
         var b = 0f
-        var gc = 0
+        var greenCount = 0
         for (dy in 0..1) {
             for (dx in 0..1) {
                 val sx = x + dx
@@ -288,12 +329,12 @@ object RawHdrPipeline {
                     BayerChannel.GREEN_ODD,
                     -> {
                         g += value
-                        gc++
+                        greenCount++
                     }
                 }
             }
         }
-        return floatArrayOf(r, if (gc == 0) 0f else g / gc, b)
+        return floatArrayOf(r, if (greenCount == 0) 0f else g / greenCount, b)
     }
 
     private fun sampleMergedLuma(
@@ -302,6 +343,7 @@ object RawHdrPipeline {
         crop: RawCrop,
         exposureScales: DoubleArray,
         referenceIndex: Int,
+        alignmentConfidence: FloatArray,
         arrangement: BayerArrangement,
         reference: RawSensorFrame,
     ): FloatArray {
@@ -317,18 +359,19 @@ object RawHdrPipeline {
                 var r = 0f
                 var g = 0f
                 var b = 0f
-                var gc = 0
+                var greenCount = 0
                 for (dy in 0..1) {
                     for (dx in 0..1) {
                         val sx = x + dx
                         val sy = y + dy
                         val value = mergedRawAt(
-                            frames,
-                            shifts,
-                            sx,
-                            sy,
-                            exposureScales,
-                            referenceIndex,
+                            frames = frames,
+                            shifts = shifts,
+                            outputX = sx,
+                            outputY = sy,
+                            exposureScales = exposureScales,
+                            referenceIndex = referenceIndex,
+                            alignmentConfidence = alignmentConfidence,
                         )
                         when (RawHdrMath.channelAt(arrangement, sx, sy)) {
                             BayerChannel.RED -> r = value
@@ -337,14 +380,14 @@ object RawHdrPipeline {
                             BayerChannel.GREEN_ODD,
                             -> {
                                 g += value
-                                gc++
+                                greenCount++
                             }
                         }
                     }
                 }
                 val transformed = RawHdrMath.transformLinearRgb(
                     r * reference.whiteBalanceGains[0],
-                    (if (gc == 0) 0f else g / gc) * greenGain,
+                    (if (greenCount == 0) 0f else g / greenCount) * greenGain,
                     b * reference.whiteBalanceGains[3],
                     reference.colorTransform,
                 )
@@ -367,16 +410,18 @@ object RawHdrPipeline {
         row: Int,
         exposureScales: DoubleArray,
         referenceIndex: Int,
+        alignmentConfidence: FloatArray,
     ): FloatArray {
         val y = crop.top + row
         return FloatArray(crop.width) { localX ->
             mergedRawAt(
-                frames,
-                shifts,
-                crop.left + localX,
-                y,
-                exposureScales,
-                referenceIndex,
+                frames = frames,
+                shifts = shifts,
+                outputX = crop.left + localX,
+                outputY = y,
+                exposureScales = exposureScales,
+                referenceIndex = referenceIndex,
+                alignmentConfidence = alignmentConfidence,
             )
         }
     }
@@ -388,37 +433,78 @@ object RawHdrPipeline {
         outputY: Int,
         exposureScales: DoubleArray,
         referenceIndex: Int,
+        alignmentConfidence: FloatArray,
     ): Float {
         val referenceFrame = frames[referenceIndex]
         val referenceShift = shifts[referenceIndex]
-        val referenceCode = normalizedRaw(
-            referenceFrame,
-            outputX + referenceShift.dx,
-            outputY + referenceShift.dy,
+        val referenceX = outputX + referenceShift.dx
+        val referenceY = outputY + referenceShift.dy
+        val referenceNative = normalizedRaw(referenceFrame, referenceX, referenceY)
+        val referenceRadiance = referenceNative / exposureScales[referenceIndex].toFloat()
+        val highlightNeed = HdrMath.smoothstep(0.84f, 0.985f, referenceNative)
+        val shadowNeed = 1f - HdrMath.smoothstep(0.008f, 0.10f, referenceNative)
+        val maximumNeed = max(highlightNeed, shadowNeed)
+        val referenceReliability = RawHdrMath.rawWellExposedWeight(referenceNative)
+        val referenceWeight = (0.08f + 1.92f * (1f - maximumNeed)) *
+            (0.35f + 0.65f * referenceReliability)
+        val flatGate = HdrMath.flatRegionGate(
+            rawReferenceEdge(referenceFrame, referenceX, referenceY),
         )
-        val referenceRadiance = referenceCode / exposureScales[referenceIndex].toFloat()
-        var weighted = 0f
-        var weightSum = 0f
+
+        var weighted = referenceRadiance * referenceWeight
+        var weightSum = referenceWeight
         frames.indices.forEach { index ->
+            if (index == referenceIndex) return@forEach
+            val confidence = alignmentConfidence[index]
+            if (confidence <= 0f) return@forEach
+            val scale = exposureScales[index]
+            val need = when {
+                scale < 0.95 -> highlightNeed
+                scale > 1.05 -> shadowNeed
+                else -> 0f
+            }
+            if (need <= 0.001f || flatGate <= 0.001f) return@forEach
+
             val frame = frames[index]
             val shift = shifts[index]
             val native = normalizedRaw(frame, outputX + shift.dx, outputY + shift.dy)
-            val radiance = native / exposureScales[index].toFloat()
-            var weight = RawHdrMath.rawWellExposedWeight(native)
-            if (index == referenceIndex) {
-                weight = max(weight, 0.10f)
-            } else {
-                weight *= HdrMath.deghostWeight(referenceRadiance, radiance)
-            }
+            val radiance = native / scale.toFloat()
+            val strictConsistency = HdrMath.deghostWeight(referenceRadiance, radiance)
+            val consistency = strictConsistency * (1f - need) +
+                (0.45f + 0.55f * strictConsistency) * need
+            val weight = RawHdrMath.rawWellExposedWeight(native) *
+                need * flatGate * confidence * consistency
             weighted += radiance * weight
             weightSum += weight
         }
         return if (weightSum <= EPSILON) referenceRadiance else weighted / weightSum
     }
 
+    private fun rawReferenceEdge(frame: RawSensorFrame, x: Int, y: Int): Float {
+        val center = normalizedRaw(frame, x, y)
+        val left = normalizedRaw(frame, (x - 2).coerceAtLeast(frame.cropLeft), y)
+        val right = normalizedRaw(
+            frame,
+            (x + 2).coerceAtMost(frame.cropLeft + frame.cropWidth - 1),
+            y,
+        )
+        val up = normalizedRaw(frame, x, (y - 2).coerceAtLeast(frame.cropTop))
+        val down = normalizedRaw(
+            frame,
+            x,
+            (y + 2).coerceAtMost(frame.cropTop + frame.cropHeight - 1),
+        )
+        return max(
+            max(abs(center - left), abs(center - right)),
+            max(abs(center - up), abs(center - down)),
+        )
+    }
+
     private fun normalizedRaw(frame: RawSensorFrame, x: Int, y: Int): Float {
-        val black = frame.blackLevels[RawHdrMath.parityIndex(x, y)]
-        return RawHdrMath.normalizeCode(frame.codeAt(x, y), black, frame.whiteLevel)
+        val safeX = x.coerceIn(0, frame.width - 1)
+        val safeY = y.coerceIn(0, frame.height - 1)
+        val black = frame.blackLevels[RawHdrMath.parityIndex(safeX, safeY)]
+        return RawHdrMath.normalizeCode(frame.codeAt(safeX, safeY), black, frame.whiteLevel)
     }
 
     private fun demosaicAt(
@@ -435,18 +521,18 @@ object RawHdrPipeline {
         val right = current[localX + 1]
         val up = previous[localX]
         val down = next[localX]
-        val ul = previous[localX - 1]
-        val ur = previous[localX + 1]
-        val dl = next[localX - 1]
-        val dr = next[localX + 1]
+        val upperLeft = previous[localX - 1]
+        val upperRight = previous[localX + 1]
+        val lowerLeft = next[localX - 1]
+        val lowerRight = next[localX + 1]
         return when (RawHdrMath.channelAt(arrangement, rawX, rawY)) {
             BayerChannel.RED -> floatArrayOf(
                 center,
                 (left + right + up + down) * 0.25f,
-                (ul + ur + dl + dr) * 0.25f,
+                (upperLeft + upperRight + lowerLeft + lowerRight) * 0.25f,
             )
             BayerChannel.BLUE -> floatArrayOf(
-                (ul + ur + dl + dr) * 0.25f,
+                (upperLeft + upperRight + lowerLeft + lowerRight) * 0.25f,
                 (left + right + up + down) * 0.25f,
                 center,
             )
