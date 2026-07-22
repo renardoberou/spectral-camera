@@ -28,7 +28,10 @@ jobs:
             echo "No staged focus patch remains."
             exit 0
           fi
-          cat .github/focus-patch/part-*.b64 | tr -d '\n\r ' | base64 --decode > /tmp/focus.patch
+          : > /tmp/focus.patch
+          for part in .github/focus-patch/part-*.b64; do
+            base64 --decode "$part" >> /tmp/focus.patch
+          done
           grep '^diff --git ' /tmp/focus.patch || true
           if git apply --3way /tmp/focus.patch; then
             echo "Applied staged focus-mode patch with Git three-way merge support."
