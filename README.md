@@ -8,7 +8,7 @@ Built for photographers, artists, and researchers who want consistent, film-like
 
 ## Current version
 
-**1.19.0 (versionCode 47)**  
+**1.19.1 (versionCode 48)**  
 Status: Active development
 
 This version introduces:
@@ -20,6 +20,7 @@ This version introduces:
 - Double Exposure (film-style)
 - Full focus system (AF + manual + infinity)
 - Compact, production-ready Live UI
+- Refined pre-film tone, red-detail, highlight-shoulder, and sky response
 
 ---
 
@@ -47,7 +48,7 @@ Optional HDR / RAW HDR / Double Exposure
 ↓
 Scene-linear merge
 ↓
-Normalization + tone mapping
+Normalization + pre-film scene curve + tone mapping
 ↓
 Synthetic NIR estimation
 ↓
@@ -178,6 +179,19 @@ Fully camera-aware. No fake controls.
 - Faded
 
 All based on **film behavior**, not presets.
+
+---
+
+## Scene-to-film response
+
+The film engine now shapes the normalized scene before material rendering:
+
+- a middle-grey-anchored curve lifts deep shadows slightly and compresses source highlights;
+- red-dominant materials retain local texture and taper saturation only in highlights;
+- a hue-preserving final shoulder prevents hard channel clipping;
+- sky classification explicitly excludes foliage, reduces clear-blue noise, and preserves cloud structure.
+
+This improves difficult Standard captures while remaining compatible with the larger source range supplied by Computational HDR and True RAW HDR. It cannot reconstruct detail already clipped by the sensor or phone ISP.
 
 ---
 

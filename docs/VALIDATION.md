@@ -18,6 +18,10 @@ The film engine remains in `core/gl/SpectralGlPipeline.kt`, parameterized by `co
 | A6 | Red painted objects | Green/yellow-green reversal response rather than native red. | Unprocessed red “sticker.” | man-made dye pull | Release re-shoot required. |
 | A7 | Water / pools / glass | Indigo where appropriate; no foliage-red shoreline contamination. | Purple water; red bleed; false vegetation. | water classification/sanctity | Release re-shoot required. |
 | A8 | Mixed urban greenery | Visible species/vigour variation. | Every plant collapses to one crimson slab. | species continuum, `oliveVeg` | Release re-shoot required. |
+| A9 | Saturated red flowers / sunlit foliage | Internal petal/leaf density survives; red highlights become paler and less saturated. | Solid max-red fill; textureless crimson upholstery; pink neutral spill. | pre-film curve, red highlight taper, detail preservation | Submitted-scene reprocess required. |
+| A10 | Direct sun / severe backlight | Extreme brightness rolls smoothly; midtones remain stable; shadows retain some separation. | Hard white channel clip; grey HDR wash; dead-black lower frame. | pre-film curve, protected toe, output shoulder | Standard + HDR comparison required. |
+| A11 | Clear blue sky gradient | Low-noise, hue-stable gradient with no foliage contamination or blue speckle. | Grainy blue field; contour bands; leaves partially recoloured as sky. | foliage veto, sky detail gate, sky grain suppression, IGN dither | Submitted-scene reprocess required. |
+| A12 | Bright architecture + white fabric | Whites retain texture and approach white gradually while neutral mids remain anchored. | Abrupt clipping; colour cast; broad midtone shift. | 0.5-anchored scene curve, hue-preserving shoulder | Submitted-scene reprocess required. |
 
 **Family coherence:** Classic/Soft/Dense must preserve material assignment while changing contrast, density, and saturation. Gold changes warmth/teal balance without changing classification. Faded should read as an aged Classic print.
 

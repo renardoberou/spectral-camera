@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "<stdin>", line 14, in <module>
-  File "scene-film-patch", line 61, in <module>
-  File "scene-film-patch", line 9, in replace_once
-SystemExit: app/src/main/java/com/renardoberou/spectralcamera/core/gl/SpectralGlPipeline.kt: expected one occurrence, found 0: 'float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);\nfloat hiRoll = smoothstep(0.62, 0.95, folL) * 0.5;\nvec3 folCol = mix'
