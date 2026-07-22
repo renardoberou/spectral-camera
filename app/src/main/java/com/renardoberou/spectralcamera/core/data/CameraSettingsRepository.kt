@@ -10,7 +10,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.DoubleExposureMode
+import com.renardoberou.spectralcamera.core.FocusMode
+import com.renardoberou.spectralcamera.core.HdrCaptureMode
+import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.ManualAdjustments
+import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import kotlinx.coroutines.flow.Flow
@@ -23,9 +28,6 @@ class CameraSettingsRepository(context: Context) {
 
     val settings: Flow<CameraSettings> = dataStore.data.map { prefs ->
         CameraSettings(
-            // A preset removed from the enum (e.g. a retired experimental look) must
-            // not crash settings load for users who had it selected - fall back to
-            // the default rather than propagating IllegalArgumentException.
             preset = prefs[PRESET]?.let { name -> runCatching { SpectralPreset.valueOf(name) }.getOrNull() }
                 ?: SpectralPreset.B_W_INFRARED,
             adjustments = ManualAdjustments(
@@ -41,21 +43,39 @@ class CameraSettingsRepository(context: Context) {
                 blueSkySuppression = prefs[BLUE_SUPPRESS] ?: 0f,
                 hueRotation = prefs[HUE_ROTATION] ?: 0f,
                 saturation = prefs[SATURATION] ?: 1.0f,
-                channelSwapMode = ChannelSwapMode.valueOf(prefs[SWAP_MODE] ?: ChannelSwapMode.NONE.name),
+                channelSwapMode = runCatching {
+                    ChannelSwapMode.valueOf(prefs[SWAP_MODE] ?: ChannelSwapMode.NONE.name)
+                }.getOrDefault(ChannelSwapMode.NONE),
             ),
             saveOriginal = prefs[SAVE_ORIGINAL] ?: false,
             frontFacing = prefs[FRONT_FACING] ?: false,
-            sensorMode = SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name),
-            // Migration guard: hardwareEv was stored as a raw camera index before
-            // v1.6.0 and is stops now. A magnitude beyond 2 is clearly a legacy
-            // index and would pin the camera at max EV (chronic overexposure) -
-            // reset it; otherwise clamp to the photographic range.
+            sensorMode = runCatching {
+                SensorMode.valueOf(prefs[SENSOR_MODE] ?: SensorMode.SIMULATED_IR.name)
+            }.getOrDefault(SensorMode.SIMULATED_IR),
+            outputMode = prefs[OUTPUT_MODE]?.let { name ->
+                runCatching { OutputMode.valueOf(name) }.getOrNull()
+            } ?: OutputMode.FULL_RESOLUTION,
+            hdrCaptureMode = prefs[HDR_CAPTURE_MODE]?.let { name ->
+                runCatching { HdrCaptureMode.valueOf(name) }.getOrNull()
+            } ?: HdrCaptureMode.OFF,
+            hdrToneMap = prefs[HDR_TONE_MAP]?.let { name ->
+                runCatching { HdrToneMap.valueOf(name) }.getOrNull()
+            } ?: HdrToneMap.NATURAL,
+            doubleExposureMode = prefs[DOUBLE_EXPOSURE_MODE]?.let { name ->
+                runCatching { DoubleExposureMode.valueOf(name) }.getOrNull()
+            } ?: DoubleExposureMode.OFF,
+            ultraHdrExport = prefs[ULTRA_HDR_EXPORT] ?: false,
+            saveRawSidecar = prefs[SAVE_RAW_SIDECAR] ?: false,
             hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
                 if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
             },
             manualMode = false,
             manualIso = prefs[MANUAL_ISO] ?: 400,
             manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
+            focusMode = prefs[FOCUS_MODE]?.let { name ->
+                runCatching { FocusMode.valueOf(name) }.getOrNull()
+            } ?: FocusMode.CONTINUOUS,
+            manualFocusPosition = (prefs[MANUAL_FOCUS_POSITION] ?: 0.15f).coerceIn(0f, 1f),
             intensity = (prefs[INTENSITY] ?: 1f).coerceIn(0.25f, 1f),
             zebraEnabled = prefs[ZEBRA] ?: false,
         )
@@ -80,9 +100,17 @@ class CameraSettingsRepository(context: Context) {
             prefs[SAVE_ORIGINAL] = settings.saveOriginal
             prefs[FRONT_FACING] = settings.frontFacing
             prefs[SENSOR_MODE] = settings.sensorMode.name
+            prefs[OUTPUT_MODE] = settings.outputMode.name
+            prefs[HDR_CAPTURE_MODE] = settings.hdrCaptureMode.name
+            prefs[HDR_TONE_MAP] = settings.hdrToneMap.name
+            prefs[DOUBLE_EXPOSURE_MODE] = settings.doubleExposureMode.name
+            prefs[ULTRA_HDR_EXPORT] = settings.ultraHdrExport
+            prefs[SAVE_RAW_SIDECAR] = settings.saveRawSidecar
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
             prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
+            prefs[FOCUS_MODE] = settings.focusMode.name
+            prefs[MANUAL_FOCUS_POSITION] = settings.manualFocusPosition.coerceIn(0f, 1f)
             prefs[INTENSITY] = settings.intensity
             prefs[ZEBRA] = settings.zebraEnabled
         }
@@ -106,10 +134,17 @@ class CameraSettingsRepository(context: Context) {
         val SAVE_ORIGINAL = booleanPreferencesKey("save_original")
         val FRONT_FACING = booleanPreferencesKey("front_facing")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
+        val OUTPUT_MODE = stringPreferencesKey("output_mode")
+        val HDR_CAPTURE_MODE = stringPreferencesKey("hdr_capture_mode")
+        val HDR_TONE_MAP = stringPreferencesKey("hdr_tone_map")
+        val DOUBLE_EXPOSURE_MODE = stringPreferencesKey("double_exposure_mode")
+        val ULTRA_HDR_EXPORT = booleanPreferencesKey("ultra_hdr_export")
+        val SAVE_RAW_SIDECAR = booleanPreferencesKey("save_raw_sidecar")
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
-        val MANUAL_MODE = booleanPreferencesKey("manual_mode")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
         val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
+        val FOCUS_MODE = stringPreferencesKey("focus_mode")
+        val MANUAL_FOCUS_POSITION = floatPreferencesKey("manual_focus_position")
         val INTENSITY = floatPreferencesKey("look_intensity")
         val ZEBRA = booleanPreferencesKey("zebra_enabled")
     }

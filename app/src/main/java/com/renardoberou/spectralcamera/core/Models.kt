@@ -2,7 +2,6 @@ package com.renardoberou.spectralcamera.core
 
 import android.net.Uri
 
-/** Which coherent look family a preset belongs to, for grouped UI and product messaging. */
 enum class LookFamily(val label: String) {
     MONOCHROME_IR("Monochrome IR"),
     AEROCHROME("Aerochrome / False Colour"),
@@ -13,9 +12,6 @@ enum class SpectralPreset(
     val description: String,
     val family: LookFamily,
 ) {
-    // ---- Monochrome IR family: six differentiated stock personalities,
-    // all sharing one IR-luminance/tone-curve engine parameterized by
-    // FilmLookLibrary.monoLookFor(). See core/FilmLook.kt for the numbers.
     B_W_INFRARED(
         label = "Rollei Infrared 400",
         description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain, restrained anti-halation glow.",
@@ -46,10 +42,6 @@ enum class SpectralPreset(
         description = "Romantic, low-contrast print look: milky highlights, dreamy wide halation, coarser grain, lifted blacks.",
         family = LookFamily.MONOCHROME_IR,
     ),
-
-    // ---- Aerochrome family: five coherent EIR grades sharing one
-    // physically-grounded false-colour engine, parameterized by
-    // FilmLookLibrary.aeroLookFor().
     AEROCHROME_FALSE_COLOR(
         label = "Aerochrome Classic",
         description = "The reference EIR grade: magenta-red foliage, deep cyan sky, filmic false-colour balance.",
@@ -90,6 +82,121 @@ enum class ChannelSwapMode(val label: String) {
     GB_SWAP("Swap G/B"),
 }
 
+enum class OutputMode(
+    val label: String,
+    val description: String,
+) {
+    FULL_RESOLUTION(
+        label = "Full Resolution",
+        description = "Highest practical still source and the largest processed export the GPU can complete safely.",
+    ),
+    HQ_1080(
+        label = "HQ 1080",
+        description = "High-resolution 16:9 render, then high-quality downsample to exact 1920×1080 or 1080×1920.",
+    ),
+    FAST_1080(
+        label = "Fast 1080",
+        description = "Lower-latency 16:9 capture and exact Full HD processing.",
+    ),
+}
+
+enum class HdrCaptureMode(
+    val label: String,
+    val description: String,
+) {
+    OFF(
+        label = "Standard",
+        description = "One JPEG-derived frame. Fastest for action and exact single-frame timing.",
+    ),
+    THREE_FRAME(
+        label = "Computational HDR",
+        description = "Bracketed JPEG frames with movement-safe fusion before synthetic NIR and film rendering.",
+    ),
+    RAW_THREE_FRAME(
+        label = "True RAW HDR",
+        description = "RAW_SENSOR Bayer frames with movement-safe fusion before demosaic, colour conversion, synthetic NIR, and film rendering.",
+    ),
+}
+
+enum class HdrToneMap(
+    val label: String,
+    val description: String,
+) {
+    NATURAL(
+        label = "Natural",
+        description = "Balanced highlight recovery with restrained shadow lift.",
+    ),
+    FILMIC(
+        label = "Filmic",
+        description = "Deeper toe and a longer highlight shoulder before the selected film stock.",
+    ),
+    LOW_CONTRAST(
+        label = "Low Contrast",
+        description = "Maximum range compression for difficult backlight and later manual grading.",
+    ),
+}
+
+/** Standard-capture creative sequence, deliberately separate from HDR. */
+enum class DoubleExposureMode(
+    val label: String,
+    val description: String,
+) {
+    OFF(
+        label = "Single exposure",
+        description = "One Standard source frame.",
+    ),
+    FILM_BALANCED(
+        label = "Double exposure",
+        description = "Capture two separate compositions, combine them as balanced half-exposures in linear light, then apply the selected film look once.",
+    ),
+}
+
+/** Photographer-facing focus behavior. Unsupported modes are disabled per active lens. */
+enum class FocusMode(
+    val label: String,
+    val description: String,
+) {
+    CONTINUOUS(
+        label = "Continuous AF",
+        description = "The camera continuously follows focus. A tap briefly prioritizes one subject, then continuous focus resumes.",
+    ),
+    TAP_LOCK(
+        label = "Tap & Lock",
+        description = "Tap a subject once and hold that focus distance until you unlock it or choose another mode.",
+    ),
+    MACRO(
+        label = "Macro AF",
+        description = "Tap to run a close-range autofocus scan and hold it. Available only on lenses that report a macro autofocus mode.",
+    ),
+    MANUAL(
+        label = "Manual Focus",
+        description = "Move the focus-position control directly from infinity toward the lens's nearest supported distance.",
+    ),
+    INFINITY(
+        label = "Infinity",
+        description = "Hold the lens at its farthest focus position for distant landscapes, skies, and architecture.",
+    ),
+    FIXED(
+        label = "Fixed Focus",
+        description = "This camera reports a non-moving lens; focus distance cannot be changed.",
+    ),
+}
+
+enum class FocusDistanceCalibration(val label: String) {
+    UNCALIBRATED("Uncalibrated"),
+    APPROXIMATE("Approximate"),
+    CALIBRATED("Calibrated"),
+}
+
+enum class FocusTapResult {
+    FOCUSED,
+    LOCKED,
+    FAILED,
+    METERED,
+    IGNORED,
+    UNSUPPORTED,
+}
+
 data class ManualAdjustments(
     val contrast: Float = 1.0f,
     val exposureCompensation: Float = 0f,
@@ -112,18 +219,29 @@ data class CameraSettings(
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
-    /** Hardware exposure compensation, in photographic stops. */
+    val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
+    val hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF,
+    val hdrToneMap: HdrToneMap = HdrToneMap.NATURAL,
+    val doubleExposureMode: DoubleExposureMode = DoubleExposureMode.OFF,
+    val ultraHdrExport: Boolean = false,
+    /** Standard capture saves one DNG; True RAW HDR saves each bracket DNG when enabled. */
+    val saveRawSidecar: Boolean = false,
     val hardwareEv: Float = 0f,
-    /** Full-manual exposure: AE off, ISO and shutter set directly. */
     val manualMode: Boolean = false,
     val manualIso: Int = 400,
-    /** Shutter time in nanoseconds (default 1/125s). */
     val manualShutterNs: Long = 8_000_000L,
-    /** Look intensity: 1.0 = full film effect, lower blends toward source. */
+    val focusMode: FocusMode = FocusMode.CONTINUOUS,
+    /** Normalized lens position: 0 = infinity, 1 = nearest supported focus. */
+    val manualFocusPosition: Float = 0.15f,
     val intensity: Float = 1f,
-    /** Preview-only clipping zebras over near-blown highlights. */
     val zebraEnabled: Boolean = false,
-)
+) {
+    val requestedCaptureLabel: String
+        get() = when {
+            doubleExposureMode == DoubleExposureMode.FILM_BALANCED -> "Double Exposure"
+            else -> hdrCaptureMode.label
+        }
+}
 
 data class CameraCapabilities(
     val hasFlash: Boolean,
@@ -131,24 +249,51 @@ data class CameraCapabilities(
     val exposureRange: IntRange,
     val exposureStep: Float,
     val zoomRange: ClosedFloatingPointRange<Float>,
-    /** Fixed lens aperture (phones have no iris), for display only. */
     val aperture: Float? = null,
-    /** Sensor ISO range (also the bounds for full-manual mode). */
     val isoRange: IntRange? = null,
-    /** Sensor exposure-time range in nanoseconds, for full-manual mode. */
     val exposureTimeRange: LongRange? = null,
-    /** Whether the camera declares the MANUAL_SENSOR capability. */
     val manualExposureSupported: Boolean = false,
+    val rawJpegCaptureSupported: Boolean = false,
+    val hdrBracketSupported: Boolean = false,
+    /** RAW_SENSOR + MANUAL_SENSOR + Bayer metadata sufficient for an in-app RAW merge. */
+    val trueRawHdrSupported: Boolean = false,
+    val continuousFocusSupported: Boolean = false,
+    val tapFocusSupported: Boolean = false,
+    val macroFocusSupported: Boolean = false,
+    val manualFocusSupported: Boolean = false,
+    val infinityFocusSupported: Boolean = false,
+    val minimumFocusDistanceDiopters: Float = 0f,
+    val focusDistanceCalibration: FocusDistanceCalibration = FocusDistanceCalibration.UNCALIBRATED,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
     private val safeStep: Float get() = if (exposureStep > 0f) exposureStep else 1f / 3f
 
-    /** Converts photographic stops to the camera's exposure compensation index. */
     fun stopsToIndex(stops: Float): Int =
         Math.round(stops / safeStep).coerceIn(exposureRange.first, exposureRange.last)
 
     val exposureSupported: Boolean get() = exposureRange.first != exposureRange.last
+
+    fun supportsFocusMode(mode: FocusMode): Boolean = when (mode) {
+        FocusMode.CONTINUOUS -> continuousFocusSupported
+        FocusMode.TAP_LOCK -> tapFocusSupported
+        FocusMode.MACRO -> macroFocusSupported
+        FocusMode.MANUAL -> manualFocusSupported
+        FocusMode.INFINITY -> infinityFocusSupported
+        FocusMode.FIXED -> !canFocus
+    }
+
+    fun supportedOrFallback(requested: FocusMode): FocusMode {
+        if (supportsFocusMode(requested)) return requested
+        return listOf(
+            FocusMode.CONTINUOUS,
+            FocusMode.TAP_LOCK,
+            FocusMode.MACRO,
+            FocusMode.MANUAL,
+            FocusMode.INFINITY,
+            FocusMode.FIXED,
+        ).firstOrNull(::supportsFocusMode) ?: FocusMode.FIXED
+    }
 }
 
 data class GalleryItem(
@@ -158,6 +303,8 @@ data class GalleryItem(
     val presetLabel: String,
     val sensorModeLabel: String,
     val isOriginal: Boolean,
+    val isUltraHdr: Boolean = false,
+    val captureModeLabel: String = "Standard",
 )
 
 data class HardwareTestState(
@@ -176,5 +323,28 @@ data class HardwareTestState(
 data class CaptureResult(
     val processedUri: Uri,
     val originalUri: Uri?,
+    val originalUris: List<Uri> = originalUri?.let(::listOf) ?: emptyList(),
+    val rawUri: Uri? = null,
+    val rawUris: List<Uri> = emptyList(),
     val displayName: String,
-)
+    val ultraHdr: Boolean = false,
+    val captureModeLabel: String = "Standard",
+    val captureDetail: String = "1 frame",
+    val frameCount: Int = 1,
+    val motionProtected: Boolean = false,
+) {
+    val summary: String
+        get() = buildString {
+            append(captureModeLabel)
+            if (motionProtected && !captureModeLabel.contains("motion protected", ignoreCase = true)) {
+                append(" • motion protected")
+            }
+            append(" • ")
+            append(captureDetail)
+        }
+}
+
+sealed interface CaptureActionResult {
+    data class Saved(val result: CaptureResult) : CaptureActionResult
+    data class AwaitingSecondExposure(val message: String) : CaptureActionResult
+}

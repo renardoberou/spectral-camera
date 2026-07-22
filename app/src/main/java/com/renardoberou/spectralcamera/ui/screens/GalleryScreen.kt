@@ -1,7 +1,10 @@
 package com.renardoberou.spectralcamera.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -44,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,9 +55,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.window.Dialog
-import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -64,11 +66,13 @@ import com.renardoberou.spectralcamera.core.media.GalleryAccessLevel
 import com.renardoberou.spectralcamera.core.media.GalleryPermissionPolicy
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun GalleryScreen(viewModel: SpectralViewModel,
+fun GalleryScreen(
+    viewModel: SpectralViewModel,
     onReprocess: suspend (Uri) -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -89,8 +93,6 @@ fun GalleryScreen(viewModel: SpectralViewModel,
         viewModel.refreshGallery()
     }
 
-    // Android can change full/partial photo access while the app is in the
-    // background. Re-check on every resume instead of caching the grant.
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -108,7 +110,7 @@ fun GalleryScreen(viewModel: SpectralViewModel,
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
         )
         Text(
-            text = "Captures are saved to your phone’s gallery (DCIM/SpectralCamera) and show up in Google Photos. Everything stays on this device — nothing is ever uploaded. Labels always show whether an image is simulated or from external hardware.",
+            text = "Each image shows whether it was Standard, Computational HDR, True RAW HDR, or Double Exposure. Ultra HDR files remain SDR-compatible JPEGs in non-HDR viewers; the detail viewer enables HDR only when the decoded bitmap actually carries a gain map.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
@@ -129,9 +131,7 @@ fun GalleryScreen(viewModel: SpectralViewModel,
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
-                    Button(onClick = viewModel::refreshGallery) {
-                        Text("Try again")
-                    }
+                    Button(onClick = viewModel::refreshGallery) { Text("Try again") }
                 }
             }
         }
@@ -144,9 +144,7 @@ fun GalleryScreen(viewModel: SpectralViewModel,
             }
             galleryState.items.isEmpty() -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -198,23 +196,15 @@ private fun GalleryAccessNotice(
             "Allow photo access to display Spectral Camera captures saved on this device."
         GalleryAccessLevel.FULL -> return
     }
-    val action = if (accessLevel == GalleryAccessLevel.PARTIAL) {
-        "Manage photo access"
-    } else {
-        "Show previous captures"
-    }
+    val action = if (accessLevel == GalleryAccessLevel.PARTIAL) "Manage photo access" else "Show previous captures"
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message, color = MaterialTheme.colorScheme.onSecondaryContainer)
-            Button(onClick = onRequestAccess) {
-                Text(action)
-            }
+            Button(onClick = onRequestAccess) { Text(action) }
         }
     }
 }
@@ -224,10 +214,7 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
     val thumbnail by rememberGalleryThumbnail(item.uri)
     val bitmap = thumbnail.bitmap
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp)
-            .clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().height(220.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -249,8 +236,20 @@ private fun GalleryCard(item: GalleryItem, onClick: () -> Unit) {
             }
             Column(Modifier.padding(12.dp)) {
                 Text(item.presetLabel, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    item.captureModeLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
-                Text(if (item.isOriginal) "Original" else "Processed", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    when {
+                        item.isOriginal -> "Reference / Original"
+                        item.isUltraHdr -> "Processed • Ultra HDR"
+                        else -> "Processed • SDR"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }
@@ -265,26 +264,32 @@ private fun GalleryDetailDialog(
     val scope = rememberCoroutineScope()
     val thumbnail by rememberGalleryThumbnail(item.uri)
     val bitmap = thumbnail.bitmap
+    UltraHdrWindowEffect(bitmap)
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.extraLarge) {
             Column(Modifier.padding(16.dp)) {
                 Text(item.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(item.presetLabel, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Capture: ${item.captureModeLabel}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 Text(item.sensorModeLabel, style = MaterialTheme.typography.bodySmall)
+                if (item.isUltraHdr) {
+                    Text("Ultra HDR gain-map JPEG", style = MaterialTheme.typography.labelMedium)
+                }
                 if (bitmap != null) {
                     Image(
                         bitmap = bitmap.asImageBitmap(),
                         contentDescription = item.displayName,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(360.dp),
+                        modifier = Modifier.fillMaxWidth().height(360.dp),
                         contentScale = ContentScale.Crop,
                     )
                 } else if (thumbnail.complete) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp),
+                        modifier = Modifier.fillMaxWidth().height(180.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text("Preview unavailable")
@@ -303,6 +308,36 @@ private fun GalleryDetailDialog(
             }
         }
     }
+}
+
+/** Dynamically enables HDR only while an actual decoded gain-map image is visible. */
+@Composable
+private fun UltraHdrWindowEffect(bitmap: Bitmap?) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val containsGainmap = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+        bitmap?.hasGainmap() == true
+
+    DisposableEffect(activity, containsGainmap) {
+        val window = activity?.window
+        val previous = window?.colorMode ?: ActivityInfo.COLOR_MODE_DEFAULT
+        if (window != null) {
+            window.colorMode = if (containsGainmap) {
+                ActivityInfo.COLOR_MODE_HDR
+            } else {
+                ActivityInfo.COLOR_MODE_DEFAULT
+            }
+        }
+        onDispose {
+            if (window != null) window.colorMode = previous
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Composable

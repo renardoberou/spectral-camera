@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -22,7 +23,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,11 +53,13 @@ import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
 import com.renardoberou.spectralcamera.ui.screens.HardwareTestScreen
 import com.renardoberou.spectralcamera.ui.screens.LiveCameraScreen
+import com.renardoberou.spectralcamera.ui.screens.ProOutputScreen
 import com.renardoberou.spectralcamera.ui.theme.SpectralCameraTheme
 import kotlin.math.roundToInt
 
 private sealed class Route(val route: String, val label: String) {
     data object Live : Route("live", "Live")
+    data object Output : Route("output", "Output")
     data object Gallery : Route("gallery", "Gallery")
     data object Hardware : Route("hardware", "Hardware")
 }
@@ -85,23 +87,25 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             permissionsGranted = hasRequiredPermissions(context)
         }
 
-        // Push every settings change straight into the GPU pipeline.
         LaunchedEffect(settings) {
             glView.updateSettings(settings)
         }
 
-        // Hardware exposure compensation lives on the camera itself.
-        LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
-            if (!settings.manualMode) {
-                val index = capabilities?.stopsToIndex(settings.hardwareEv)
-                    ?: settings.hardwareEv.roundToInt()
-                cameraController.setExposureCompensation(index)
+        LaunchedEffect(capabilities, settings.focusMode) {
+            val supported = capabilities?.supportedOrFallback(settings.focusMode)
+            if (supported != null && supported != settings.focusMode) {
+                viewModel.setFocusMode(supported)
             }
         }
 
-        // Full-manual exposure: applied to the live session (re-applied after
-        // every rebind because capabilities re-emits then).
-        LaunchedEffect(capabilities, settings.manualMode, settings.manualIso, settings.manualShutterNs) {
+        LaunchedEffect(
+            capabilities,
+            settings.manualMode,
+            settings.manualIso,
+            settings.manualShutterNs,
+            settings.focusMode,
+            settings.manualFocusPosition,
+        ) {
             val iso = settings.manualIso.coerceIn(
                 capabilities?.isoRange?.first ?: 50,
                 capabilities?.isoRange?.last ?: 6400,
@@ -110,10 +114,19 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
                 capabilities?.exposureTimeRange?.first ?: 100_000L,
                 capabilities?.exposureTimeRange?.last ?: 125_000_000L,
             )
-            cameraController.setManualExposure(settings.manualMode, iso, shutter)
+            cameraController.applyUserControls(
+                settings.copy(manualIso = iso, manualShutterNs = shutter),
+            )
         }
 
-        // GLSurfaceView needs explicit pause/resume to keep its render thread healthy.
+        LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
+            if (!settings.manualMode) {
+                val index = capabilities?.stopsToIndex(settings.hardwareEv)
+                    ?: settings.hardwareEv.roundToInt()
+                cameraController.setExposureCompensation(index)
+            }
+        }
+
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
@@ -165,7 +178,6 @@ private fun AppShell(
 ) {
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route ?: Route.Live.route
 
-    // The small analysis stream only feeds the hardware-test screen.
     LaunchedEffect(currentRoute) {
         cameraController.setAnalysisEnabled(currentRoute == Route.Hardware.route)
     }
@@ -173,7 +185,7 @@ private fun AppShell(
     Scaffold(
         bottomBar = {
             NavigationBar {
-                listOf(Route.Live, Route.Gallery, Route.Hardware).forEach { route ->
+                listOf(Route.Live, Route.Output, Route.Gallery, Route.Hardware).forEach { route ->
                     NavigationBarItem(
                         selected = currentRoute == route.route,
                         onClick = {
@@ -186,6 +198,7 @@ private fun AppShell(
                         icon = {
                             when (route) {
                                 Route.Live -> Icon(Icons.Outlined.CameraAlt, contentDescription = null)
+                                Route.Output -> Icon(Icons.Outlined.Tune, contentDescription = null)
                                 Route.Gallery -> Icon(Icons.Outlined.Collections, contentDescription = null)
                                 Route.Hardware -> Icon(Icons.Outlined.Memory, contentDescription = null)
                             }
@@ -232,6 +245,13 @@ private fun AppShell(
                         onOpenHardware = { navController.navigate(Route.Hardware.route) },
                     )
                 }
+                composable(Route.Output.route) {
+                    ProOutputScreen(
+                        viewModel = viewModel,
+                        settings = settings,
+                        capabilities = capabilities,
+                    )
+                }
                 composable(Route.Gallery.route) {
                     GalleryScreen(
                         viewModel = viewModel,
@@ -262,11 +282,22 @@ private fun CameraSessionHost(
     onAnalysisFrame: (android.graphics.Bitmap) -> Unit,
     onCapabilities: (CameraCapabilities) -> Unit,
 ) {
-    DisposableEffect(lifecycleOwner, settings.frontFacing) {
+    // Output mode, HDR bracket policy, RAW, and lens facing alter ImageCapture
+    // stream/session behavior and intentionally trigger a CameraX rebind.
+    DisposableEffect(
+        lifecycleOwner,
+        settings.frontFacing,
+        settings.outputMode,
+        settings.hdrCaptureMode,
+        settings.saveRawSidecar,
+    ) {
         cameraController.bind(
             lifecycleOwner = lifecycleOwner,
             glView = glView,
             lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,
+            outputMode = settings.outputMode,
+            hdrCaptureMode = settings.hdrCaptureMode,
+            rawSidecarRequested = settings.saveRawSidecar,
             onCapabilities = onCapabilities,
             onAnalysisFrame = onAnalysisFrame,
         )

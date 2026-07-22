@@ -1,9 +1,16 @@
 package com.renardoberou.spectralcamera.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,41 +18,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.clickable
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
-import androidx.compose.material.icons.outlined.Collections
-import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.FlashOn
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalBottomSheetDefaults
-import androidx.compose.material3.SheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -57,27 +44,35 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.abs
-import kotlin.math.roundToInt
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.DoubleExposureMode
+import com.renardoberou.spectralcamera.core.FocusMode
+import com.renardoberou.spectralcamera.core.FocusTapResult
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
+import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LiveCameraScreen(
     viewModel: SpectralViewModel,
@@ -85,28 +80,48 @@ fun LiveCameraScreen(
     settings: CameraSettings,
     capabilities: CameraCapabilities?,
     galleryCount: Int,
-    onCapture: suspend () -> CaptureResult,
+    onCapture: suspend () -> CaptureActionResult,
     onImport: suspend (android.net.Uri) -> CaptureResult,
     onOpenGallery: () -> Unit,
     onOpenHardware: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val doubleExposureState by viewModel.doubleExposureState.collectAsStateWithLifecycle()
     var showPresets by remember { mutableStateOf(false) }
-    // Viewfinder-first: the exposure/look panel is collapsed by default so the
-    // preview owns the screen; one tap opens it, one tap puts it away.
     var showExposure by remember { mutableStateOf(false) }
+    var showFocus by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
+    var focusMessage by remember { mutableStateOf("Continuous autofocus active") }
+    var capturing by remember { mutableStateOf(false) }
+    val manualFocusLabel = FocusMath.positionLabel(
+        settings.manualFocusPosition,
+        capabilities?.minimumFocusDistanceDiopters ?: 0f,
+        capabilities?.focusDistanceCalibration
+            ?: com.renardoberou.spectralcamera.core.FocusDistanceCalibration.UNCALIBRATED,
+    )
+
+    LaunchedEffect(settings.focusMode, settings.manualFocusPosition, capabilities) {
+        focusMessage = when (settings.focusMode) {
+            FocusMode.CONTINUOUS -> "Continuous autofocus active"
+            FocusMode.TAP_LOCK -> "Tap a subject to focus and lock"
+            FocusMode.MACRO -> "Tap a close subject to focus and lock"
+            FocusMode.MANUAL -> "Manual focus: $manualFocusLabel"
+            FocusMode.INFINITY -> "Focus held at infinity"
+            FocusMode.FIXED -> "This lens reports fixed focus"
+        }
+    }
+
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                captureLabel = "Processing import\u2026"
+                captureLabel = "Processing import…"
                 runCatching { onImport(uri) }
-                    .onSuccess { captureLabel = "Saved ${it.displayName}" }
+                    .onSuccess { captureLabel = "Saved ${it.summary}" }
                     .onFailure { captureLabel = "Import failed: ${it.message ?: it.javaClass.simpleName}" }
             }
         }
@@ -115,17 +130,51 @@ fun LiveCameraScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
+            .pointerInput(settings.focusMode, settings.manualMode) {
                 detectTapGestures { offset ->
+                    focusMessage = when (settings.focusMode) {
+                        FocusMode.CONTINUOUS -> "Focusing…"
+                        FocusMode.TAP_LOCK -> "Locking focus…"
+                        FocusMode.MACRO -> "Macro focusing…"
+                        FocusMode.FIXED -> "This lens has fixed focus"
+                        FocusMode.MANUAL,
+                        FocusMode.INFINITY,
+                        -> if (settings.manualMode) {
+                            "Manual exposure and focus active"
+                        } else {
+                            "Metering exposure…"
+                        }
+                    }
                     cameraController.focusAt(
-                        offset.x,
-                        offset.y,
-                        size.width.toFloat(),
-                        size.height.toFloat(),
-                    )
+                        x = offset.x,
+                        y = offset.y,
+                        viewWidth = size.width.toFloat(),
+                        viewHeight = size.height.toFloat(),
+                        manualExposure = settings.manualMode,
+                    ) { result ->
+                        focusMessage = when (result) {
+                            FocusTapResult.FOCUSED -> "Focused • continuous AF resumes automatically"
+                            FocusTapResult.LOCKED -> "Focus locked • tap another subject or unlock"
+                            FocusTapResult.FAILED -> "Focus failed • try a higher-contrast edge"
+                            FocusTapResult.METERED -> "Exposure metered • focus position unchanged"
+                            FocusTapResult.IGNORED -> "Manual exposure and focus active"
+                            FocusTapResult.UNSUPPORTED -> "Focus action unavailable on this lens"
+                        }
+                    }
                 }
             },
     ) {
+        doubleExposureState.overlayBitmap?.let { overlay ->
+            Image(
+                bitmap = overlay.asImageBitmap(),
+                contentDescription = "First double-exposure frame guide",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0.34f),
+                contentScale = ContentScale.Crop,
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -139,54 +188,172 @@ fun LiveCameraScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
+                    modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     shape = MaterialTheme.shapes.large,
                     tonalElevation = 6.dp,
                 ) {
-                    Column(Modifier.padding(10.dp)) {
-                        Text(
-                            text = "Spectral Camera",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "${settings.sensorMode.label} • simulated IR by default",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = "Preset: ${settings.preset.label}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                        if (settings.manualMode) {
-                            Text(
-                                "MANUAL EXPOSURE \u2014 ISO ${settings.manualIso} \u00b7 metering off",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        val wideHeader = maxWidth >= 520.dp
+                        if (wideHeader) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(0.9f),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
+                                    Text(
+                                        text = "Spectral Camera",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = "${settings.sensorMode.label} • simulated IR",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1.35f),
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
+                                    Text(
+                                        text = "${settings.preset.label} • ${settings.focusMode.label}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = "${settings.requestedCaptureLabel} • ${settings.outputMode.label}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (doubleExposureState.waitingForSecond) {
+                                        Text(
+                                            text = "Double Exposure • frame 1 stored",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            textAlign = TextAlign.End,
+                                        )
+                                    }
+                                    if (settings.manualMode) {
+                                        Text(
+                                            text = "Manual exposure • ISO ${settings.manualIso}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            textAlign = TextAlign.End,
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Spectral Camera",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = settings.focusMode.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        maxLines = 1,
+                                    )
+                                }
+                                Text(
+                                    text = "${settings.sensorMode.label} • ${settings.preset.label}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "${settings.requestedCaptureLabel} • ${settings.outputMode.label}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (doubleExposureState.waitingForSecond) {
+                                    Text(
+                                        text = "Double Exposure • frame 1 stored",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
+                                if (settings.manualMode) {
+                                    Text(
+                                        text = "Manual exposure • ISO ${settings.manualIso}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
                         }
                     }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(onClick = onOpenGallery, label = { Text("Gallery ($galleryCount)") }, leadingIcon = { Icon(Icons.Outlined.Collections, null) })
-                    AssistChip(onClick = onOpenHardware, label = { Text("Hardware test") }, leadingIcon = { Icon(Icons.Outlined.Thermostat, null) })
-                    AssistChip(onClick = { showPresets = true }, label = { Text("Presets") }, leadingIcon = { Icon(Icons.Outlined.Tune, null) })
                 }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (capabilities?.exposureSupported == true) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (capabilities?.exposureSupported == true) {
+                        FilterChip(
+                            selected = showExposure,
+                            onClick = {
+                                showExposure = !showExposure
+                                if (showExposure) showFocus = false
+                            },
+                            label = { Text(if (showExposure) "Exposure ▴" else "Exposure ▾") },
+                        )
+                    }
+                    if (capabilities != null) {
+                        FilterChip(
+                            selected = showFocus,
+                            onClick = {
+                                showFocus = !showFocus
+                                if (showFocus) showExposure = false
+                            },
+                            label = { Text(if (showFocus) "Focus ▴" else "Focus ▾") },
+                        )
+                    }
                     FilterChip(
-                        selected = showExposure,
-                        onClick = { showExposure = !showExposure },
-                        label = { Text(if (showExposure) "Exposure \u25b4" else "Exposure \u25be") },
+                        selected = false,
+                        onClick = { showPresets = true },
+                        label = { Text("Presets") },
                     )
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
@@ -199,7 +366,7 @@ fun LiveCameraScreen(
                                 label = "Look intensity",
                                 options = listOf("25%" to 0.25f, "50%" to 0.5f, "75%" to 0.75f, "100%" to 1.0f),
                                 value = settings.intensity,
-                            ) { v -> viewModel.setIntensity(v) }
+                            ) { value -> viewModel.setIntensity(value) }
                             if (capabilities.manualExposureSupported) {
                                 SteppedControl(
                                     label = "Exposure mode",
@@ -211,7 +378,7 @@ fun LiveCameraScreen(
                                 val isoOptions = listOf(100, 200, 400, 800, 1600, 3200)
                                     .filter { iso ->
                                         val range = capabilities.isoRange
-                                        range == null || (iso >= range.first && iso <= range.last)
+                                        range == null || iso in range
                                     }
                                     .map { "ISO $it" to it.toFloat() }
                                 SteppedControl(
@@ -220,13 +387,19 @@ fun LiveCameraScreen(
                                     value = settings.manualIso.toFloat(),
                                 ) { iso -> viewModel.setManualIso(iso.toInt()) }
                                 val shutterOptions = listOf(
-                                    "1/4000" to 250_000L, "1/2000" to 500_000L, "1/1000" to 1_000_000L,
-                                    "1/500" to 2_000_000L, "1/250" to 4_000_000L, "1/125" to 8_000_000L,
-                                    "1/60" to 16_666_667L, "1/30" to 33_333_333L, "1/15" to 66_666_667L,
+                                    "1/4000" to 250_000L,
+                                    "1/2000" to 500_000L,
+                                    "1/1000" to 1_000_000L,
+                                    "1/500" to 2_000_000L,
+                                    "1/250" to 4_000_000L,
+                                    "1/125" to 8_000_000L,
+                                    "1/60" to 16_666_667L,
+                                    "1/30" to 33_333_333L,
+                                    "1/15" to 66_666_667L,
                                     "1/8" to 125_000_000L,
                                 ).filter { pair ->
                                     val range = capabilities.exposureTimeRange
-                                    range == null || (pair.second >= range.first && pair.second <= range.last)
+                                    range == null || pair.second in range
                                 }
                                 ShutterControl(
                                     options = shutterOptions,
@@ -248,16 +421,96 @@ fun LiveCameraScreen(
                             Text(
                                 buildString {
                                     if (settings.manualMode && capabilities.manualExposureSupported) {
-                                        append("AE off \u00b7 manual sensor")
+                                        append("AE off · manual sensor")
                                     } else {
                                         append("ISO auto")
                                     }
-                                    capabilities.aperture?.let { append("  \u00b7  f/" + String.format("%.1f", it)) }
-                                    append("  \u00b7  fixed lens")
+                                    capabilities.aperture?.let {
+                                        append("  ·  f/" + String.format("%.1f", it))
+                                    }
+                                    append("  ·  fixed aperture")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary,
                             )
+                        }
+                    }
+                }
+
+                if (capabilities != null && showFocus) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Column(
+                            Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = focusMessage,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                FocusMode.values().forEach { mode ->
+                                    FilterChip(
+                                        selected = settings.focusMode == mode,
+                                        enabled = capabilities.supportsFocusMode(mode),
+                                        onClick = {
+                                            viewModel.setFocusMode(mode)
+                                            focusMessage = mode.description
+                                        },
+                                        label = { Text(mode.label) },
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (capabilities.canFocus) {
+                                    settings.focusMode.description
+                                } else {
+                                    "This lens reports fixed focus; focus controls have no physical effect."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+
+                            if (settings.focusMode == FocusMode.MANUAL && capabilities.manualFocusSupported) {
+                                Text(
+                                    text = "Lens position: $manualFocusLabel",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                Slider(
+                                    value = settings.manualFocusPosition,
+                                    onValueChange = viewModel::setManualFocusPosition,
+                                    valueRange = 0f..1f,
+                                    steps = 19,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text("∞ / far", style = MaterialTheme.typography.labelSmall)
+                                    Text("nearest", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+
+                            if (
+                                settings.focusMode == FocusMode.TAP_LOCK ||
+                                settings.focusMode == FocusMode.MACRO
+                            ) {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        cameraController.unlockFocus()
+                                        focusMessage = "Focus unlocked • tap a subject to lock again"
+                                    },
+                                    label = { Text("Unlock focus") },
+                                )
+                            }
                         }
                     }
                 }
@@ -272,7 +525,11 @@ fun LiveCameraScreen(
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(captureLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        Text(
+                            captureLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -283,20 +540,44 @@ fun LiveCameraScreen(
                             }
 
                             FilledTonalButton(
+                                enabled = !capturing,
                                 onClick = {
                                     scope.launch {
-                                        captureLabel = "Capturing…"
+                                        capturing = true
+                                        captureLabel = when {
+                                            settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED &&
+                                                doubleExposureState.waitingForSecond -> "Capturing double-exposure frame 2…"
+                                            settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED ->
+                                                "Capturing double-exposure frame 1…"
+                                            else -> "Capturing ${settings.requestedCaptureLabel}…"
+                                        }
                                         runCatching { onCapture() }
-                                            .onSuccess {
-                                                captureLabel = "Saved ${it.displayName}"
-                                                viewModel.refreshGallery()
+                                            .onSuccess { action ->
+                                                when (action) {
+                                                    is CaptureActionResult.AwaitingSecondExposure ->
+                                                        captureLabel = action.message
+                                                    is CaptureActionResult.Saved -> {
+                                                        captureLabel = "Saved ${action.result.summary}"
+                                                        viewModel.refreshGallery()
+                                                    }
+                                                }
                                             }
-                                            .onFailure { captureLabel = "Capture failed: ${it.message ?: it.javaClass.simpleName}" }
+                                            .onFailure {
+                                                captureLabel = "Capture failed: ${it.message ?: it.javaClass.simpleName}"
+                                            }
+                                        capturing = false
                                     }
                                 },
                                 contentPadding = PaddingValues(horizontal = 26.dp, vertical = 18.dp),
                             ) {
-                                Text("Capture")
+                                Text(
+                                    when {
+                                        settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED &&
+                                            doubleExposureState.waitingForSecond -> "Capture 2 + Save"
+                                        settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED -> "Capture 1"
+                                        else -> "Capture"
+                                    },
+                                )
                             }
 
                             IconButton(onClick = {
@@ -307,14 +588,37 @@ fun LiveCameraScreen(
                             }
                         }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (doubleExposureState.waitingForSecond) {
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    viewModel.cancelDoubleExposure()
+                                    captureLabel = "Double exposure cancelled"
+                                },
+                                label = { Text("Cancel stored frame 1") },
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             FilterChip(
                                 selected = settings.saveOriginal,
+                                enabled = settings.hdrCaptureMode != com.renardoberou.spectralcamera.core.HdrCaptureMode.RAW_THREE_FRAME,
                                 onClick = {
                                     viewModel.setSaveOriginal(!settings.saveOriginal)
                                     showSaveNote = true
                                 },
-                                label = { Text("Save original") },
+                                label = {
+                                    Text(
+                                        if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
+                                            "Save sources"
+                                        } else {
+                                            "Save original"
+                                        },
+                                    )
+                                },
                             )
                             FilterChip(
                                 selected = false,
@@ -395,7 +699,12 @@ fun LiveCameraScreen(
                     .padding(bottom = 104.dp),
             ) {
                 Text(
-                    text = if (settings.saveOriginal) "Originals will be saved alongside processed photos." else "Only processed captures will be saved.",
+                    text = when {
+                        !settings.saveOriginal -> "Only processed captures will be saved."
+                        settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED ->
+                            "Both double-exposure source frames will be saved."
+                        else -> "Originals will be saved alongside processed photos."
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                     color = Color.Black,
                 )
@@ -404,7 +713,6 @@ fun LiveCameraScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PresetSheet(
     current: SpectralPreset,
@@ -418,7 +726,10 @@ private fun PresetSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Filter preset drawer", style = MaterialTheme.typography.headlineSmall)
-        Text("These are simulated spectral looks inspired by infrared film behavior, not claims of true IR capture.", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "These are simulated spectral looks inspired by infrared film behavior, not claims of true IR capture.",
+            style = MaterialTheme.typography.bodySmall,
+        )
         val grouped = SpectralPreset.values().groupBy { it.family }
         listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME).forEach { family ->
             val presets = grouped[family].orEmpty()
@@ -482,7 +793,7 @@ private fun AdjustmentsSheet(
         SteppedControl("Red channel weight", listOf("Low" to 0.7f, "Normal" to 1.0f, "High" to 1.5f, "Max" to 2.0f), current.redChannelWeight) { value -> onAdjustmentsChange(current.copy(redChannelWeight = value)) }
         SteppedControl("Green foliage lift", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.greenFoliageLift) { value -> onAdjustmentsChange(current.copy(greenFoliageLift = value)) }
         SteppedControl("Blue sky suppression", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.blueSkySuppression) { value -> onAdjustmentsChange(current.copy(blueSkySuppression = value)) }
-        SteppedControl("Hue rotation", listOf("-90\u00b0" to -90f, "-45\u00b0" to -45f, "-15\u00b0" to -15f, "0\u00b0" to 0f, "+15\u00b0" to 15f, "+45\u00b0" to 45f, "+90\u00b0" to 90f), current.hueRotation) { value -> onAdjustmentsChange(current.copy(hueRotation = value)) }
+        SteppedControl("Hue rotation", listOf("-90°" to -90f, "-45°" to -45f, "-15°" to -15f, "0°" to 0f, "+15°" to 15f, "+45°" to 45f, "+90°" to 90f), current.hueRotation) { value -> onAdjustmentsChange(current.copy(hueRotation = value)) }
         SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation) { value -> onAdjustmentsChange(current.copy(saturation = value)) }
 
         Text("RGB channel swap", style = MaterialTheme.typography.labelLarge)
@@ -510,9 +821,11 @@ private fun AdjustmentsSheet(
         }
 
         if (capabilities?.exposureSupported == true) {
-            Text("Camera exposure range: ${capabilities.exposureRange.first} to ${capabilities.exposureRange.last}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Camera exposure range: ${capabilities.exposureRange.first} to ${capabilities.exposureRange.last}",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
-
         Spacer(Modifier.height(24.dp))
     }
 }
