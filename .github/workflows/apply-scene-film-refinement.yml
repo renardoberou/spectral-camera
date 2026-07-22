@@ -4,13 +4,15 @@ on:
   push:
     branches: [agent/aerochrome-tonal-refinement]
     paths: [.github/workflows/apply-scene-film-refinement.yml]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   integrate:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.head_ref == 'agent/aerochrome-tonal-refinement')
     runs-on: ubuntu-latest
     steps:
       - name: Check out refinement branch
@@ -301,7 +303,6 @@ jobs:
               ''').strip(),
           )
 
-          # CPU reference math mirrors the shader for deterministic tests and calibration.
           film_math = Path("app/src/main/java/com/renardoberou/spectralcamera/core/film/FilmResponseMath.kt")
           film_math.parent.mkdir(parents=True, exist_ok=True)
           film_math.write_text(dedent('''
@@ -403,7 +404,6 @@ jobs:
           }
           ''').lstrip())
 
-          # Validation and implementation record.
           plan = Path("docs/PLAN_2026-07-22_aerochrome-tonal-refinement.md")
           plan.write_text(dedent('''
           # Plan: scene-to-film tonal, red, highlight, and sky refinement
@@ -466,7 +466,6 @@ jobs:
               ''').strip(),
           )
 
-          # Product documentation and version.
           replace_once(
               "README.md",
               "**1.19.0 (versionCode 47)**",
