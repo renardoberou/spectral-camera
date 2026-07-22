@@ -91,15 +91,21 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             glView.updateSettings(settings)
         }
 
-        LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
-            if (!settings.manualMode) {
-                val index = capabilities?.stopsToIndex(settings.hardwareEv)
-                    ?: settings.hardwareEv.roundToInt()
-                cameraController.setExposureCompensation(index)
+        LaunchedEffect(capabilities, settings.focusMode) {
+            val supported = capabilities?.supportedOrFallback(settings.focusMode)
+            if (supported != null && supported != settings.focusMode) {
+                viewModel.setFocusMode(supported)
             }
         }
 
-        LaunchedEffect(capabilities, settings.manualMode, settings.manualIso, settings.manualShutterNs) {
+        LaunchedEffect(
+            capabilities,
+            settings.manualMode,
+            settings.manualIso,
+            settings.manualShutterNs,
+            settings.focusMode,
+            settings.manualFocusPosition,
+        ) {
             val iso = settings.manualIso.coerceIn(
                 capabilities?.isoRange?.first ?: 50,
                 capabilities?.isoRange?.last ?: 6400,
@@ -108,7 +114,17 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
                 capabilities?.exposureTimeRange?.first ?: 100_000L,
                 capabilities?.exposureTimeRange?.last ?: 125_000_000L,
             )
-            cameraController.setManualExposure(settings.manualMode, iso, shutter)
+            cameraController.applyUserControls(
+                settings.copy(manualIso = iso, manualShutterNs = shutter),
+            )
+        }
+
+        LaunchedEffect(capabilities, settings.hardwareEv, settings.manualMode) {
+            if (!settings.manualMode) {
+                val index = capabilities?.stopsToIndex(settings.hardwareEv)
+                    ?: settings.hardwareEv.roundToInt()
+                cameraController.setExposureCompensation(index)
+            }
         }
 
         DisposableEffect(lifecycleOwner) {

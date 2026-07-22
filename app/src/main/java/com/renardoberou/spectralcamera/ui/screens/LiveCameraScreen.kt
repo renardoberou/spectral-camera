@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -63,10 +64,13 @@ import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
+import com.renardoberou.spectralcamera.core.FocusMode
+import com.renardoberou.spectralcamera.core.FocusTapResult
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
+import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlin.math.abs
 import kotlinx.coroutines.launch
@@ -87,11 +91,30 @@ fun LiveCameraScreen(
     val doubleExposureState by viewModel.doubleExposureState.collectAsStateWithLifecycle()
     var showPresets by remember { mutableStateOf(false) }
     var showExposure by remember { mutableStateOf(false) }
+    var showFocus by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
+    var focusMessage by remember { mutableStateOf("Continuous autofocus active") }
     var capturing by remember { mutableStateOf(false) }
+    val manualFocusLabel = FocusMath.positionLabel(
+        settings.manualFocusPosition,
+        capabilities?.minimumFocusDistanceDiopters ?: 0f,
+        capabilities?.focusDistanceCalibration
+            ?: com.renardoberou.spectralcamera.core.FocusDistanceCalibration.UNCALIBRATED,
+    )
+
+    LaunchedEffect(settings.focusMode, settings.manualFocusPosition, capabilities) {
+        focusMessage = when (settings.focusMode) {
+            FocusMode.CONTINUOUS -> "Continuous autofocus active"
+            FocusMode.TAP_LOCK -> "Tap a subject to focus and lock"
+            FocusMode.MACRO -> "Tap a close subject to focus and lock"
+            FocusMode.MANUAL -> "Manual focus: $manualFocusLabel"
+            FocusMode.INFINITY -> "Focus held at infinity"
+            FocusMode.FIXED -> "This lens reports fixed focus"
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
@@ -109,14 +132,37 @@ fun LiveCameraScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
+            .pointerInput(settings.focusMode, settings.manualMode) {
                 detectTapGestures { offset ->
+                    focusMessage = when (settings.focusMode) {
+                        FocusMode.CONTINUOUS -> "Focusing…"
+                        FocusMode.TAP_LOCK -> "Locking focus…"
+                        FocusMode.MACRO -> "Macro focusing…"
+                        FocusMode.FIXED -> "This lens has fixed focus"
+                        FocusMode.MANUAL,
+                        FocusMode.INFINITY,
+                        -> if (settings.manualMode) {
+                            "Manual exposure and focus active"
+                        } else {
+                            "Metering exposure…"
+                        }
+                    }
                     cameraController.focusAt(
-                        offset.x,
-                        offset.y,
-                        size.width.toFloat(),
-                        size.height.toFloat(),
-                    )
+                        x = offset.x,
+                        y = offset.y,
+                        viewWidth = size.width.toFloat(),
+                        viewHeight = size.height.toFloat(),
+                        manualExposure = settings.manualMode,
+                    ) { result ->
+                        focusMessage = when (result) {
+                            FocusTapResult.FOCUSED -> "Focused • continuous AF resumes automatically"
+                            FocusTapResult.LOCKED -> "Focus locked • tap another subject or unlock"
+                            FocusTapResult.FAILED -> "Focus failed • try a higher-contrast edge"
+                            FocusTapResult.METERED -> "Exposure metered • focus position unchanged"
+                            FocusTapResult.IGNORED -> "Manual exposure and focus active"
+                            FocusTapResult.UNSUPPORTED -> "Focus action unavailable on this lens"
+                        }
+                    }
                 }
             },
     ) {
@@ -175,6 +221,11 @@ fun LiveCameraScreen(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary,
                         )
+                        Text(
+                            text = "Focus: ${settings.focusMode.label}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
                         if (doubleExposureState.waitingForSecond) {
                             Text(
                                 text = "Frame 1 stored — use the transparent guide, recompose, then capture frame 2.",
@@ -212,12 +263,27 @@ fun LiveCameraScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (capabilities?.exposureSupported == true) {
-                    FilterChip(
-                        selected = showExposure,
-                        onClick = { showExposure = !showExposure },
-                        label = { Text(if (showExposure) "Exposure ▴" else "Exposure ▾") },
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (capabilities?.exposureSupported == true) {
+                        FilterChip(
+                            selected = showExposure,
+                            onClick = {
+                                showExposure = !showExposure
+                                if (showExposure) showFocus = false
+                            },
+                            label = { Text(if (showExposure) "Exposure ▴" else "Exposure ▾") },
+                        )
+                    }
+                    if (capabilities != null) {
+                        FilterChip(
+                            selected = showFocus,
+                            onClick = {
+                                showFocus = !showFocus
+                                if (showFocus) showExposure = false
+                            },
+                            label = { Text(if (showFocus) "Focus ▴" else "Focus ▾") },
+                        )
+                    }
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
@@ -291,11 +357,89 @@ fun LiveCameraScreen(
                                     capabilities.aperture?.let {
                                         append("  ·  f/" + String.format("%.1f", it))
                                     }
-                                    append("  ·  fixed lens")
+                                    append("  ·  fixed aperture")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary,
                             )
+                        }
+                    }
+                }
+
+                if (capabilities != null && showFocus) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Column(
+                            Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = focusMessage,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                FocusMode.values().forEach { mode ->
+                                    FilterChip(
+                                        selected = settings.focusMode == mode,
+                                        enabled = capabilities.supportsFocusMode(mode),
+                                        onClick = {
+                                            viewModel.setFocusMode(mode)
+                                            focusMessage = mode.description
+                                        },
+                                        label = { Text(mode.label) },
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (capabilities.canFocus) {
+                                    settings.focusMode.description
+                                } else {
+                                    "This lens reports fixed focus; focus controls have no physical effect."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+
+                            if (settings.focusMode == FocusMode.MANUAL && capabilities.manualFocusSupported) {
+                                Text(
+                                    text = "Lens position: $manualFocusLabel",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                Slider(
+                                    value = settings.manualFocusPosition,
+                                    onValueChange = viewModel::setManualFocusPosition,
+                                    valueRange = 0f..1f,
+                                    steps = 19,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text("∞ / far", style = MaterialTheme.typography.labelSmall)
+                                    Text("nearest", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+
+                            if (
+                                settings.focusMode == FocusMode.TAP_LOCK ||
+                                settings.focusMode == FocusMode.MACRO
+                            ) {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        cameraController.unlockFocus()
+                                        focusMessage = "Focus unlocked • tap a subject to lock again"
+                                    },
+                                    label = { Text("Unlock focus") },
+                                )
+                            }
                         }
                     }
                 }

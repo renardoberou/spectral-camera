@@ -41,9 +41,13 @@ import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.FocusDistanceCalibration
+import com.renardoberou.spectralcamera.core.FocusMode
+import com.renardoberou.spectralcamera.core.FocusTapResult
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
+import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.hdr.BayerArrangement
 import com.renardoberou.spectralcamera.core.hdr.BayerChannel
 import com.renardoberou.spectralcamera.core.hdr.HdrBracketPlanner
@@ -55,6 +59,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -109,6 +114,18 @@ class CameraController(context: Context) {
     private var activeExposureTimeRange: LongRange? = null
     private var activeManualExposureSupported: Boolean = false
     private var activeAwbLockSupported: Boolean = false
+
+    private var focusCapabilitiesKnown: Boolean = false
+    private var activeFocusMode: FocusMode = FocusMode.CONTINUOUS
+    private var activeManualFocusPosition: Float = 0.15f
+    private var activeMinimumFocusDistance: Float = 0f
+    private var activeContinuousFocusSupported: Boolean = false
+    private var activeTapFocusSupported: Boolean = false
+    private var activeMacroFocusSupported: Boolean = false
+    private var activeManualFocusSupported: Boolean = false
+    private var activeInfinityFocusSupported: Boolean = false
+    private var activeAfModes: Set<Int> = emptySet()
+    private var activeContinuousAfMode: Int = CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
 
     private val latestCaptureResult = AtomicReference<TotalCaptureResult?>(null)
     private val captureResultsByTimestamp = ConcurrentHashMap<Long, TotalCaptureResult>()
@@ -217,40 +234,124 @@ class CameraController(context: Context) {
     }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-    fun setManualExposure(enabled: Boolean, iso: Int, shutterNs: Long) {
-        val control = camera?.cameraControl ?: return
-        val camera2 = Camera2CameraControl.from(control)
-        if (!enabled) {
-            camera2.clearCaptureRequestOptions()
-            return
+    fun applyUserControls(settings: CameraSettings) {
+        val activeCamera = camera ?: return
+        val previousMode = activeFocusMode
+        activeFocusMode = effectiveFocusMode(settings.focusMode)
+        activeManualFocusPosition = settings.manualFocusPosition.coerceIn(0f, 1f)
+        if (previousMode != activeFocusMode) {
+            activeCamera.cameraControl.cancelFocusAndMetering()
         }
-        camera2.setCaptureRequestOptions(manualExposureOptions(iso, shutterNs, lockAwb = false))
+        Camera2CameraControl.from(activeCamera.cameraControl)
+            .setCaptureRequestOptions(userCaptureRequestOptions(settings, lockAwb = false))
     }
 
     fun setAnalysisEnabled(enabled: Boolean) {
         analysisEnabled = enabled
     }
 
-    fun focusAt(x: Float, y: Float, viewWidth: Float, viewHeight: Float) {
-        val activeCamera = camera ?: return
-        val display = glView?.display ?: return
-        if (viewWidth <= 0f || viewHeight <= 0f) return
+    fun unlockFocus() {
+        camera?.cameraControl?.cancelFocusAndMetering()
+    }
+
+    fun focusAt(
+        x: Float,
+        y: Float,
+        viewWidth: Float,
+        viewHeight: Float,
+        manualExposure: Boolean,
+        onResult: (FocusTapResult) -> Unit = {},
+    ) {
+        val activeCamera = camera ?: run {
+            onResult(FocusTapResult.UNSUPPORTED)
+            return
+        }
+        val display = glView?.display ?: run {
+            onResult(FocusTapResult.UNSUPPORTED)
+            return
+        }
+        if (viewWidth <= 0f || viewHeight <= 0f) {
+            onResult(FocusTapResult.UNSUPPORTED)
+            return
+        }
         val resolution = sourceResolution
         val rotated = sourceRotation == 90 || sourceRotation == 270
         val contentW = (if (rotated) resolution?.height else resolution?.width)?.toFloat() ?: viewWidth
         val contentH = (if (rotated) resolution?.width else resolution?.height)?.toFloat() ?: viewHeight
-        if (contentW <= 0f || contentH <= 0f) return
+        if (contentW <= 0f || contentH <= 0f) {
+            onResult(FocusTapResult.UNSUPPORTED)
+            return
+        }
         val scale = maxOf(viewWidth / contentW, viewHeight / contentH)
         val fullW = contentW * scale
         val fullH = contentH * scale
         val factory = DisplayOrientedMeteringPointFactory(display, activeCamera.cameraInfo, fullW, fullH)
         val point = factory.createPoint(x + (fullW - viewWidth) / 2f, y + (fullH - viewHeight) / 2f)
-        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-            .build()
-        activeCamera.cameraControl.startFocusAndMetering(action)
+
+        if (
+            activeFocusMode == FocusMode.MANUAL ||
+            activeFocusMode == FocusMode.INFINITY ||
+            activeFocusMode == FocusMode.FIXED
+        ) {
+            if (manualExposure) {
+                onResult(FocusTapResult.IGNORED)
+                return
+            }
+            val metering = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AE)
+                .setAutoCancelDuration(3, TimeUnit.SECONDS)
+                .build()
+            val future = activeCamera.cameraControl.startFocusAndMetering(metering)
+            future.addListener({
+                val metered = runCatching { future.get() }.isSuccess
+                onResult(if (metered) FocusTapResult.METERED else FocusTapResult.FAILED)
+            }, mainExecutor)
+            return
+        }
+
+        val autofocusSupported = when (activeFocusMode) {
+            FocusMode.MACRO -> activeMacroFocusSupported
+            FocusMode.CONTINUOUS -> activeContinuousFocusSupported || activeTapFocusSupported
+            FocusMode.TAP_LOCK -> activeTapFocusSupported
+            FocusMode.FIXED,
+            FocusMode.MANUAL,
+            FocusMode.INFINITY,
+            -> false
+        }
+        if (!autofocusSupported) {
+            onResult(FocusTapResult.UNSUPPORTED)
+            return
+        }
+
+        val meteringFlags = if (activeFocusMode == FocusMode.CONTINUOUS) {
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+        } else {
+            // Tap Lock and Macro lock focus only; exposure remains governed by
+            // the user's Auto/Manual exposure setting rather than being held at
+            // the focus point for the whole locked interval.
+            FocusMeteringAction.FLAG_AF
+        }
+        val builder = FocusMeteringAction.Builder(point, meteringFlags)
+        if (activeFocusMode == FocusMode.CONTINUOUS) {
+            builder.setAutoCancelDuration(3, TimeUnit.SECONDS)
+        } else {
+            builder.disableAutoCancel()
+        }
+        val future = activeCamera.cameraControl.startFocusAndMetering(builder.build())
+        future.addListener({
+            val successful = runCatching { future.get().isFocusSuccessful }.getOrDefault(false)
+            onResult(
+                when {
+                    !successful -> FocusTapResult.FAILED
+                    activeFocusMode == FocusMode.CONTINUOUS -> FocusTapResult.FOCUSED
+                    else -> FocusTapResult.LOCKED
+                },
+            )
+        }, mainExecutor)
     }
 
     suspend fun capture(settings: CameraSettings): CapturedFrame = captureMutex.withLock {
+        activeFocusMode = effectiveFocusMode(settings.focusMode)
+        activeManualFocusPosition = settings.manualFocusPosition.coerceIn(0f, 1f)
         val capture = imageCapture ?: throw IllegalStateException("Camera not ready")
         when {
             settings.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME && rawHdrActive ->
@@ -271,6 +372,7 @@ class CameraController(context: Context) {
             exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)),
         )
         val captured = mutableListOf<CapturedExposure>()
+        val heldFocusDistance = focusDistanceForBracket()
         return try {
             if (settings.manualMode && activeManualExposureSupported && activeExposureTimeRange != null) {
                 val iso = settings.manualIso.coerceIn(
@@ -285,10 +387,18 @@ class CameraController(context: Context) {
                     return CapturedFrame(exposures = listOf(CapturedExposure(captureJpegBitmap(capture), 0f)))
                 }
                 plan.forEach { (shutter, evOffset) ->
-                    applyManualExposureAndAwait(iso, shutter, lockAwb = true)
+                    applyManualExposureAndAwait(
+                        iso = iso,
+                        shutterNs = shutter,
+                        lockAwb = true,
+                        heldFocusDistance = heldFocusDistance,
+                    )
                     captured += CapturedExposure(captureJpegBitmap(capture), evOffset)
                 }
             } else {
+                if (heldFocusDistance != null) {
+                    applyAutoExposureFocusHoldAndAwait(heldFocusDistance, lockAwb = true)
+                }
                 val baseIndex = activeCamera.cameraInfo.exposureState.exposureCompensationIndex
                     .coerceIn(activeExposureRange.first, activeExposureRange.last)
                 val plan = HdrBracketPlanner.planAuto(baseIndex, activeExposureRange, activeExposureStep)
@@ -334,10 +444,16 @@ class CameraController(context: Context) {
             throw IllegalStateException("The active camera cannot form a distinct RAW exposure bracket")
         }
 
+        val heldFocusDistance = focusDistanceForBracket()
         val frames = mutableListOf<RawSensorFrame>()
         return try {
             plan.forEachIndexed { index, (shutter, plannedEv) ->
-                applyManualExposureAndAwait(safeIso, shutter, lockAwb = true)
+                applyManualExposureAndAwait(
+                    iso = safeIso,
+                    shutterNs = shutter,
+                    lockAwb = true,
+                    heldFocusDistance = heldFocusDistance,
+                )
                 frames += captureRawSensor(
                     capture = capture,
                     plannedEvOffset = plannedEv,
@@ -367,10 +483,12 @@ class CameraController(context: Context) {
     private suspend fun restoreExposure(settings: CameraSettings) {
         val activeCamera = camera ?: return
         try {
-            if (settings.manualMode && activeManualExposureSupported) {
-                applyManualExposureAndAwait(settings.manualIso, settings.manualShutterNs, lockAwb = false)
-            } else {
-                Camera2CameraControl.from(activeCamera.cameraControl).clearCaptureRequestOptions().await()
+            activeFocusMode = effectiveFocusMode(settings.focusMode)
+            activeManualFocusPosition = settings.manualFocusPosition.coerceIn(0f, 1f)
+            Camera2CameraControl.from(activeCamera.cameraControl)
+                .setCaptureRequestOptions(userCaptureRequestOptions(settings, lockAwb = false))
+                .await()
+            if (!settings.manualMode) {
                 val target = Math.round(settings.hardwareEv / activeExposureStep.coerceAtLeast(1f / 6f))
                     .coerceIn(activeExposureRange.first, activeExposureRange.last)
                 activeCamera.cameraControl.setExposureCompensationIndex(target).await()
@@ -381,12 +499,24 @@ class CameraController(context: Context) {
     }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-    private suspend fun applyManualExposureAndAwait(iso: Int, shutterNs: Long, lockAwb: Boolean) {
+    private suspend fun applyManualExposureAndAwait(
+        iso: Int,
+        shutterNs: Long,
+        lockAwb: Boolean,
+        heldFocusDistance: Float? = null,
+    ) {
         val activeCamera = camera ?: throw IllegalStateException("Camera closed during exposure bracket")
         val safeIso = activeIsoRange?.let { iso.coerceIn(it.first, it.last) } ?: iso
         val safeShutter = activeExposureTimeRange?.let { shutterNs.coerceIn(it.first, it.last) } ?: shutterNs
         Camera2CameraControl.from(activeCamera.cameraControl)
-            .setCaptureRequestOptions(manualExposureOptions(safeIso, safeShutter, lockAwb))
+            .setCaptureRequestOptions(
+                manualExposureOptions(
+                    iso = safeIso,
+                    shutterNs = safeShutter,
+                    lockAwb = lockAwb,
+                    heldFocusDistance = heldFocusDistance,
+                ),
+            )
             .await()
     }
 
@@ -394,16 +524,147 @@ class CameraController(context: Context) {
         iso: Int,
         shutterNs: Long,
         lockAwb: Boolean,
-    ): CaptureRequestOptions = CaptureRequestOptions.Builder()
-        .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
-        .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
-        .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
-        .apply {
-            if (activeAwbLockSupported) {
-                setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
-            }
+        heldFocusDistance: Float? = null,
+    ): CaptureRequestOptions {
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
+        if (heldFocusDistance != null && activeManualFocusSupported) {
+            builder
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, heldFocusDistance)
+        } else {
+            appendFocusOptions(builder, activeFocusMode, activeManualFocusPosition)
         }
-        .build()
+        if (activeAwbLockSupported) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
+        }
+        return builder.build()
+    }
+
+    private fun userCaptureRequestOptions(
+        settings: CameraSettings,
+        lockAwb: Boolean,
+    ): CaptureRequestOptions {
+        val builder = CaptureRequestOptions.Builder()
+        if (settings.manualMode && activeManualExposureSupported) {
+            val safeIso = activeIsoRange?.let {
+                settings.manualIso.coerceIn(it.first, it.last)
+            } ?: settings.manualIso
+            val safeShutter = activeExposureTimeRange?.let {
+                settings.manualShutterNs.coerceIn(it.first, it.last)
+            } ?: settings.manualShutterNs
+            builder
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, safeIso)
+                .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, safeShutter)
+        }
+        appendFocusOptions(builder, effectiveFocusMode(settings.focusMode), settings.manualFocusPosition)
+        if (activeAwbLockSupported && lockAwb) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+        }
+        return builder.build()
+    }
+
+    private fun appendFocusOptions(
+        builder: CaptureRequestOptions.Builder,
+        mode: FocusMode,
+        manualPosition: Float,
+    ) {
+        when (mode) {
+            FocusMode.CONTINUOUS -> if (activeContinuousFocusSupported) {
+                builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, activeContinuousAfMode)
+            }
+            FocusMode.TAP_LOCK -> if (activeTapFocusSupported) {
+                val afMode = when {
+                    CameraMetadata.CONTROL_AF_MODE_AUTO in activeAfModes -> CameraMetadata.CONTROL_AF_MODE_AUTO
+                    activeContinuousFocusSupported -> activeContinuousAfMode
+                    else -> return
+                }
+                builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+            }
+            FocusMode.MACRO -> if (activeMacroFocusSupported) {
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AF_MODE,
+                    CameraMetadata.CONTROL_AF_MODE_MACRO,
+                )
+            }
+            FocusMode.MANUAL -> if (activeManualFocusSupported) {
+                builder
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+                    .setCaptureRequestOption(
+                        CaptureRequest.LENS_FOCUS_DISTANCE,
+                        FocusMath.normalizedToDiopters(manualPosition, activeMinimumFocusDistance),
+                    )
+            }
+            FocusMode.INFINITY -> if (activeInfinityFocusSupported) {
+                builder
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+                    .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+            }
+            FocusMode.FIXED -> Unit
+        }
+    }
+
+    private fun effectiveFocusMode(requested: FocusMode): FocusMode {
+        if (!focusCapabilitiesKnown) return requested
+        val supported = when (requested) {
+            FocusMode.CONTINUOUS -> activeContinuousFocusSupported
+            FocusMode.TAP_LOCK -> activeTapFocusSupported
+            FocusMode.MACRO -> activeMacroFocusSupported
+            FocusMode.MANUAL -> activeManualFocusSupported
+            FocusMode.INFINITY -> activeInfinityFocusSupported
+            FocusMode.FIXED -> !activeTapFocusSupported && !activeManualFocusSupported
+        }
+        if (supported) return requested
+        return when {
+            activeContinuousFocusSupported -> FocusMode.CONTINUOUS
+            activeTapFocusSupported -> FocusMode.TAP_LOCK
+            activeMacroFocusSupported -> FocusMode.MACRO
+            activeManualFocusSupported -> FocusMode.MANUAL
+            activeInfinityFocusSupported -> FocusMode.INFINITY
+            else -> FocusMode.FIXED
+        }
+    }
+
+    private fun focusDistanceForBracket(): Float? {
+        if (!activeManualFocusSupported) return null
+        return when (activeFocusMode) {
+            FocusMode.MANUAL -> FocusMath.normalizedToDiopters(
+                activeManualFocusPosition,
+                activeMinimumFocusDistance,
+            )
+            FocusMode.INFINITY -> 0f
+            FocusMode.FIXED -> null
+            FocusMode.CONTINUOUS,
+            FocusMode.TAP_LOCK,
+            FocusMode.MACRO,
+            -> latestCaptureResult.get()
+                ?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+                ?.coerceIn(0f, activeMinimumFocusDistance)
+        }
+    }
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private suspend fun applyAutoExposureFocusHoldAndAwait(
+        focusDistance: Float,
+        lockAwb: Boolean,
+    ) {
+        val activeCamera = camera ?: throw IllegalStateException("Camera closed during HDR focus hold")
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+            .setCaptureRequestOption(
+                CaptureRequest.LENS_FOCUS_DISTANCE,
+                focusDistance.coerceIn(0f, activeMinimumFocusDistance),
+            )
+        if (activeAwbLockSupported) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
+        }
+        Camera2CameraControl.from(activeCamera.cameraControl)
+            .setCaptureRequestOptions(builder.build())
+            .await()
+    }
 
     private suspend fun captureJpegBitmap(capture: ImageCapture): Bitmap =
         suspendCancellableCoroutine { continuation ->
@@ -676,6 +937,7 @@ class CameraController(context: Context) {
         provider.unbindAll()
         captureResultsByTimestamp.clear()
         latestCaptureResult.set(null)
+        focusCapabilitiesKnown = false
         val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val cameraInfo = provider.getCameraInfo(selector)
@@ -871,6 +1133,9 @@ class CameraController(context: Context) {
         var isoRange: IntRange? = null
         var exposureTimeRange: LongRange? = null
         var manualExposureSupported = false
+        var minimumFocusDistance = 0f
+        var availableAfModes: Set<Int> = emptySet()
+        var focusCalibration = FocusDistanceCalibration.UNCALIBRATED
         try {
             val camera2Info = Camera2CameraInfo.from(info)
             aperture = camera2Info.getCameraCharacteristic(
@@ -893,6 +1158,23 @@ class CameraController(context: Context) {
             activeAwbLockSupported = camera2Info.getCameraCharacteristic(
                 CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE,
             ) == true
+            minimumFocusDistance = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE,
+            ) ?: 0f
+            availableAfModes = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES,
+            )?.toSet().orEmpty()
+            focusCalibration = when (
+                camera2Info.getCameraCharacteristic(
+                    CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION,
+                )
+            ) {
+                CameraMetadata.LENS_INFO_FOCUS_DISTANCE_CALIBRATION_CALIBRATED ->
+                    FocusDistanceCalibration.CALIBRATED
+                CameraMetadata.LENS_INFO_FOCUS_DISTANCE_CALIBRATION_APPROXIMATE ->
+                    FocusDistanceCalibration.APPROXIMATE
+                else -> FocusDistanceCalibration.UNCALIBRATED
+            }
         } catch (_: Exception) {
             Unit
         }
@@ -902,6 +1184,31 @@ class CameraController(context: Context) {
         activeIsoRange = isoRange
         activeExposureTimeRange = exposureTimeRange
         activeManualExposureSupported = manualExposureSupported
+        activeMinimumFocusDistance = minimumFocusDistance.coerceAtLeast(0f)
+        activeAfModes = availableAfModes
+        activeContinuousFocusSupported =
+            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE in availableAfModes ||
+                CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO in availableAfModes
+        activeContinuousAfMode = if (
+            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE in availableAfModes
+        ) {
+            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+        } else {
+            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+        }
+        activeMacroFocusSupported =
+            minimumFocusDistance > 0f && CameraMetadata.CONTROL_AF_MODE_MACRO in availableAfModes
+        activeTapFocusSupported = minimumFocusDistance > 0f && availableAfModes.any { mode ->
+            mode == CameraMetadata.CONTROL_AF_MODE_AUTO ||
+                mode == CameraMetadata.CONTROL_AF_MODE_MACRO ||
+                mode == CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE ||
+                mode == CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+        }
+        activeManualFocusSupported = minimumFocusDistance > 0f &&
+            CameraMetadata.CONTROL_AF_MODE_OFF in availableAfModes
+        activeInfinityFocusSupported = activeManualFocusSupported
+        focusCapabilitiesKnown = true
+        activeFocusMode = effectiveFocusMode(activeFocusMode)
         val autoBracketSupported = exposureRange.upper - exposureRange.lower >= 2
         val manualBracketSupported = manualExposureSupported && exposureTimeRange != null &&
             exposureTimeRange.upper > exposureTimeRange.lower
@@ -911,7 +1218,8 @@ class CameraController(context: Context) {
         onCapabilities?.invoke(
             CameraCapabilities(
                 hasFlash = info.hasFlashUnit(),
-                canFocus = true,
+                canFocus = activeContinuousFocusSupported || activeTapFocusSupported ||
+                    activeMacroFocusSupported || activeManualFocusSupported,
                 exposureRange = activeExposureRange,
                 exposureStep = exposureStep,
                 zoomRange = 1f..(zoomState?.maxZoomRatio ?: 1f),
@@ -922,6 +1230,13 @@ class CameraController(context: Context) {
                 rawJpegCaptureSupported = rawJpegUsable,
                 hdrBracketSupported = autoBracketSupported || manualBracketSupported,
                 trueRawHdrSupported = trueRawSupported,
+                continuousFocusSupported = activeContinuousFocusSupported,
+                tapFocusSupported = activeTapFocusSupported,
+                macroFocusSupported = activeMacroFocusSupported,
+                manualFocusSupported = activeManualFocusSupported,
+                infinityFocusSupported = activeInfinityFocusSupported,
+                minimumFocusDistanceDiopters = activeMinimumFocusDistance,
+                focusDistanceCalibration = focusCalibration,
             ),
         )
     }

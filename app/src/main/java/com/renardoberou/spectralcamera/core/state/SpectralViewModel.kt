@@ -12,6 +12,7 @@ import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
+import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.HardwareTestState
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
@@ -191,6 +192,9 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setManualMode(enabled: Boolean) { manualModeSession.value = enabled }
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
+    fun setFocusMode(mode: FocusMode) = updateSettings { it.copy(focusMode = mode) }
+    fun setManualFocusPosition(position: Float) =
+        updateSettings { it.copy(manualFocusPosition = position.coerceIn(0f, 1f)) }
     fun setIntensity(value: Float) = updateSettings { it.copy(intensity = value) }
     fun setZebra(enabled: Boolean) = updateSettings { it.copy(zebraEnabled = enabled) }
 
