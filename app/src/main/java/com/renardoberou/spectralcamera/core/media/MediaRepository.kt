@@ -3,6 +3,7 @@ package com.renardoberou.spectralcamera.core.media
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -43,19 +44,20 @@ class MediaRepository(private val context: Context) {
     suspend fun saveCapture(
         processed: Bitmap,
         original: Bitmap?,
-        rawSidecar: File?,
+        rawSidecars: List<File>,
         settings: CameraSettings,
         ultraHdr: Boolean,
         hdrFrameCount: Int,
     ): CaptureResult {
         val timestamp = Instant.now()
-        val frameCount = if (settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) {
-            hdrFrameCount.coerceIn(2, 9)
-        } else {
-            1
+        val frameCount = when (settings.hdrCaptureMode) {
+            HdrCaptureMode.OFF -> 1
+            HdrCaptureMode.THREE_FRAME,
+            HdrCaptureMode.RAW_THREE_FRAME,
+            -> hdrFrameCount.coerceIn(2, 9)
         }
         val processedAsset = if (ultraHdr) CaptureAsset.ULTRA_HDR else CaptureAsset.PROCESSED
-        val processedName = fileName(settings, processedAsset, timestamp, frameCount)
+        val processedName = fileName(settings, processedAsset.token, processedAsset.extension, timestamp, frameCount)
         val processedUri = insertBitmap(
             bitmap = processed,
             displayName = processedName,
@@ -64,7 +66,13 @@ class MediaRepository(private val context: Context) {
             hdrFrameCount = frameCount,
         )
         val originalUri = if (settings.saveOriginal && original != null) {
-            val originalName = fileName(settings, CaptureAsset.ORIGINAL_JPEG, timestamp, frameCount)
+            val originalName = fileName(
+                settings,
+                CaptureAsset.ORIGINAL_JPEG.token,
+                CaptureAsset.ORIGINAL_JPEG.extension,
+                timestamp,
+                frameCount,
+            )
             insertBitmap(
                 bitmap = original,
                 displayName = originalName,
@@ -75,14 +83,32 @@ class MediaRepository(private val context: Context) {
         } else {
             null
         }
-        val rawUri = rawSidecar?.takeIf { it.isFile && it.length() > 0L }?.let { file ->
-            val rawName = fileName(settings, CaptureAsset.RAW_DNG, timestamp, frameCount = 1)
-            insertRawSidecar(file, rawName, settings)
+
+        val validRawFiles = rawSidecars.filter { it.isFile && it.length() > 0L }
+        val rawUris = validRawFiles.mapIndexed { index, file ->
+            val token = if (validRawFiles.size == 1) "dng" else "dng${(index + 1).toString().padStart(2, '0')}"
+            val rawName = fileName(
+                settings = settings,
+                assetToken = token,
+                extension = "dng",
+                instant = timestamp,
+                frameCount = frameCount,
+            )
+            insertRawSidecar(
+                source = file,
+                displayName = rawName,
+                settings = settings,
+                hdrFrameCount = frameCount,
+                bracketIndex = index,
+                bracketSize = validRawFiles.size,
+            )
         }
+
         return CaptureResult(
             processedUri = processedUri,
             originalUri = originalUri,
-            rawUri = rawUri,
+            rawUri = rawUris.firstOrNull(),
+            rawUris = rawUris,
             displayName = processedName,
             ultraHdr = ultraHdr,
         )
@@ -128,6 +154,7 @@ class MediaRepository(private val context: Context) {
             while (cursor.moveToNext() && items.size < limit) {
                 val id = cursor.getLong(idCol)
                 val name = cursor.getString(nameCol) ?: continue
+                // DNG bracket members deliberately stay out of the JPEG gallery.
                 val meta = parseName(name) ?: continue
                 val dateTaken = if (cursor.isNull(dateCol)) 0L else cursor.getLong(dateCol)
                 val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon()
@@ -154,20 +181,16 @@ class MediaRepository(private val context: Context) {
         settings: CameraSettings,
         asset: CaptureAsset,
         hdrFrameCount: Int,
-    ): android.net.Uri {
+    ): Uri {
         val values = mediaValues(
             displayName = displayName,
             mimeType = "image/jpeg",
-            description = description(settings, asset, hdrFrameCount),
+            description = description(settings, asset.description, hdrFrameCount),
         )
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore item")
-
         try {
             resolver.openOutputStream(uri, "w")?.use { stream ->
-                // API 34+ can encode a Bitmap-attached Gainmap into a backward-
-                // compatible JPEG/R file. Device round-trip validation remains a
-                // release gate; a plain bitmap still encodes as ordinary JPEG.
                 if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
                     throw IOException("Failed to compress bitmap")
                 }
@@ -184,15 +207,22 @@ class MediaRepository(private val context: Context) {
         source: File,
         displayName: String,
         settings: CameraSettings,
-    ): android.net.Uri {
+        hdrFrameCount: Int,
+        bracketIndex: Int,
+        bracketSize: Int,
+    ): Uri {
+        val member = if (bracketSize > 1) {
+            "RAW bracket frame ${bracketIndex + 1} of $bracketSize"
+        } else {
+            "Untouched RAW DNG sidecar"
+        }
         val values = mediaValues(
             displayName = displayName,
             mimeType = "image/x-adobe-dng",
-            description = description(settings, CaptureAsset.RAW_DNG, hdrFrameCount = 1),
+            description = description(settings, member, hdrFrameCount),
         )
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create RAW MediaStore item")
-
         try {
             resolver.openOutputStream(uri, "w")?.use { output ->
                 source.inputStream().use { input -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
@@ -226,7 +256,7 @@ class MediaRepository(private val context: Context) {
         }
     }
 
-    private fun publishPending(uri: android.net.Uri, values: ContentValues) {
+    private fun publishPending(uri: Uri, values: ContentValues) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -236,30 +266,33 @@ class MediaRepository(private val context: Context) {
 
     private fun description(
         settings: CameraSettings,
-        asset: CaptureAsset,
+        assetDescription: String,
         hdrFrameCount: Int,
     ): String {
-        val capture = if (settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) {
-            "$hdrFrameCount-frame Computational HDR • ${settings.hdrToneMap.label} tone map"
-        } else {
-            "Standard capture"
+        val capture = when (settings.hdrCaptureMode) {
+            HdrCaptureMode.OFF -> "Standard capture"
+            HdrCaptureMode.THREE_FRAME ->
+                "$hdrFrameCount-frame JPEG Computational HDR • ${settings.hdrToneMap.label} tone map"
+            HdrCaptureMode.RAW_THREE_FRAME ->
+                "$hdrFrameCount-frame sensor-linear RAW HDR • ${settings.hdrToneMap.label} tone map"
         }
-        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • $capture • ${asset.description}"
+        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • $capture • $assetDescription"
     }
 
     private fun fileName(
         settings: CameraSettings,
-        asset: CaptureAsset,
+        assetToken: String,
+        extension: String,
         instant: Instant,
         frameCount: Int,
     ): String {
         val stamp = timestampFormatter.format(instant)
-        val captureToken = if (settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME) {
-            "HDR${frameCount.coerceIn(2, 9)}"
-        } else {
-            "SDR1"
+        val captureToken = when (settings.hdrCaptureMode) {
+            HdrCaptureMode.OFF -> "SDR1"
+            HdrCaptureMode.THREE_FRAME -> "JHDR${frameCount.coerceIn(2, 9)}"
+            HdrCaptureMode.RAW_THREE_FRAME -> "RHDR${frameCount.coerceIn(2, 9)}"
         }
-        return "spectral_${asset.token}_${settings.sensorMode.name}_${settings.preset.name}_${settings.outputMode.name}_${captureToken}_$stamp.${asset.extension}"
+        return "spectral_${assetToken}_${settings.sensorMode.name}_${settings.preset.name}_${settings.outputMode.name}_${captureToken}_$stamp.$extension"
     }
 
     private enum class CaptureAsset(
@@ -270,7 +303,6 @@ class MediaRepository(private val context: Context) {
         PROCESSED("proc", "jpg", "Processed SDR JPEG"),
         ULTRA_HDR("uhdr", "jpg", "Processed Ultra HDR JPEG/R"),
         ORIGINAL_JPEG("orig", "jpg", "Reference-exposure original JPEG"),
-        RAW_DNG("dng", "dng", "Untouched RAW DNG sidecar"),
     }
 
     private data class ParsedName(
@@ -282,11 +314,11 @@ class MediaRepository(private val context: Context) {
     )
 
     private fun parseName(displayName: String): ParsedName? {
-        val hdrRegex = Regex(
-            "^spectral_(proc|uhdr|orig)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_(FULL_RESOLUTION|HQ_1080|FAST_1080)_(HDR[2-9]|SDR1)_([0-9]{8}_[0-9]{6})\\.jpg$",
+        val currentRegex = Regex(
+            "^spectral_(proc|uhdr|orig)_(SIMULATED_IR|EXTERNAL_IR|THERMAL)_([A-Z0-9_]+)_(FULL_RESOLUTION|HQ_1080|FAST_1080)_((?:J|R)?HDR[2-9]|SDR1)_([0-9]{8}_[0-9]{6})\\.jpg$",
             RegexOption.IGNORE_CASE,
         )
-        hdrRegex.find(displayName)?.let { match ->
+        currentRegex.find(displayName)?.let { match ->
             val preset = runCatching {
                 SpectralPreset.valueOf(match.groupValues[3].uppercase(Locale.US))
             }.getOrNull() ?: return null
