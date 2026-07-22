@@ -21,55 +21,6 @@ jobs:
               p.write_text(text.replace(old, new, 1))
 
           shader = "app/src/main/java/com/renardoberou/spectralcamera/core/gl/SpectralGlPipeline.kt"
-
-          # Build the entire wide sky blur in raw texture space, then normalize
-          # and apply the pre-film curve once. This avoids giving the centre
-          # sample a second tone-curve pass relative to its neighbours.
           replace_once(shader, "    vec3 acc = src;", "    vec3 acc = raw;")
-
-          replace_once(
-              shader,
-              '''vec3 blur = acc / wsum;
-// Keep sky detection in the same normalized scene domain as src/srcC.
-blur = applyPreFilmCurve(
-    clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
-    sceneCurveStrength);
-
-float bLuma = lumaOf(blur);''',
-              '''    vec3 blur = acc / wsum;
-    // Keep sky detection in the same normalized scene domain as src/srcC.
-    blur = applyPreFilmCurve(
-        clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
-        sceneCurveStrength);
-
-    float bLuma = lumaOf(blur);''',
-          )
-
-          replace_once(
-              shader,
-              '''// Clear blue sky receives only a low-frequency brightness modulation;
-// cloud structure receives more detail. This reduces blue-channel noise
-// without smearing real clouds.
-float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
-float skyDetailGain = mix(0.44, 0.16, clearBlue);
-skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);''',
-              '''    // Clear blue sky receives only a low-frequency brightness modulation;
-    // cloud structure receives more detail. This reduces blue-channel noise
-    // without smearing real clouds.
-    float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
-    float skyDetailGain = mix(0.44, 0.16, clearBlue);
-    skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);''',
-          )
-
-          replace_once(
-              shader,
-              '''// The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
-// perturbation so classification does not become visible blue speckle.
-skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);''',
-              '''    // The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
-    // perturbation so classification does not become visible blue speckle.
-    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);''',
-          )
-
           Path(".github/workflows/apply-scene-film-refinement.yml").unlink()
           PY
