@@ -1,0 +1,93 @@
+name: Finalize scene-to-film refinement
+
+on:
+  push:
+    branches: [agent/aerochrome-tonal-refinement]
+    paths: [.github/workflows/finalize-scene-film-refinement.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/aerochrome-tonal-refinement
+          fetch-depth: 0
+      - name: Correct wide-blur source domain and formatting
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/src/main/java/com/renardoberou/spectralcamera/core/gl/SpectralGlPipeline.kt')
+          text = path.read_text()
+
+          def one(old: str, new: str) -> None:
+              global text
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected one occurrence, found {text.count(old)}: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          # The wide sky blur must be accumulated entirely in raw texture space,
+          # then normalized/precurved once. Mixing a precurved center with raw taps
+          # would double-shape the center sample.
+          one('    vec3 acc = src;', '    vec3 acc = raw;')
+
+          one(
+              '''vec3 blur = acc / wsum;
+// Keep sky detection in the same normalized scene domain as src/srcC.
+blur = applyPreFilmCurve(
+    clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+    sceneCurveStrength);
+
+float bLuma = lumaOf(blur);''',
+              '''    vec3 blur = acc / wsum;
+    // Keep sky detection in the same normalized scene domain as src/srcC.
+    blur = applyPreFilmCurve(
+        clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+        sceneCurveStrength);
+
+    float bLuma = lumaOf(blur);''',
+          )
+
+          one(
+              '''// Clear blue sky receives only a low-frequency brightness modulation;
+// cloud structure receives more detail. This reduces blue-channel noise
+// without smearing real clouds.
+float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
+float skyDetailGain = mix(0.44, 0.16, clearBlue);
+skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);''',
+              '''    // Clear blue sky receives only a low-frequency brightness modulation;
+    // cloud structure receives more detail. This reduces blue-channel noise
+    // without smearing real clouds.
+    float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
+    float skyDetailGain = mix(0.44, 0.16, clearBlue);
+    skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);''',
+          )
+
+          one(
+              '''// The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
+// perturbation so classification does not become visible blue speckle.
+skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);''',
+              '''    // The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
+    // perturbation so classification does not become visible blue speckle.
+    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);''',
+          )
+
+          path.write_text(text)
+          Path('.github/workflows/finalize-scene-film-refinement.yml').unlink()
+          PY
+      - name: Verify final engine
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease
+      - name: Commit final correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(engine): normalize sky blur once in the correct source domain"
+          git push origin HEAD:agent/aerochrome-tonal-refinement
