@@ -106,15 +106,15 @@ enum class HdrCaptureMode(
 ) {
     OFF(
         label = "Standard",
-        description = "One JPEG-derived frame. Fastest and best for motion.",
+        description = "One JPEG-derived frame. Fastest for action and exact single-frame timing.",
     ),
     THREE_FRAME(
         label = "Computational HDR",
-        description = "Bracketed JPEG frames merged before synthetic NIR and film rendering.",
+        description = "Bracketed JPEG frames with movement-safe fusion before synthetic NIR and film rendering.",
     ),
     RAW_THREE_FRAME(
         label = "True RAW HDR",
-        description = "Three RAW_SENSOR Bayer frames merged before demosaic, colour conversion, synthetic NIR, and film rendering.",
+        description = "RAW_SENSOR Bayer frames with movement-safe fusion before demosaic, colour conversion, synthetic NIR, and film rendering.",
     ),
 }
 
@@ -147,7 +147,7 @@ enum class DoubleExposureMode(
     ),
     FILM_BALANCED(
         label = "Double exposure",
-        description = "Capture two separate compositions, combine them in linear light, then apply the selected film look once.",
+        description = "Capture two separate compositions, combine them as balanced half-exposures in linear light, then apply the selected film look once.",
     ),
 }
 
@@ -259,7 +259,9 @@ data class CaptureResult(
     val summary: String
         get() = buildString {
             append(captureModeLabel)
-            if (motionProtected) append(" • motion protected")
+            if (motionProtected && !captureModeLabel.contains("motion protected", ignoreCase = true)) {
+                append(" • motion protected")
+            }
             append(" • ")
             append(captureDetail)
         }
