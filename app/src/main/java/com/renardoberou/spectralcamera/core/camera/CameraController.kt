@@ -23,7 +23,6 @@ import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
-import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.DisplayOrientedMeteringPointFactory
 import androidx.camera.core.FocusMeteringAction
@@ -41,7 +40,6 @@ import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import com.renardoberou.spectralcamera.core.CameraCapabilities
-import com.renardoberou.spectralcamera.core.CameraLensOption
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.FocusDistanceCalibration
 import com.renardoberou.spectralcamera.core.FocusMode
@@ -98,9 +96,6 @@ class CameraController(context: Context) {
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
-    private var requestedLensId: String = ""
-    private var availableLensOptions: List<CameraLensOption> = emptyList()
-    private var activeLensOption: CameraLensOption? = null
     private var outputMode: OutputMode = OutputMode.FULL_RESOLUTION
     private var hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF
     private var rawSidecarRequested: Boolean = false
@@ -210,7 +205,6 @@ class CameraController(context: Context) {
         lifecycleOwner: LifecycleOwner,
         glView: SpectralGlView,
         lensFacing: Int,
-        selectedLensId: String,
         outputMode: OutputMode,
         hdrCaptureMode: HdrCaptureMode,
         rawSidecarRequested: Boolean,
@@ -219,7 +213,6 @@ class CameraController(context: Context) {
     ) {
         this.glView = glView
         this.lensFacing = lensFacing
-        this.requestedLensId = selectedLensId
         this.outputMode = outputMode
         this.hdrCaptureMode = hdrCaptureMode
         this.rawSidecarRequested = rawSidecarRequested
@@ -946,23 +939,11 @@ class CameraController(context: Context) {
         latestCaptureResult.set(null)
         focusCapabilitiesKnown = false
         val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0
-        availableLensOptions = discoverLensOptions(provider)
-        val selectedLens = CameraLensCatalog.choose(
-            options = availableLensOptions,
-            requestedId = requestedLensId,
-            preferFront = lensFacing == CameraSelector.LENS_FACING_FRONT,
-        ) ?: throw IllegalStateException("No camera lens is available")
-        activeLensOption = selectedLens
-        lensFacing = if (selectedLens.frontFacing) {
-            CameraSelector.LENS_FACING_FRONT
-        } else {
-            CameraSelector.LENS_FACING_BACK
-        }
-        val selector = cameraSelectorFor(selectedLens)
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val cameraInfo = provider.getCameraInfo(selector)
-        val characteristicsId = selectedLens.physicalCameraId ?: selectedLens.logicalCameraId
+        val camera2Info = Camera2CameraInfo.from(cameraInfo)
         activeCharacteristics = runCatching {
-            cameraManager.getCameraCharacteristics(characteristicsId)
+            cameraManager.getCameraCharacteristics(camera2Info.cameraId)
         }.getOrNull()
         val advertisedFormats = runCatching {
             ImageCapture.getImageCaptureCapabilities(cameraInfo).supportedOutputFormats
@@ -1014,123 +995,7 @@ class CameraController(context: Context) {
         updateCapabilities()
     }
 
-
-@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-private fun discoverLensOptions(provider: ProcessCameraProvider): List<CameraLensOption> {
-    val allInfos = provider.availableCameraInfos
-    fun facingInfos(facing: Int): List<CameraInfo> = runCatching {
-        CameraSelector.Builder().requireLensFacing(facing).build().filter(allInfos)
-    }.getOrDefault(emptyList())
-
-    fun cameraId(info: CameraInfo): String? = runCatching {
-        Camera2CameraInfo.from(info).cameraId
-    }.getOrNull()
-
-    val rearInfos = facingInfos(CameraSelector.LENS_FACING_BACK)
-    val frontInfos = facingInfos(CameraSelector.LENS_FACING_FRONT)
-    val rearPhysicalIds = rearInfos.flatMap { logical ->
-        runCatching { logical.physicalCameraInfos }.getOrDefault(emptySet())
-            .mapNotNull(::cameraId)
-    }.toSet()
-    val candidates = mutableListOf<CameraLensCandidate>()
-
-    rearInfos.forEach { logical ->
-        val logicalId = cameraId(logical) ?: return@forEach
-        val physicalInfos = runCatching { logical.physicalCameraInfos }
-            .getOrDefault(emptySet())
-            .mapNotNull { physical ->
-                val physicalId = cameraId(physical) ?: return@mapNotNull null
-                physicalId to physical
-            }
-            .distinctBy { it.first }
-
-        if (physicalInfos.size > 1) {
-            candidates += lensCandidate(
-                logicalCameraId = logicalId,
-                physicalCameraId = null,
-                frontFacing = false,
-                automatic = true,
-            )
-            physicalInfos.forEach { (physicalId, _) ->
-                candidates += lensCandidate(
-                    logicalCameraId = logicalId,
-                    physicalCameraId = physicalId,
-                    frontFacing = false,
-                    automatic = false,
-                )
-            }
-        } else if (logicalId !in rearPhysicalIds) {
-            candidates += lensCandidate(
-                logicalCameraId = logicalId,
-                physicalCameraId = null,
-                frontFacing = false,
-                automatic = false,
-            )
-        }
-    }
-
-    frontInfos.forEach { info ->
-        val cameraId = cameraId(info) ?: return@forEach
-        candidates += lensCandidate(
-            logicalCameraId = cameraId,
-            physicalCameraId = null,
-            frontFacing = true,
-            automatic = false,
-        )
-    }
-
-    return CameraLensCatalog.buildOptions(candidates)
-}
-
-private fun lensCandidate(
-    logicalCameraId: String,
-    physicalCameraId: String?,
-    frontFacing: Boolean,
-    automatic: Boolean,
-): CameraLensCandidate {
-    val characteristicsId = physicalCameraId ?: logicalCameraId
-    val characteristics = runCatching {
-        cameraManager.getCameraCharacteristics(characteristicsId)
-    }.getOrNull()
-    val focalLength = characteristics
-        ?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-        ?.minOrNull()
-    val sensorSize = characteristics
-        ?.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-    val equivalent = CameraLensCatalog.equivalentFocalLengthMm(
-        focalLengthMm = focalLength,
-        sensorWidthMm = sensorSize?.width,
-        sensorHeightMm = sensorSize?.height,
-    )
-    return CameraLensCandidate(
-        id = CameraLensCatalog.optionId(logicalCameraId, physicalCameraId),
-        frontFacing = frontFacing,
-        logicalCameraId = logicalCameraId,
-        physicalCameraId = physicalCameraId,
-        automatic = automatic,
-        equivalentFocalLengthMm = equivalent,
-    )
-}
-
-@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-private fun cameraSelectorFor(lens: CameraLensOption): CameraSelector {
-    val builder = CameraSelector.Builder()
-        .requireLensFacing(
-            if (lens.frontFacing) CameraSelector.LENS_FACING_FRONT
-            else CameraSelector.LENS_FACING_BACK,
-        )
-        .addCameraFilter { infos ->
-            infos.filter { info ->
-                runCatching {
-                    Camera2CameraInfo.from(info).cameraId == lens.logicalCameraId
-                }.getOrDefault(false)
-            }
-        }
-    lens.physicalCameraId?.let(builder::setPhysicalCameraId)
-    return builder.build()
-}
-
-private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()
+    private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()
         .setResolutionSelector(
             ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
@@ -1372,9 +1237,6 @@ private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()
                 infinityFocusSupported = activeInfinityFocusSupported,
                 minimumFocusDistanceDiopters = activeMinimumFocusDistance,
                 focusDistanceCalibration = focusCalibration,
-                availableLenses = availableLensOptions,
-                activeLensId = activeLensOption?.id.orEmpty(),
-                activeLensLabel = activeLensOption?.label.orEmpty(),
             ),
         )
     }

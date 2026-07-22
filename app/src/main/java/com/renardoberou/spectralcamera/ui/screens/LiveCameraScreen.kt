@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,15 +20,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
-import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.FlashOn
-import androidx.compose.material.icons.outlined.Thermostat
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -55,6 +53,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -92,17 +91,12 @@ fun LiveCameraScreen(
     var showPresets by remember { mutableStateOf(false) }
     var showExposure by remember { mutableStateOf(false) }
     var showFocus by remember { mutableStateOf(false) }
-    var showLenses by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
     var focusMessage by remember { mutableStateOf("Continuous autofocus active") }
     var capturing by remember { mutableStateOf(false) }
-    val lensOptions = capabilities?.availableLenses.orEmpty()
-    val activeLensLabel = capabilities?.activeLensLabel?.takeIf { it.isNotBlank() }
-        ?: settings.selectedLensLabel.takeIf { it.isNotBlank() }
-        ?: if (settings.frontFacing) "Selfie" else "Rear camera"
     val manualFocusLabel = FocusMath.positionLabel(
         settings.manualFocusPosition,
         capabilities?.minimumFocusDistanceDiopters ?: 0f,
@@ -195,137 +189,148 @@ fun LiveCameraScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
+                    modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     shape = MaterialTheme.shapes.large,
                     tonalElevation = 6.dp,
                 ) {
-                    Column(Modifier.padding(10.dp)) {
-                        Text(
-                            text = "Spectral Camera",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "${settings.sensorMode.label} • simulated IR by default",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = "Preset: ${settings.preset.label}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                        Text(
-                            text = "Capture: ${settings.requestedCaptureLabel} • ${settings.outputMode.label}",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "Lens: $activeLensLabel",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                        Text(
-                            text = "Focus: ${settings.focusMode.label}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.tertiary,
-                        )
-                        if (doubleExposureState.waitingForSecond) {
-                            Text(
-                                text = "Frame 1 stored — use the transparent guide, recompose, then capture frame 2.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                            )
-                        }
-                        if (settings.manualMode) {
-                            Text(
-                                "MANUAL EXPOSURE — ISO ${settings.manualIso} · metering off",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        val wideHeader = maxWidth >= 520.dp
+                        if (wideHeader) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(0.9f),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
+                                    Text(
+                                        text = "Spectral Camera",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = "${settings.sensorMode.label} • simulated IR",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1.35f),
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                                ) {
+                                    Text(
+                                        text = "${settings.preset.label} • ${settings.focusMode.label}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = "${settings.requestedCaptureLabel} • ${settings.outputMode.label}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (doubleExposureState.waitingForSecond) {
+                                        Text(
+                                            text = "Double Exposure • frame 1 stored",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            textAlign = TextAlign.End,
+                                        )
+                                    }
+                                    if (settings.manualMode) {
+                                        Text(
+                                            text = "Manual exposure • ISO ${settings.manualIso}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            textAlign = TextAlign.End,
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Spectral Camera",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = settings.focusMode.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        maxLines = 1,
+                                    )
+                                }
+                                Text(
+                                    text = "${settings.sensorMode.label} • ${settings.preset.label}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "${settings.requestedCaptureLabel} • ${settings.outputMode.label}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (doubleExposureState.waitingForSecond) {
+                                    Text(
+                                        text = "Double Exposure • frame 1 stored",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
+                                if (settings.manualMode) {
+                                    Text(
+                                        text = "Manual exposure • ISO ${settings.manualIso}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
+            }
 
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    AssistChip(
-                        onClick = { showLenses = !showLenses },
-                        label = { Text("Lens: $activeLensLabel") },
-                        leadingIcon = { Icon(Icons.Outlined.Cameraswitch, null) },
-                    )
-                    AssistChip(
-                        onClick = onOpenGallery,
-                        label = { Text("Gallery ($galleryCount)") },
-                        leadingIcon = { Icon(Icons.Outlined.Collections, null) },
-                    )
-                    AssistChip(
-                        onClick = onOpenHardware,
-                        label = { Text("Hardware test") },
-                        leadingIcon = { Icon(Icons.Outlined.Thermostat, null) },
-                    )
-                    AssistChip(
-                        onClick = { showPresets = true },
-                        label = { Text("Presets") },
-                        leadingIcon = { Icon(Icons.Outlined.Tune, null) },
-                    )
-                }
-            }
-
-
-Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    if (showLenses && lensOptions.isNotEmpty()) {
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
-            shape = MaterialTheme.shapes.large,
-        ) {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    "Camera lens",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    lensOptions.forEach { lens ->
-                        FilterChip(
-                            selected = lens.id == capabilities?.activeLensId,
-                            onClick = {
-                                torchEnabled = false
-                                viewModel.setCameraLens(lens)
-                                showLenses = false
-                                captureLabel = "Switching to ${lens.label}…"
-                            },
-                            label = { Text(lens.label) },
-                        )
-                    }
-                }
-                val activeDescription = lensOptions
-                    .firstOrNull { it.id == capabilities?.activeLensId }
-                    ?.description
-                Text(
-                    activeDescription
-                        ?: "Only cameras exposed by Android can be selected. Some phone makers hide auxiliary lenses from third-party apps.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-            }
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (capabilities?.exposureSupported == true) {
                         FilterChip(
                             selected = showExposure,
@@ -346,6 +351,11 @@ Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             label = { Text(if (showFocus) "Focus ▴" else "Focus ▾") },
                         )
                     }
+                    FilterChip(
+                        selected = false,
+                        onClick = { showPresets = true },
+                        label = { Text("Presets") },
+                    )
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
@@ -526,26 +536,9 @@ Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-
-IconButton(onClick = {
-    val currentIndex = lensOptions.indexOfFirst {
-        it.id == capabilities?.activeLensId || it.id == settings.selectedLensId
-    }
-    val next = when {
-        lensOptions.isEmpty() -> null
-        currentIndex < 0 -> lensOptions.first()
-        else -> lensOptions[(currentIndex + 1) % lensOptions.size]
-    }
-    if (next != null) {
-        torchEnabled = false
-        viewModel.setCameraLens(next)
-        captureLabel = "Switching to ${next.label}…"
-    } else {
-        viewModel.setFrontFacing(!settings.frontFacing)
-    }
-}) {
-    Icon(Icons.Outlined.Cameraswitch, contentDescription = "Change lens")
-}
+                            IconButton(onClick = { viewModel.setFrontFacing(!settings.frontFacing) }) {
+                                Icon(Icons.Outlined.Cameraswitch, contentDescription = "Switch camera")
+                            }
 
                             FilledTonalButton(
                                 enabled = !capturing,

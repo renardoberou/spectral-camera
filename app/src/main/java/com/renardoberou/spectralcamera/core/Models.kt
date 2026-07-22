@@ -213,25 +213,11 @@ data class ManualAdjustments(
     val channelSwapMode: ChannelSwapMode = ChannelSwapMode.NONE,
 )
 
-
-data class CameraLensOption(
-    val id: String,
-    val label: String,
-    val description: String,
-    val frontFacing: Boolean,
-    val logicalCameraId: String,
-    val physicalCameraId: String? = null,
-    val approximateEquivalentFocalLengthMm: Float? = null,
-    val isAutomatic: Boolean = false,
-)
-
 data class CameraSettings(
     val preset: SpectralPreset = SpectralPreset.B_W_INFRARED,
     val adjustments: ManualAdjustments = ManualAdjustments(),
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
-    val selectedLensId: String = "",
-    val selectedLensLabel: String = "",
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
     val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
     val hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF,
@@ -278,9 +264,6 @@ data class CameraCapabilities(
     val infinityFocusSupported: Boolean = false,
     val minimumFocusDistanceDiopters: Float = 0f,
     val focusDistanceCalibration: FocusDistanceCalibration = FocusDistanceCalibration.UNCALIBRATED,
-    val availableLenses: List<CameraLensOption> = emptyList(),
-    val activeLensId: String = "",
-    val activeLensLabel: String = "",
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep

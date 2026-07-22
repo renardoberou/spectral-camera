@@ -333,8 +333,7 @@ class MediaRepository(private val context: Context) {
                 "$frameCount-frame sensor-linear RAW HDR • ${settings.hdrToneMap.label} tone map"
         }
         val protection = if (motionProtected) " • motion-protected fusion" else ""
-        val lens = settings.selectedLensLabel.ifBlank { if (settings.frontFacing) "Selfie" else "Rear camera" }
-        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • Lens $lens • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
+        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
     }
 
     private fun captureToken(
