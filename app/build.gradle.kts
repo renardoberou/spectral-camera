@@ -76,8 +76,8 @@ android {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    kotlinOptions {
-        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
+    compilerOptions {
+        optIn.add("androidx.compose.material3.ExperimentalMaterial3Api")
     }
 }
 
