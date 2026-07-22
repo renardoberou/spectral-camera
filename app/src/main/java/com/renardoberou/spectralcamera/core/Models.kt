@@ -13,9 +13,6 @@ enum class SpectralPreset(
     val description: String,
     val family: LookFamily,
 ) {
-    // ---- Monochrome IR family: six differentiated stock personalities,
-    // all sharing one IR-luminance/tone-curve engine parameterized by
-    // FilmLookLibrary.monoLookFor(). See core/FilmLook.kt for the numbers.
     B_W_INFRARED(
         label = "Rollei Infrared 400",
         description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain, restrained anti-halation glow.",
@@ -46,10 +43,6 @@ enum class SpectralPreset(
         description = "Romantic, low-contrast print look: milky highlights, dreamy wide halation, coarser grain, lifted blacks.",
         family = LookFamily.MONOCHROME_IR,
     ),
-
-    // ---- Aerochrome family: five coherent EIR grades sharing one
-    // physically-grounded false-colour engine, parameterized by
-    // FilmLookLibrary.aeroLookFor().
     AEROCHROME_FALSE_COLOR(
         label = "Aerochrome Classic",
         description = "The reference EIR grade: magenta-red foliage, deep cyan sky, filmic false-colour balance.",
@@ -90,21 +83,14 @@ enum class ChannelSwapMode(val label: String) {
     GB_SWAP("Swap G/B"),
 }
 
-/**
- * Processed-output strategy.
- *
- * FULL_RESOLUTION preserves the existing highest-available still behavior.
- * HQ_1080 keeps the high-resolution source through the film render, then uses
- * an orientation-aware high-quality downsample to exact Full HD.
- * FAST_1080 requests a lower-latency 16:9 source and renders at Full HD.
- */
+/** Processed-file size, source-resolution, and capture-speed policy. */
 enum class OutputMode(
     val label: String,
     val description: String,
 ) {
     FULL_RESOLUTION(
         label = "Full Resolution",
-        description = "Highest available still source and the largest processed export the GPU supports.",
+        description = "Highest practical still source and the largest processed export the GPU supports.",
     ),
     HQ_1080(
         label = "HQ 1080",
@@ -113,6 +99,46 @@ enum class OutputMode(
     FAST_1080(
         label = "Fast 1080",
         description = "Lower-latency 16:9 capture and exact Full HD processing for faster turnaround.",
+    ),
+}
+
+/**
+ * Capture-domain dynamic-range strategy.
+ *
+ * THREE_FRAME brackets the scene around the current exposure, aligns the JPEG
+ * frames, estimates linear-light radiance, deghosts disagreement toward the
+ * reference exposure, and normalizes/tone-maps before the spectral film model.
+ */
+enum class HdrCaptureMode(
+    val label: String,
+    val description: String,
+) {
+    OFF(
+        label = "Standard",
+        description = "One shutter frame. Fastest and best for motion.",
+    ),
+    THREE_FRAME(
+        label = "Computational HDR",
+        description = "Three bracketed frames merged before synthetic NIR and film rendering.",
+    ),
+}
+
+/** SDR base rendition used after scene-linear HDR merge and before film rendering. */
+enum class HdrToneMap(
+    val label: String,
+    val description: String,
+) {
+    NATURAL(
+        label = "Natural",
+        description = "Balanced highlight recovery with restrained shadow lift.",
+    ),
+    FILMIC(
+        label = "Filmic",
+        description = "Deeper toe and a longer highlight shoulder before the selected film stock.",
+    ),
+    LOW_CONTRAST(
+        label = "Low Contrast",
+        description = "Maximum range compression for difficult backlight and later manual grading.",
     ),
 }
 
@@ -138,8 +164,13 @@ data class CameraSettings(
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
-    /** Processed-file size and capture-speed policy. */
     val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
+    /** Optional multi-frame exposure fusion before the film renderer. */
+    val hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF,
+    /** Tone map used to normalize merged radiance into the film engine's SDR working range. */
+    val hdrToneMap: HdrToneMap = HdrToneMap.NATURAL,
+    /** Attach a newly generated gain map to the processed JPEG on Android 14+. */
+    val ultraHdrExport: Boolean = false,
     /** Save a true DNG sidecar when the active camera supports RAW+JPEG capture. */
     val saveRawSidecar: Boolean = false,
     /** Hardware exposure compensation, in photographic stops. */
@@ -161,22 +192,18 @@ data class CameraCapabilities(
     val exposureRange: IntRange,
     val exposureStep: Float,
     val zoomRange: ClosedFloatingPointRange<Float>,
-    /** Fixed lens aperture (phones have no iris), for display only. */
     val aperture: Float? = null,
-    /** Sensor ISO range (also the bounds for full-manual mode). */
     val isoRange: IntRange? = null,
-    /** Sensor exposure-time range in nanoseconds, for full-manual mode. */
     val exposureTimeRange: LongRange? = null,
-    /** Whether the camera declares the MANUAL_SENSOR capability. */
     val manualExposureSupported: Boolean = false,
-    /** Whether CameraX reports simultaneous RAW DNG + JPEG ImageCapture support. */
     val rawJpegCaptureSupported: Boolean = false,
+    /** Whether the current AE compensation range can provide at least three distinct bracket values. */
+    val hdrBracketSupported: Boolean = false,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
     private val safeStep: Float get() = if (exposureStep > 0f) exposureStep else 1f / 3f
 
-    /** Converts photographic stops to the camera's exposure compensation index. */
     fun stopsToIndex(stops: Float): Int =
         Math.round(stops / safeStep).coerceIn(exposureRange.first, exposureRange.last)
 
@@ -190,6 +217,7 @@ data class GalleryItem(
     val presetLabel: String,
     val sensorModeLabel: String,
     val isOriginal: Boolean,
+    val isUltraHdr: Boolean = false,
 )
 
 data class HardwareTestState(
@@ -210,4 +238,5 @@ data class CaptureResult(
     val originalUri: Uri?,
     val rawUri: Uri? = null,
     val displayName: String,
+    val ultraHdr: Boolean = false,
 )
