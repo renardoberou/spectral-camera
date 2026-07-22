@@ -90,6 +90,32 @@ enum class ChannelSwapMode(val label: String) {
     GB_SWAP("Swap G/B"),
 }
 
+/**
+ * Processed-output strategy.
+ *
+ * FULL_RESOLUTION preserves the existing highest-available still behavior.
+ * HQ_1080 keeps the high-resolution source through the film render, then uses
+ * an orientation-aware high-quality downsample to exact Full HD.
+ * FAST_1080 requests a lower-latency 16:9 source and renders at Full HD.
+ */
+enum class OutputMode(
+    val label: String,
+    val description: String,
+) {
+    FULL_RESOLUTION(
+        label = "Full Resolution",
+        description = "Highest available still source and the largest processed export the GPU supports.",
+    ),
+    HQ_1080(
+        label = "HQ 1080",
+        description = "High-resolution 16:9 render, then high-quality downsample to exact 1920×1080 (or 1080×1920).",
+    ),
+    FAST_1080(
+        label = "Fast 1080",
+        description = "Lower-latency 16:9 capture and exact Full HD processing for faster turnaround.",
+    ),
+}
+
 data class ManualAdjustments(
     val contrast: Float = 1.0f,
     val exposureCompensation: Float = 0f,
@@ -112,6 +138,10 @@ data class CameraSettings(
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
+    /** Processed-file size and capture-speed policy. */
+    val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
+    /** Save a true DNG sidecar when the active camera supports RAW+JPEG capture. */
+    val saveRawSidecar: Boolean = false,
     /** Hardware exposure compensation, in photographic stops. */
     val hardwareEv: Float = 0f,
     /** Full-manual exposure: AE off, ISO and shutter set directly. */
@@ -139,6 +169,8 @@ data class CameraCapabilities(
     val exposureTimeRange: LongRange? = null,
     /** Whether the camera declares the MANUAL_SENSOR capability. */
     val manualExposureSupported: Boolean = false,
+    /** Whether CameraX reports simultaneous RAW DNG + JPEG ImageCapture support. */
+    val rawJpegCaptureSupported: Boolean = false,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
@@ -176,5 +208,6 @@ data class HardwareTestState(
 data class CaptureResult(
     val processedUri: Uri,
     val originalUri: Uri?,
+    val rawUri: Uri? = null,
     val displayName: String,
 )
