@@ -3,7 +3,6 @@ package com.renardoberou.spectralcamera.core.hdr
 import kotlin.math.exp
 import kotlin.math.max
 
-/** Camera2 Bayer arrangement values, kept independent of Android in unit tests. */
 enum class BayerArrangement(val cameraValue: Int) {
     RGGB(0),
     GRBG(1),
@@ -69,7 +68,9 @@ object RawHdrMath {
         return ((code - black) / range).coerceIn(0f, 1.25f)
     }
 
-    /** Weight in the native RAW domain, before exposure normalization. */
+    fun normalizeCode(code: Int, black: Float, white: Number): Float =
+        normalizeCode(code, black, white.toFloat())
+
     fun rawWellExposedWeight(normalizedCode: Float): Float {
         val v = normalizedCode.coerceIn(0f, 1f)
         if (v <= 0.002f || v >= 0.995f) return 0.001f
