@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
+import com.renardoberou.spectralcamera.core.HdrCaptureMode
+import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
@@ -24,9 +26,6 @@ class CameraSettingsRepository(context: Context) {
 
     val settings: Flow<CameraSettings> = dataStore.data.map { prefs ->
         CameraSettings(
-            // A preset removed from the enum (e.g. a retired experimental look) must
-            // not crash settings load for users who had it selected - fall back to
-            // the default rather than propagating IllegalArgumentException.
             preset = prefs[PRESET]?.let { name -> runCatching { SpectralPreset.valueOf(name) }.getOrNull() }
                 ?: SpectralPreset.B_W_INFRARED,
             adjustments = ManualAdjustments(
@@ -54,11 +53,16 @@ class CameraSettingsRepository(context: Context) {
             outputMode = prefs[OUTPUT_MODE]?.let { name ->
                 runCatching { OutputMode.valueOf(name) }.getOrNull()
             } ?: OutputMode.FULL_RESOLUTION,
+            hdrCaptureMode = prefs[HDR_CAPTURE_MODE]?.let { name ->
+                runCatching { HdrCaptureMode.valueOf(name) }.getOrNull()
+            } ?: HdrCaptureMode.OFF,
+            hdrToneMap = prefs[HDR_TONE_MAP]?.let { name ->
+                runCatching { HdrToneMap.valueOf(name) }.getOrNull()
+            } ?: HdrToneMap.NATURAL,
+            ultraHdrExport = prefs[ULTRA_HDR_EXPORT] ?: false,
             saveRawSidecar = prefs[SAVE_RAW_SIDECAR] ?: false,
             // Migration guard: hardwareEv was stored as a raw camera index before
-            // v1.6.0 and is stops now. A magnitude beyond 2 is clearly a legacy
-            // index and would pin the camera at max EV (chronic overexposure) -
-            // reset it; otherwise clamp to the photographic range.
+            // v1.6.0 and is stops now. Clearly legacy magnitudes reset to zero.
             hardwareEv = (prefs[HARDWARE_EV] ?: 0f).let { stored ->
                 if (stored > 2.01f || stored < -2.01f) 0f else stored.coerceIn(-2f, 2f)
             },
@@ -90,6 +94,9 @@ class CameraSettingsRepository(context: Context) {
             prefs[FRONT_FACING] = settings.frontFacing
             prefs[SENSOR_MODE] = settings.sensorMode.name
             prefs[OUTPUT_MODE] = settings.outputMode.name
+            prefs[HDR_CAPTURE_MODE] = settings.hdrCaptureMode.name
+            prefs[HDR_TONE_MAP] = settings.hdrToneMap.name
+            prefs[ULTRA_HDR_EXPORT] = settings.ultraHdrExport
             prefs[SAVE_RAW_SIDECAR] = settings.saveRawSidecar
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
@@ -118,6 +125,9 @@ class CameraSettingsRepository(context: Context) {
         val FRONT_FACING = booleanPreferencesKey("front_facing")
         val SENSOR_MODE = stringPreferencesKey("sensor_mode")
         val OUTPUT_MODE = stringPreferencesKey("output_mode")
+        val HDR_CAPTURE_MODE = stringPreferencesKey("hdr_capture_mode")
+        val HDR_TONE_MAP = stringPreferencesKey("hdr_tone_map")
+        val ULTRA_HDR_EXPORT = booleanPreferencesKey("ultra_hdr_export")
         val SAVE_RAW_SIDECAR = booleanPreferencesKey("save_raw_sidecar")
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
         val MANUAL_MODE = booleanPreferencesKey("manual_mode")
