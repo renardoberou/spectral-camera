@@ -29,6 +29,7 @@ jobs:
             echo "No pending lens-selector integration."
             exit 0
           fi
+          mkdir -p app/src/test/java/com/renardoberou/spectralcamera/core/camera
           python3 - <<'BOOT' 2>&1 | tee lens-integration.log
           from pathlib import Path
           from textwrap import dedent
