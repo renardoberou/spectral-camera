@@ -54,7 +54,7 @@ data class RawSensorFrame(
 class CapturedFrame(
     val exposures: List<CapturedExposure> = emptyList(),
     val rawExposures: List<RawSensorFrame> = emptyList(),
-    requestedReferenceIndex: Int = 0,
+    referenceIndex: Int = 0,
     val rawSidecarFile: File? = null,
 ) {
     val referenceIndex: Int
@@ -62,8 +62,8 @@ class CapturedFrame(
     init {
         require(exposures.isNotEmpty() xor rawExposures.isNotEmpty())
         val count = if (exposures.isNotEmpty()) exposures.size else rawExposures.size
-        require(requestedReferenceIndex in 0 until count)
-        referenceIndex = if (rawExposures.size > 1) rawExposures.size / 2 else requestedReferenceIndex
+        require(referenceIndex in 0 until count)
+        this.referenceIndex = if (rawExposures.size > 1) rawExposures.size / 2 else referenceIndex
     }
 
     val referenceBitmap: Bitmap? get() = exposures.getOrNull(referenceIndex)?.bitmap
