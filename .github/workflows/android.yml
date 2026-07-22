@@ -29,14 +29,14 @@ jobs:
             exit 0
           fi
           cat .github/focus-patch/part-*.b64 | tr -d '\n\r ' | base64 --decode > /tmp/focus.patch
-          if git apply --check /tmp/focus.patch; then
-            git apply /tmp/focus.patch
-            echo "Applied staged focus-mode patch."
+          grep '^diff --git ' /tmp/focus.patch || true
+          if git apply --3way /tmp/focus.patch; then
+            echo "Applied staged focus-mode patch with Git three-way merge support."
           elif git apply --reverse --check /tmp/focus.patch; then
             echo "Focus-mode patch is already integrated."
           else
-            echo "::error::Staged focus patch neither applies nor matches the current tree."
-            git apply --check /tmp/focus.patch
+            echo "::error::Staged focus patch could not be merged into the current tree."
+            git status --short
             exit 1
           fi
 
