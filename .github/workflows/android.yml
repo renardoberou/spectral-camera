@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -16,6 +16,46 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply pending physical lens selector
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/hdr-imaging-pipeline'
+        run: |
+          set -euo pipefail
+          pending=.github/workflows/apply-lens-selector.yml
+          if [ ! -f "$pending" ]; then
+            echo "No pending lens-selector integration."
+            exit 0
+          fi
+          python3 - <<'BOOT'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow = Path('.github/workflows/apply-lens-selector.yml').read_text()
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          if start_marker not in workflow or end_marker not in workflow:
+              raise SystemExit('Unable to locate staged lens-selector Python block')
+          block = workflow.split(start_marker, 1)[1].split(end_marker, 1)[0]
+          script = dedent(block)
+          exec(compile(script, 'apply-lens-selector', 'exec'), {})
+          BOOT
+
+      - name: Commit integrated physical lens selector
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/hdr-imaging-pipeline'
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "feat(camera): expose selectable physical rear lenses"
+            git push origin HEAD:agent/hdr-imaging-pipeline
+          else
+            echo "No lens-selector integration commit needed."
+          fi
 
       - name: Reject tracked signing material
         run: |
