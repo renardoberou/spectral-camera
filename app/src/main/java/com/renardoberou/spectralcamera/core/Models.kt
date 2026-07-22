@@ -2,7 +2,6 @@ package com.renardoberou.spectralcamera.core
 
 import android.net.Uri
 
-/** Which coherent look family a preset belongs to, for grouped UI and product messaging. */
 enum class LookFamily(val label: String) {
     MONOCHROME_IR("Monochrome IR"),
     AEROCHROME("Aerochrome / False Colour"),
@@ -83,47 +82,43 @@ enum class ChannelSwapMode(val label: String) {
     GB_SWAP("Swap G/B"),
 }
 
-/** Processed-file size, source-resolution, and capture-speed policy. */
 enum class OutputMode(
     val label: String,
     val description: String,
 ) {
     FULL_RESOLUTION(
         label = "Full Resolution",
-        description = "Highest practical still source and the largest processed export the GPU supports.",
+        description = "Highest practical still source and the largest processed export the GPU can complete safely.",
     ),
     HQ_1080(
         label = "HQ 1080",
-        description = "High-resolution 16:9 render, then high-quality downsample to exact 1920×1080 (or 1080×1920).",
+        description = "High-resolution 16:9 render, then high-quality downsample to exact 1920×1080 or 1080×1920.",
     ),
     FAST_1080(
         label = "Fast 1080",
-        description = "Lower-latency 16:9 capture and exact Full HD processing for faster turnaround.",
+        description = "Lower-latency 16:9 capture and exact Full HD processing.",
     ),
 }
 
-/**
- * Capture-domain dynamic-range strategy.
- *
- * THREE_FRAME brackets the scene around the current exposure, aligns the JPEG
- * frames, estimates linear-light radiance, deghosts disagreement toward the
- * reference exposure, and normalizes/tone-maps before the spectral film model.
- */
+/** Capture-domain dynamic-range strategy. */
 enum class HdrCaptureMode(
     val label: String,
     val description: String,
 ) {
     OFF(
         label = "Standard",
-        description = "One shutter frame. Fastest and best for motion.",
+        description = "One JPEG-derived frame. Fastest and best for motion.",
     ),
     THREE_FRAME(
         label = "Computational HDR",
-        description = "Three bracketed frames merged before synthetic NIR and film rendering.",
+        description = "Bracketed JPEG frames merged before synthetic NIR and film rendering.",
+    ),
+    RAW_THREE_FRAME(
+        label = "True RAW HDR",
+        description = "Three RAW_SENSOR Bayer frames merged before demosaic, colour conversion, synthetic NIR, and film rendering.",
     ),
 }
 
-/** SDR base rendition used after scene-linear HDR merge and before film rendering. */
 enum class HdrToneMap(
     val label: String,
     val description: String,
@@ -165,24 +160,16 @@ data class CameraSettings(
     val frontFacing: Boolean = false,
     val sensorMode: SensorMode = SensorMode.SIMULATED_IR,
     val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
-    /** Optional multi-frame exposure fusion before the film renderer. */
     val hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF,
-    /** Tone map used to normalize merged radiance into the film engine's SDR working range. */
     val hdrToneMap: HdrToneMap = HdrToneMap.NATURAL,
-    /** Attach a newly generated gain map to the processed JPEG on Android 14+. */
     val ultraHdrExport: Boolean = false,
-    /** Save a true DNG sidecar when the active camera supports RAW+JPEG capture. */
+    /** Standard capture saves one DNG; True RAW HDR saves each bracket DNG when enabled. */
     val saveRawSidecar: Boolean = false,
-    /** Hardware exposure compensation, in photographic stops. */
     val hardwareEv: Float = 0f,
-    /** Full-manual exposure: AE off, ISO and shutter set directly. */
     val manualMode: Boolean = false,
     val manualIso: Int = 400,
-    /** Shutter time in nanoseconds (default 1/125s). */
     val manualShutterNs: Long = 8_000_000L,
-    /** Look intensity: 1.0 = full film effect, lower blends toward source. */
     val intensity: Float = 1f,
-    /** Preview-only clipping zebras over near-blown highlights. */
     val zebraEnabled: Boolean = false,
 )
 
@@ -197,8 +184,9 @@ data class CameraCapabilities(
     val exposureTimeRange: LongRange? = null,
     val manualExposureSupported: Boolean = false,
     val rawJpegCaptureSupported: Boolean = false,
-    /** Whether the current AE compensation range can provide at least three distinct bracket values. */
     val hdrBracketSupported: Boolean = false,
+    /** RAW_SENSOR + MANUAL_SENSOR + Bayer metadata sufficient for an in-app RAW merge. */
+    val trueRawHdrSupported: Boolean = false,
 ) {
     val minStops: Float get() = exposureRange.first * safeStep
     val maxStops: Float get() = exposureRange.last * safeStep
@@ -237,6 +225,7 @@ data class CaptureResult(
     val processedUri: Uri,
     val originalUri: Uri?,
     val rawUri: Uri? = null,
+    val rawUris: List<Uri> = emptyList(),
     val displayName: String,
     val ultraHdr: Boolean = false,
 )
