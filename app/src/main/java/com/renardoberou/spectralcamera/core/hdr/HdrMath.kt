@@ -9,7 +9,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 data class HdrBracketStep(
     val compensationIndex: Int,
@@ -18,7 +17,20 @@ data class HdrBracketStep(
 
 data class PixelShift(val dx: Int, val dy: Int)
 
-/** Pure bracket planning shared by auto-exposure capture and JVM tests. */
+/**
+ * Confidence is deliberately conservative. A rejected estimate returns zero
+ * shift and zero confidence, which makes the fusion fall back to the reference
+ * exposure instead of producing a multi-image ghost.
+ */
+data class AlignmentEstimate(
+    val shift: PixelShift,
+    val confidence: Float,
+    val normalizedError: Float,
+    val validFraction: Float,
+) {
+    val accepted: Boolean get() = confidence >= 0.25f
+}
+
 object HdrBracketPlanner {
     fun planAuto(
         baseIndex: Int,
@@ -83,7 +95,6 @@ object HdrBracketPlanner {
     }
 }
 
-/** Testable transfer, weighting, and tone-map functions used by the HDR merger. */
 object HdrMath {
     private const val EPSILON = 1e-6f
 
@@ -100,7 +111,6 @@ object HdrMath {
     fun linearLuma(r: Float, g: Float, b: Float): Float =
         0.2126f * r + 0.7152f * g + 0.0722f * b
 
-    /** Weight peaks in the reliable middle of an encoded exposure. */
     fun wellExposedWeight(encodedLuma: Float): Float {
         val l = encodedLuma.coerceIn(0f, 1f)
         if (l <= 0.008f || l >= 0.992f) return 0.002f
@@ -108,10 +118,6 @@ object HdrMath {
         return 0.025f + exp(-0.5f * distance * distance)
     }
 
-    /**
-     * Whole-pixel reliability guard. Luma alone misses a clipped single colour
-     * channel, which can inject false colour into Aerochrome classification.
-     */
     fun encodedChannelReliability(r: Float, g: Float, b: Float): Float {
         val maximum = max(r, max(g, b)).coerceIn(0f, 1f)
         val shadow = smoothstep(0.006f, 0.055f, maximum)
@@ -119,20 +125,27 @@ object HdrMath {
         return (0.015f + 0.985f * shadow * highlight).coerceIn(0.015f, 1f)
     }
 
-    /** Downweight moving or misregistered content toward the reference exposure. */
+    /** Strong disagreement is allowed to reach zero rather than leave a ghost floor. */
     fun deghostWeight(referenceRadianceLuma: Float, candidateRadianceLuma: Float): Float {
         val differenceStops = abs(
             log2((candidateRadianceLuma + EPSILON) / (referenceRadianceLuma + EPSILON)),
         )
-        val normalized = differenceStops / 0.80f
-        return (0.02f + 0.98f * exp(-0.5f * normalized * normalized)).coerceIn(0.02f, 1f)
+        val normalized = differenceStops / 0.42f
+        return exp(-0.5f * normalized * normalized).coerceIn(0f, 1f)
     }
 
-    /**
-     * Global luminance mappings. The HDR normalization stage keys scene median
-     * near 0.18, so every curve deliberately leaves middle grey in a useful
-     * photographic range before the stock-specific film curve runs.
-     */
+    /** How badly the reference JPEG needs a darker exposure for highlight recovery. */
+    fun highlightRecoveryNeed(maxEncodedChannel: Float): Float =
+        smoothstep(0.88f, 0.985f, maxEncodedChannel)
+
+    /** How badly the reference JPEG needs a brighter exposure for shadow recovery. */
+    fun shadowRecoveryNeed(encodedLuma: Float): Float =
+        1f - smoothstep(0.018f, 0.13f, encodedLuma)
+
+    /** Suppresses exposure replacement on edges, where small registration errors become double outlines. */
+    fun flatRegionGate(edgeStrength: Float): Float =
+        1f - smoothstep(0.018f, 0.10f, edgeStrength)
+
     fun toneMapLuma(value: Float, whitePoint: Float, mode: HdrToneMap): Float {
         val x = value.coerceAtLeast(0f)
         val white = whitePoint.coerceAtLeast(1.01f)
@@ -142,9 +155,6 @@ object HdrMath {
                 mapped.coerceIn(0f, 1f)
             }
             HdrToneMap.FILMIC -> {
-                // Luminance-only ACES approximation with a conservative exposure
-                // bias. Unlike x/white normalization, this keeps 18% grey from
-                // collapsing toward black when the scene white point is high.
                 val exposureBias = (0.75f * (6f / white).pow(0.08f)).coerceIn(0.62f, 0.88f)
                 val n = x * exposureBias
                 val mapped = (n * (2.51f * n + 0.03f)) /
@@ -152,8 +162,6 @@ object HdrMath {
                 mapped.coerceIn(0f, 1f)
             }
             HdrToneMap.LOW_CONTRAST -> {
-                // A stronger log compression with a four-times exposure scale
-                // preserves keyed middle grey while fitting severe highlights.
                 val strength = 4f
                 val denominator = ln(1f + strength * white)
                 if (denominator <= EPSILON) {
@@ -183,8 +191,9 @@ object HdrMath {
 }
 
 /**
- * Translation-only alignment on log-radiance thumbnails. Exposure-normalized
- * log luminance makes the estimate insensitive to the bracket brightness.
+ * Median-threshold alignment, the exposure-invariant strategy traditionally
+ * used for HDR brackets. It compares only pixels safely away from each image's
+ * median and rejects ambiguous or boundary-hitting estimates.
  */
 object HdrTranslationEstimator {
     fun estimate(
@@ -192,48 +201,116 @@ object HdrTranslationEstimator {
         candidate: FloatArray,
         width: Int,
         height: Int,
-        maxShift: Int = 12,
+        maxShift: Int = 8,
         sampleStep: Int = 2,
-    ): PixelShift {
+    ): PixelShift = estimateDetailed(
+        reference = reference,
+        candidate = candidate,
+        width = width,
+        height = height,
+        maxShift = maxShift,
+        sampleStep = sampleStep,
+    ).shift
+
+    fun estimateDetailed(
+        reference: FloatArray,
+        candidate: FloatArray,
+        width: Int,
+        height: Int,
+        maxShift: Int = 8,
+        sampleStep: Int = 2,
+    ): AlignmentEstimate {
         require(reference.size == width * height)
         require(candidate.size == width * height)
-        if (width < 16 || height < 16) return PixelShift(0, 0)
+        if (width < 24 || height < 24) {
+            return AlignmentEstimate(PixelShift(0, 0), 0f, 1f, 0f)
+        }
 
-        var best = PixelShift(0, 0)
-        var bestScore = Float.POSITIVE_INFINITY
-        val border = maxShift + 2
+        val referenceMedian = median(reference)
+        val candidateMedian = median(candidate)
+        val exclusionBand = 0.09f
         val step = sampleStep.coerceAtLeast(1)
+        val border = maxShift + 2
+        var bestShift = PixelShift(0, 0)
+        var bestError = Float.POSITIVE_INFINITY
+        var bestValidFraction = 0f
+        var secondError = Float.POSITIVE_INFINITY
+        var zeroError = Float.POSITIVE_INFINITY
 
         for (dy in -maxShift..maxShift) {
             for (dx in -maxShift..maxShift) {
-                var sum = 0f
-                var sumSquares = 0f
-                var count = 0
+                var mismatches = 0
+                var valid = 0
+                var total = 0
                 var y = border
                 while (y < height - border) {
                     val cy = y + dy
                     var x = border
                     while (x < width - border) {
                         val cx = x + dx
-                        val difference = reference[y * width + x] - candidate[cy * width + cx]
-                        val robust = abs(difference).coerceAtMost(1.5f)
-                        sum += robust
-                        sumSquares += robust * robust
-                        count++
+                        val rv = reference[y * width + x]
+                        val cv = candidate[cy * width + cx]
+                        total++
+                        if (abs(rv - referenceMedian) > exclusionBand &&
+                            abs(cv - candidateMedian) > exclusionBand
+                        ) {
+                            valid++
+                            if ((rv > referenceMedian) != (cv > candidateMedian)) mismatches++
+                        }
                         x += step
                     }
                     y += step
                 }
-                if (count == 0) continue
-                val mean = sum / count
-                val rms = sqrt(sumSquares / count)
-                val score = mean + rms * 0.15f
-                if (score < bestScore) {
-                    bestScore = score
-                    best = PixelShift(dx, dy)
+                val validFraction = if (total == 0) 0f else valid.toFloat() / total
+                val error = if (valid == 0) {
+                    Float.POSITIVE_INFINITY
+                } else {
+                    mismatches.toFloat() / valid + (1f - validFraction) * 0.04f
+                }
+                if (dx == 0 && dy == 0) zeroError = error
+                if (error < bestError) {
+                    secondError = bestError
+                    bestError = error
+                    bestShift = PixelShift(dx, dy)
+                    bestValidFraction = validFraction
+                } else if (error < secondError &&
+                    (abs(dx - bestShift.dx) > 1 || abs(dy - bestShift.dy) > 1)
+                ) {
+                    secondError = error
                 }
             }
         }
-        return best
+
+        if (!bestError.isFinite()) {
+            return AlignmentEstimate(PixelShift(0, 0), 0f, 1f, bestValidFraction)
+        }
+        val boundaryHit = abs(bestShift.dx) == maxShift || abs(bestShift.dy) == maxShift
+        val quality = 1f - HdrMath.smoothstep(0.16f, 0.38f, bestError)
+        val distinct = if (secondError.isFinite()) {
+            HdrMath.smoothstep(0.008f, 0.07f, secondError - bestError)
+        } else {
+            1f
+        }
+        val improvement = if (bestShift == PixelShift(0, 0)) {
+            1f
+        } else if (zeroError.isFinite()) {
+            HdrMath.smoothstep(0.008f, 0.10f, zeroError - bestError)
+        } else {
+            0f
+        }
+        val coverage = HdrMath.smoothstep(0.08f, 0.28f, bestValidFraction)
+        val confidence = if (boundaryHit) 0f else (quality * distinct * improvement * coverage)
+            .coerceIn(0f, 1f)
+        return if (confidence >= 0.25f) {
+            AlignmentEstimate(bestShift, confidence, bestError, bestValidFraction)
+        } else {
+            AlignmentEstimate(PixelShift(0, 0), 0f, bestError, bestValidFraction)
+        }
+    }
+
+    private fun median(values: FloatArray): Float {
+        val copy = values.copyOf()
+        copy.sort()
+        return if (copy.isEmpty()) 0f else copy[copy.size / 2]
     }
 }
