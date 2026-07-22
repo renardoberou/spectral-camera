@@ -1,0 +1,683 @@
+name: Apply physical lens selector
+
+on:
+  push:
+    branches: [agent/hdr-imaging-pipeline]
+    paths: [.github/workflows/apply-lens-selector.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/hdr-imaging-pipeline
+          fetch-depth: 0
+
+      - name: Integrate discoverable rear-lens selection
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def replace(path: str, old: str, new: str, count: int = 1) -> None:
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f"{path}: expected {count} occurrence(s), found {actual}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, count))
+
+          # Core model: dynamic lens options plus persisted selection identity.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/Models.kt",
+              "data class CameraSettings(\n",
+              dedent('''
+              data class CameraLensOption(
+                  val id: String,
+                  val label: String,
+                  val description: String,
+                  val frontFacing: Boolean,
+                  val logicalCameraId: String,
+                  val physicalCameraId: String? = null,
+                  val approximateEquivalentFocalLengthMm: Float? = null,
+                  val isAutomatic: Boolean = false,
+              )
+
+              data class CameraSettings(
+              '''),
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/Models.kt",
+              "    val frontFacing: Boolean = false,\n    val sensorMode: SensorMode = SensorMode.SIMULATED_IR,",
+              "    val frontFacing: Boolean = false,\n    val selectedLensId: String = \"\",\n    val selectedLensLabel: String = \"\",\n    val sensorMode: SensorMode = SensorMode.SIMULATED_IR,",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/Models.kt",
+              "    val focusDistanceCalibration: FocusDistanceCalibration = FocusDistanceCalibration.UNCALIBRATED,\n) {",
+              "    val focusDistanceCalibration: FocusDistanceCalibration = FocusDistanceCalibration.UNCALIBRATED,\n    val availableLenses: List<CameraLensOption> = emptyList(),\n    val activeLensId: String = \"\",\n    val activeLensLabel: String = \"\",\n) {",
+          )
+
+          # Persist selection. Existing frontFacing remains a migration fallback.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/data/CameraSettingsRepository.kt",
+              "            frontFacing = prefs[FRONT_FACING] ?: false,\n            sensorMode = runCatching {",
+              "            frontFacing = prefs[FRONT_FACING] ?: false,\n            selectedLensId = prefs[SELECTED_LENS_ID] ?: \"\",\n            selectedLensLabel = prefs[SELECTED_LENS_LABEL] ?: \"\",\n            sensorMode = runCatching {",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/data/CameraSettingsRepository.kt",
+              "            prefs[FRONT_FACING] = settings.frontFacing\n            prefs[SENSOR_MODE] = settings.sensorMode.name",
+              "            prefs[FRONT_FACING] = settings.frontFacing\n            prefs[SELECTED_LENS_ID] = settings.selectedLensId\n            prefs[SELECTED_LENS_LABEL] = settings.selectedLensLabel\n            prefs[SENSOR_MODE] = settings.sensorMode.name",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/data/CameraSettingsRepository.kt",
+              "        val FRONT_FACING = booleanPreferencesKey(\"front_facing\")\n        val SENSOR_MODE = stringPreferencesKey(\"sensor_mode\")",
+              "        val FRONT_FACING = booleanPreferencesKey(\"front_facing\")\n        val SELECTED_LENS_ID = stringPreferencesKey(\"selected_lens_id\")\n        val SELECTED_LENS_LABEL = stringPreferencesKey(\"selected_lens_label\")\n        val SENSOR_MODE = stringPreferencesKey(\"sensor_mode\")",
+          )
+
+          # Pure catalog/label logic.
+          Path("app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraLensCatalog.kt").write_text(dedent('''
+          package com.renardoberou.spectralcamera.core.camera
+
+          import com.renardoberou.spectralcamera.core.CameraLensOption
+          import java.util.Locale
+          import kotlin.math.abs
+          import kotlin.math.roundToInt
+          import kotlin.math.sqrt
+
+          internal data class CameraLensCandidate(
+              val id: String,
+              val frontFacing: Boolean,
+              val logicalCameraId: String,
+              val physicalCameraId: String?,
+              val automatic: Boolean,
+              val equivalentFocalLengthMm: Float?,
+          )
+
+          internal object CameraLensCatalog {
+              fun optionId(logicalCameraId: String, physicalCameraId: String?): String =
+                  if (physicalCameraId == null) "logical:$logicalCameraId"
+                  else "logical:$logicalCameraId/physical:$physicalCameraId"
+
+              fun equivalentFocalLengthMm(
+                  focalLengthMm: Float?,
+                  sensorWidthMm: Float?,
+                  sensorHeightMm: Float?,
+              ): Float? {
+                  val focal = focalLengthMm?.takeIf { it > 0f } ?: return null
+                  val width = sensorWidthMm?.takeIf { it > 0f } ?: return null
+                  val height = sensorHeightMm?.takeIf { it > 0f } ?: return null
+                  val sensorDiagonal = sqrt(width * width + height * height)
+                  if (sensorDiagonal <= 0f) return null
+                  return focal * FULL_FRAME_DIAGONAL_MM / sensorDiagonal
+              }
+
+              fun buildOptions(candidates: List<CameraLensCandidate>): List<CameraLensOption> {
+                  val unique = candidates.distinctBy { it.id }
+                  val rear = unique.filter { !it.frontFacing && !it.automatic }
+                  val mainEquivalent = rear.mapNotNull { it.equivalentFocalLengthMm }
+                      .minByOrNull { abs(it - 26f) }
+                  val frontCount = unique.count { it.frontFacing }
+                  var unknownRearIndex = 0
+                  var frontIndex = 0
+
+                  return unique.sortedWith(
+                      compareBy<CameraLensCandidate> {
+                          when {
+                              it.frontFacing -> 2
+                              it.automatic -> 0
+                              else -> 1
+                          }
+                      }.thenBy { it.equivalentFocalLengthMm ?: Float.MAX_VALUE }
+                          .thenBy { it.id },
+                  ).map { candidate ->
+                      val equivalent = candidate.equivalentFocalLengthMm
+                      val (label, description) = when {
+                          candidate.automatic ->
+                              "Auto rear" to "Uses the phone's logical rear camera and allows vendor lens switching."
+                          candidate.frontFacing -> {
+                              frontIndex++
+                              val name = if (frontCount > 1) "Selfie $frontIndex" else "Selfie"
+                              name to equivalentDescription(equivalent, "Front camera")
+                          }
+                          equivalent != null && mainEquivalent != null -> {
+                              val ratio = equivalent / mainEquivalent
+                              val kind = when {
+                                  ratio < 0.80f -> "Ultra-wide"
+                                  ratio > 1.30f -> "Tele"
+                                  else -> "Main"
+                              }
+                              "${formatZoom(ratio)}× $kind" to
+                                  equivalentDescription(equivalent, "Locks this physical rear lens")
+                          }
+                          else -> {
+                              unknownRearIndex++
+                              "Rear lens $unknownRearIndex" to "Locks this discoverable rear camera."
+                          }
+                      }
+                      CameraLensOption(
+                          id = candidate.id,
+                          label = label,
+                          description = description,
+                          frontFacing = candidate.frontFacing,
+                          logicalCameraId = candidate.logicalCameraId,
+                          physicalCameraId = candidate.physicalCameraId,
+                          approximateEquivalentFocalLengthMm = equivalent,
+                          isAutomatic = candidate.automatic,
+                      )
+                  }
+              }
+
+              fun choose(
+                  options: List<CameraLensOption>,
+                  requestedId: String,
+                  preferFront: Boolean,
+              ): CameraLensOption? {
+                  options.firstOrNull { it.id == requestedId }?.let { return it }
+                  return if (preferFront) {
+                      options.firstOrNull { it.frontFacing }
+                          ?: options.firstOrNull()
+                  } else {
+                      options.firstOrNull { !it.frontFacing && it.isAutomatic }
+                          ?: options.firstOrNull { !it.frontFacing && it.label.contains("Main") }
+                          ?: options.firstOrNull { !it.frontFacing }
+                          ?: options.firstOrNull()
+                  }
+              }
+
+              private fun equivalentDescription(equivalent: Float?, prefix: String): String =
+                  if (equivalent == null) prefix else "$prefix • ≈ ${equivalent.roundToInt()} mm equivalent"
+
+              private fun formatZoom(value: Float): String {
+                  val rounded = value.roundToInt()
+                  return if (abs(value - rounded) < 0.06f) rounded.toString()
+                  else String.format(Locale.US, "%.1f", value)
+              }
+
+              private const val FULL_FRAME_DIAGONAL_MM = 43.2666f
+          }
+          ''').lstrip())
+
+          # CameraController: enumerate and select exact logical/physical cameras.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "import androidx.camera.core.Camera\nimport androidx.camera.core.CameraSelector",
+              "import androidx.camera.core.Camera\nimport androidx.camera.core.CameraInfo\nimport androidx.camera.core.CameraSelector",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "import com.renardoberou.spectralcamera.core.CameraCapabilities\nimport com.renardoberou.spectralcamera.core.CameraSettings",
+              "import com.renardoberou.spectralcamera.core.CameraCapabilities\nimport com.renardoberou.spectralcamera.core.CameraLensOption\nimport com.renardoberou.spectralcamera.core.CameraSettings",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "    private var lensFacing: Int = CameraSelector.LENS_FACING_BACK\n    private var outputMode: OutputMode = OutputMode.FULL_RESOLUTION",
+              "    private var lensFacing: Int = CameraSelector.LENS_FACING_BACK\n    private var requestedLensId: String = \"\"\n    private var availableLensOptions: List<CameraLensOption> = emptyList()\n    private var activeLensOption: CameraLensOption? = null\n    private var outputMode: OutputMode = OutputMode.FULL_RESOLUTION",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "        lensFacing: Int,\n        outputMode: OutputMode,",
+              "        lensFacing: Int,\n        selectedLensId: String,\n        outputMode: OutputMode,",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "        this.lensFacing = lensFacing\n        this.outputMode = outputMode",
+              "        this.lensFacing = lensFacing\n        this.requestedLensId = selectedLensId\n        this.outputMode = outputMode",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "        val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0\n        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()\n        val cameraInfo = provider.getCameraInfo(selector)\n        val camera2Info = Camera2CameraInfo.from(cameraInfo)\n        activeCharacteristics = runCatching {\n            cameraManager.getCameraCharacteristics(camera2Info.cameraId)\n        }.getOrNull()",
+              "        val targetRotation = glView?.display?.rotation ?: Surface.ROTATION_0\n        availableLensOptions = discoverLensOptions(provider)\n        val selectedLens = CameraLensCatalog.choose(\n            options = availableLensOptions,\n            requestedId = requestedLensId,\n            preferFront = lensFacing == CameraSelector.LENS_FACING_FRONT,\n        ) ?: throw IllegalStateException(\"No camera lens is available\")\n        activeLensOption = selectedLens\n        lensFacing = if (selectedLens.frontFacing) {\n            CameraSelector.LENS_FACING_FRONT\n        } else {\n            CameraSelector.LENS_FACING_BACK\n        }\n        val selector = cameraSelectorFor(selectedLens)\n        val cameraInfo = provider.getCameraInfo(selector)\n        val characteristicsId = selectedLens.physicalCameraId ?: selectedLens.logicalCameraId\n        activeCharacteristics = runCatching {\n            cameraManager.getCameraCharacteristics(characteristicsId)\n        }.getOrNull()",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "    private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()",
+              dedent('''
+                  @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+                  private fun discoverLensOptions(provider: ProcessCameraProvider): List<CameraLensOption> {
+                      val allInfos = provider.availableCameraInfos
+                      fun facingInfos(facing: Int): List<CameraInfo> = runCatching {
+                          CameraSelector.Builder().requireLensFacing(facing).build().filter(allInfos)
+                      }.getOrDefault(emptyList())
+
+                      fun cameraId(info: CameraInfo): String? = runCatching {
+                          Camera2CameraInfo.from(info).cameraId
+                      }.getOrNull()
+
+                      val rearInfos = facingInfos(CameraSelector.LENS_FACING_BACK)
+                      val frontInfos = facingInfos(CameraSelector.LENS_FACING_FRONT)
+                      val rearPhysicalIds = rearInfos.flatMap { logical ->
+                          runCatching { logical.physicalCameraInfos }.getOrDefault(emptySet())
+                              .mapNotNull(::cameraId)
+                      }.toSet()
+                      val candidates = mutableListOf<CameraLensCandidate>()
+
+                      rearInfos.forEach { logical ->
+                          val logicalId = cameraId(logical) ?: return@forEach
+                          val physicalInfos = runCatching { logical.physicalCameraInfos }
+                              .getOrDefault(emptySet())
+                              .mapNotNull { physical ->
+                                  val physicalId = cameraId(physical) ?: return@mapNotNull null
+                                  physicalId to physical
+                              }
+                              .distinctBy { it.first }
+
+                          if (physicalInfos.size > 1) {
+                              candidates += lensCandidate(
+                                  logicalCameraId = logicalId,
+                                  physicalCameraId = null,
+                                  frontFacing = false,
+                                  automatic = true,
+                              )
+                              physicalInfos.forEach { (physicalId, _) ->
+                                  candidates += lensCandidate(
+                                      logicalCameraId = logicalId,
+                                      physicalCameraId = physicalId,
+                                      frontFacing = false,
+                                      automatic = false,
+                                  )
+                              }
+                          } else if (logicalId !in rearPhysicalIds) {
+                              candidates += lensCandidate(
+                                  logicalCameraId = logicalId,
+                                  physicalCameraId = null,
+                                  frontFacing = false,
+                                  automatic = false,
+                              )
+                          }
+                      }
+
+                      frontInfos.forEach { info ->
+                          val cameraId = cameraId(info) ?: return@forEach
+                          candidates += lensCandidate(
+                              logicalCameraId = cameraId,
+                              physicalCameraId = null,
+                              frontFacing = true,
+                              automatic = false,
+                          )
+                      }
+
+                      return CameraLensCatalog.buildOptions(candidates)
+                  }
+
+                  private fun lensCandidate(
+                      logicalCameraId: String,
+                      physicalCameraId: String?,
+                      frontFacing: Boolean,
+                      automatic: Boolean,
+                  ): CameraLensCandidate {
+                      val characteristicsId = physicalCameraId ?: logicalCameraId
+                      val characteristics = runCatching {
+                          cameraManager.getCameraCharacteristics(characteristicsId)
+                      }.getOrNull()
+                      val focalLength = characteristics
+                          ?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                          ?.minOrNull()
+                      val sensorSize = characteristics
+                          ?.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                      val equivalent = CameraLensCatalog.equivalentFocalLengthMm(
+                          focalLengthMm = focalLength,
+                          sensorWidthMm = sensorSize?.width,
+                          sensorHeightMm = sensorSize?.height,
+                      )
+                      return CameraLensCandidate(
+                          id = CameraLensCatalog.optionId(logicalCameraId, physicalCameraId),
+                          frontFacing = frontFacing,
+                          logicalCameraId = logicalCameraId,
+                          physicalCameraId = physicalCameraId,
+                          automatic = automatic,
+                          equivalentFocalLengthMm = equivalent,
+                      )
+                  }
+
+                  @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+                  private fun cameraSelectorFor(lens: CameraLensOption): CameraSelector {
+                      val builder = CameraSelector.Builder()
+                          .requireLensFacing(
+                              if (lens.frontFacing) CameraSelector.LENS_FACING_FRONT
+                              else CameraSelector.LENS_FACING_BACK,
+                          )
+                          .addCameraFilter { infos ->
+                              infos.filter { info ->
+                                  runCatching {
+                                      Camera2CameraInfo.from(info).cameraId == lens.logicalCameraId
+                                  }.getOrDefault(false)
+                              }
+                          }
+                      lens.physicalCameraId?.let(builder::setPhysicalCameraId)
+                      return builder.build()
+                  }
+
+                  private fun buildPreview(targetRotation: Int): Preview = Preview.Builder()
+              ''').rstrip(),
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/camera/CameraController.kt",
+              "                focusDistanceCalibration = focusCalibration,\n            ),",
+              "                focusDistanceCalibration = focusCalibration,\n                availableLenses = availableLensOptions,\n                activeLensId = activeLensOption?.id.orEmpty(),\n                activeLensLabel = activeLensOption?.label.orEmpty(),\n            ),",
+          )
+
+          # ViewModel: direct lens selection and Double Exposure lens consistency.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt",
+              "import com.renardoberou.spectralcamera.core.CameraSettings\nimport com.renardoberou.spectralcamera.core.CaptureActionResult",
+              "import com.renardoberou.spectralcamera.core.CameraLensOption\nimport com.renardoberou.spectralcamera.core.CameraSettings\nimport com.renardoberou.spectralcamera.core.CaptureActionResult",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt",
+              "    val outputMode: OutputMode,\n    val frontFacing: Boolean,\n)",
+              "    val outputMode: OutputMode,\n    val frontFacing: Boolean,\n    val selectedLensId: String,\n)",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt",
+              "    fun setFrontFacing(enabled: Boolean) {\n        if (enabled != settings.value.frontFacing) cancelDoubleExposure()\n        updateSettings { it.copy(frontFacing = enabled) }\n    }",
+              dedent('''
+                  fun setFrontFacing(enabled: Boolean) {
+                      if (enabled != settings.value.frontFacing) cancelDoubleExposure()
+                      updateSettings {
+                          it.copy(
+                              frontFacing = enabled,
+                              selectedLensId = "",
+                              selectedLensLabel = if (enabled) "Selfie" else "Rear camera",
+                          )
+                      }
+                  }
+
+                  fun setCameraLens(lens: CameraLensOption) {
+                      val current = settings.value
+                      if (current.selectedLensId != lens.id || current.frontFacing != lens.frontFacing) {
+                          cancelDoubleExposure()
+                      }
+                      updateSettings {
+                          it.copy(
+                              frontFacing = lens.frontFacing,
+                              selectedLensId = lens.id,
+                              selectedLensLabel = lens.label,
+                          )
+                      }
+                  }
+              ''').rstrip(),
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt",
+              "            (existing.outputMode != requestedSettings.outputMode ||\n                existing.frontFacing != requestedSettings.frontFacing)",
+              "            (existing.outputMode != requestedSettings.outputMode ||\n                existing.frontFacing != requestedSettings.frontFacing ||\n                existing.selectedLensId != requestedSettings.selectedLensId)",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/state/SpectralViewModel.kt",
+              "                    outputMode = captureSettings.outputMode,\n                    frontFacing = captureSettings.frontFacing,\n                )",
+              "                    outputMode = captureSettings.outputMode,\n                    frontFacing = captureSettings.frontFacing,\n                    selectedLensId = captureSettings.selectedLensId,\n                )",
+          )
+
+          # App session: persist controller fallback and rebind for lens identity.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/SpectralCameraApp.kt",
+              "        LaunchedEffect(capabilities, settings.focusMode) {",
+              dedent('''
+                      LaunchedEffect(capabilities?.activeLensId, settings.selectedLensId) {
+                          val active = capabilities?.availableLenses
+                              ?.firstOrNull { it.id == capabilities?.activeLensId }
+                          if (active != null &&
+                              (settings.selectedLensId != active.id ||
+                                  settings.selectedLensLabel != active.label ||
+                                  settings.frontFacing != active.frontFacing)
+                          ) {
+                              viewModel.setCameraLens(active)
+                          }
+                      }
+
+                      LaunchedEffect(capabilities, settings.focusMode) {
+              ''').rstrip(),
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/SpectralCameraApp.kt",
+              "        settings.frontFacing,\n        settings.outputMode,",
+              "        settings.frontFacing,\n        settings.selectedLensId,\n        settings.outputMode,",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/SpectralCameraApp.kt",
+              "            lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,\n            outputMode = settings.outputMode,",
+              "            lensFacing = if (settings.frontFacing) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK,\n            selectedLensId = settings.selectedLensId,\n            outputMode = settings.outputMode,",
+          )
+
+          # Live UI: explicit lens panel and cycle button.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "    var showExposure by remember { mutableStateOf(false) }\n    var showFocus by remember { mutableStateOf(false) }",
+              "    var showExposure by remember { mutableStateOf(false) }\n    var showFocus by remember { mutableStateOf(false) }\n    var showLenses by remember { mutableStateOf(false) }",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "    val manualFocusLabel = FocusMath.positionLabel(\n",
+              "    val lensOptions = capabilities?.availableLenses.orEmpty()\n    val activeLensLabel = capabilities?.activeLensLabel?.takeIf { it.isNotBlank() }\n        ?: settings.selectedLensLabel.takeIf { it.isNotBlank() }\n        ?: if (settings.frontFacing) \"Selfie\" else \"Rear camera\"\n    val manualFocusLabel = FocusMath.positionLabel(\n",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "                        Text(\n                            text = \"Focus: ${settings.focusMode.label}\",",
+              "                        Text(\n                            text = \"Lens: $activeLensLabel\",\n                            style = MaterialTheme.typography.labelSmall,\n                            color = MaterialTheme.colorScheme.secondary,\n                        )\n                        Text(\n                            text = \"Focus: ${settings.focusMode.label}\",",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {\n                    AssistChip(\n                        onClick = onOpenGallery,",
+              "                Row(\n                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),\n                    horizontalArrangement = Arrangement.spacedBy(8.dp),\n                ) {\n                    AssistChip(\n                        onClick = { showLenses = !showLenses },\n                        label = { Text(\"Lens: $activeLensLabel\") },\n                        leadingIcon = { Icon(Icons.Outlined.Cameraswitch, null) },\n                    )\n                    AssistChip(\n                        onClick = onOpenGallery,",
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {\n                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {",
+              dedent('''
+                          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                              if (showLenses && lensOptions.isNotEmpty()) {
+                                  Surface(
+                                      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
+                                      shape = MaterialTheme.shapes.large,
+                                  ) {
+                                      Column(
+                                          modifier = Modifier.padding(10.dp),
+                                          verticalArrangement = Arrangement.spacedBy(8.dp),
+                                      ) {
+                                          Text(
+                                              "Camera lens",
+                                              style = MaterialTheme.typography.labelLarge,
+                                              fontWeight = FontWeight.SemiBold,
+                                          )
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                              horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                          ) {
+                                              lensOptions.forEach { lens ->
+                                                  FilterChip(
+                                                      selected = lens.id == capabilities?.activeLensId,
+                                                      onClick = {
+                                                          torchEnabled = false
+                                                          viewModel.setCameraLens(lens)
+                                                          showLenses = false
+                                                          captureLabel = "Switching to ${lens.label}…"
+                                                      },
+                                                      label = { Text(lens.label) },
+                                                  )
+                                              }
+                                          }
+                                          val activeDescription = lensOptions
+                                              .firstOrNull { it.id == capabilities?.activeLensId }
+                                              ?.description
+                                          Text(
+                                              activeDescription
+                                                  ?: "Only cameras exposed by Android can be selected. Some phone makers hide auxiliary lenses from third-party apps.",
+                                              style = MaterialTheme.typography.bodySmall,
+                                              color = MaterialTheme.colorScheme.secondary,
+                                          )
+                                      }
+                                  }
+                              }
+                              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              ''').rstrip(),
+          )
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+              "                            IconButton(onClick = { viewModel.setFrontFacing(!settings.frontFacing) }) {\n                                Icon(Icons.Outlined.Cameraswitch, contentDescription = \"Switch camera\")\n                            }",
+              dedent('''
+                                          IconButton(onClick = {
+                                              val currentIndex = lensOptions.indexOfFirst {
+                                                  it.id == capabilities?.activeLensId || it.id == settings.selectedLensId
+                                              }
+                                              val next = when {
+                                                  lensOptions.isEmpty() -> null
+                                                  currentIndex < 0 -> lensOptions.first()
+                                                  else -> lensOptions[(currentIndex + 1) % lensOptions.size]
+                                              }
+                                              if (next != null) {
+                                                  torchEnabled = false
+                                                  viewModel.setCameraLens(next)
+                                                  captureLabel = "Switching to ${next.label}…"
+                                              } else {
+                                                  viewModel.setFrontFacing(!settings.frontFacing)
+                                              }
+                                          }) {
+                                              Icon(Icons.Outlined.Cameraswitch, contentDescription = "Change lens")
+                                          }
+              ''').rstrip(),
+          )
+
+          # Saved metadata identifies the actual selected lens label.
+          replace(
+              "app/src/main/java/com/renardoberou/spectralcamera/core/media/MediaRepository.kt",
+              "        return \"${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription\"",
+              "        val lens = settings.selectedLensLabel.ifBlank { if (settings.frontFacing) \"Selfie\" else \"Rear camera\" }\n        return \"${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • Lens $lens • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription\"",
+          )
+
+          # Version and documentation.
+          replace(
+              "app/build.gradle.kts",
+              "versionCode = (System.getenv(\"VERSION_CODE\") ?: \"47\").toInt()\n        versionName = System.getenv(\"VERSION_NAME\") ?: \"1.19.0\"",
+              "versionCode = (System.getenv(\"VERSION_CODE\") ?: \"48\").toInt()\n        versionName = System.getenv(\"VERSION_NAME\") ?: \"1.19.1\"",
+          )
+          replace(
+              "README.md",
+              "## Focus modes\n",
+              dedent('''
+              ## Lens selection
+
+              The Live screen exposes every camera that CameraX can address: the logical rear camera, individually selectable physical rear lenses when Android reports them, and the front camera. A multi-camera logical rear device appears as **Auto rear** plus explicit entries such as **0.5× Ultra-wide**, **1× Main**, or **2× Tele**. Labels are derived from reported focal length and sensor size rather than hard-coded phone-model assumptions.
+
+              Selecting a physical lens locks capture, focus capability detection, RAW/HDR capability checks, and metadata to that lens. If the phone maker does not expose an auxiliary camera to third-party apps, Spectral Camera cannot force it open and shows only the cameras Android makes available. The old front/rear switch remains as a cycle shortcut, while the Lens panel provides direct selection.
+
+              ## Focus modes
+              '''),
+          )
+          Path("docs/PLAN_2026-07-22_lens-selector.md").write_text(dedent('''
+          # Plan: expose discoverable physical camera lenses
+
+          **Date:** 2026-07-22  
+          **Branch:** `agent/hdr-imaging-pipeline`  
+          **Draft PR:** #25
+
+          ## Problem
+
+          The app previously bound only `LENS_FACING_BACK` or `LENS_FACING_FRONT`. The rear choice meant CameraX's default logical camera, not a user-selectable ultra-wide, main, or telephoto lens. Consequently the focus validation text referred to lenses that the UI could not select.
+
+          ## Implementation
+
+          - Enumerate CameraX rear and front `CameraInfo` objects.
+          - Read logical-camera physical members through `physicalCameraInfos`.
+          - Build exact selectors using the logical camera ID plus `setPhysicalCameraId` for a chosen physical lens.
+          - Include an `Auto rear` logical option when a logical camera exposes multiple physical members.
+          - Derive approximate 35 mm-equivalent focal length from reported focal length and sensor dimensions, then label ultra-wide/main/tele relative to the main lens.
+          - Persist the selected lens ID and label.
+          - Rebind CameraX when lens identity changes.
+          - Recalculate focus, RAW, HDR, flash, exposure, and zoom capabilities for the active selection.
+          - Cancel a pending Double Exposure when the lens changes, because the source geometry is no longer guaranteed compatible.
+          - Record the selected lens in MediaStore metadata.
+
+          ## Fallback behavior
+
+          CameraX can select only cameras exposed by Android. Some manufacturers hide auxiliary lenses or expose them only through proprietary camera apps. In that case the selector truthfully shows only the default rear camera and selfie camera. An unavailable persisted ID falls back to the default logical rear or front camera and updates the saved selection.
+
+          ## Device validation
+
+          1. Open the Lens panel and record every option.
+          2. Capture the same detailed scene with Auto rear and every explicit rear lens.
+          3. Confirm field of view changes in the expected order.
+          4. Confirm the header and saved metadata name the active lens.
+          5. Re-run focus-mode capability checks on each explicit lens.
+          6. Re-run Standard, Computational HDR, True RAW HDR, HQ 1080, Fast 1080, and Full Resolution where each lens enables them.
+          7. Confirm unsupported RAW/HDR modes disable or fall back without breaking preview.
+          8. Confirm changing lens clears a pending Double Exposure frame.
+          9. Restart the app and verify the selected lens returns or falls back cleanly.
+          10. Confirm the front camera remains available as Selfie.
+          ''').lstrip())
+
+          # JVM tests for labels and fallback selection.
+          Path("app/src/test/java/com/renardoberou/spectralcamera/core/camera/CameraLensCatalogTest.kt").write_text(dedent('''
+          package com.renardoberou.spectralcamera.core.camera
+
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertNotNull
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+
+          class CameraLensCatalogTest {
+              private val candidates = listOf(
+                  CameraLensCandidate("auto", false, "0", null, true, 26f),
+                  CameraLensCandidate("ultra", false, "0", "2", false, 14f),
+                  CameraLensCandidate("main", false, "0", "3", false, 26f),
+                  CameraLensCandidate("tele", false, "0", "4", false, 52f),
+                  CameraLensCandidate("front", true, "1", null, false, 24f),
+              )
+
+              @Test
+              fun labelsPhysicalLensesRelativeToMain() {
+                  val options = CameraLensCatalog.buildOptions(candidates)
+                  assertEquals("Auto rear", options.first().label)
+                  assertTrue(options.any { it.label.startsWith("0.5×") && it.label.contains("Ultra-wide") })
+                  assertTrue(options.any { it.label.startsWith("1×") && it.label.contains("Main") })
+                  assertTrue(options.any { it.label.startsWith("2×") && it.label.contains("Tele") })
+                  assertEquals("Selfie", options.last().label)
+              }
+
+              @Test
+              fun requestedPhysicalLensWins() {
+                  val options = CameraLensCatalog.buildOptions(candidates)
+                  assertEquals("tele", CameraLensCatalog.choose(options, "tele", preferFront = false)?.id)
+              }
+
+              @Test
+              fun emptyRearSelectionPreservesLogicalAutoBehavior() {
+                  val options = CameraLensCatalog.buildOptions(candidates)
+                  assertEquals("auto", CameraLensCatalog.choose(options, "", preferFront = false)?.id)
+              }
+
+              @Test
+              fun frontMigrationSelectsSelfie() {
+                  val options = CameraLensCatalog.buildOptions(candidates)
+                  assertEquals("front", CameraLensCatalog.choose(options, "", preferFront = true)?.id)
+              }
+
+              @Test
+              fun computesPlausibleEquivalentFocalLength() {
+                  val equivalent = CameraLensCatalog.equivalentFocalLengthMm(4.5f, 6.4f, 4.8f)
+                  assertNotNull(equivalent)
+                  assertTrue(requireNotNull(equivalent) in 23f..26f)
+              }
+          }
+          ''').lstrip())
+
+          Path(".github/workflows/apply-lens-selector.yml").unlink()
+          PY
+
+      - name: Test and package
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease
+
+      - name: Commit verified lens selector
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(camera): expose selectable physical rear lenses"
+          git push origin HEAD:agent/hdr-imaging-pipeline
