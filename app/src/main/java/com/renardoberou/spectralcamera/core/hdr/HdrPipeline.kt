@@ -3,9 +3,7 @@ package com.renardoberou.spectralcamera.core.hdr
 import android.graphics.Bitmap
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.camera.CapturedExposure
-import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.max
@@ -50,12 +48,12 @@ data class HdrMergeResult(
 )
 
 /**
- * Computational HDR stage:
+ * Computational HDR stage.
  *
- * bracketed JPEGs -> exposure-normalized log-luma alignment -> linear-light
- * radiance fusion -> reference-biased deghosting -> global normalization and
- * selectable tone mapping. The returned bitmap is the SDR working rendition
- * consumed by the existing synthetic-NIR and film shader.
+ * JPEG brackets are inverse-transferred to an exposure-normalized linear-light
+ * radiance estimate. This is materially better than encoded-RGB averaging but
+ * remains an approximation to true sensor-linear RAW because the phone ISP has
+ * already applied camera response, white balance and local processing.
  */
 object HdrPipeline {
     private const val THUMB_MAX_EDGE = 240
@@ -92,7 +90,6 @@ object HdrPipeline {
         val whitePoint = ((high - black).coerceAtLeast(usableMedian) * keyScale).coerceIn(1.10f, 16f)
         val dynamicRange = log2((high + EPSILON) / (low + EPSILON)).coerceIn(0f, 20f)
 
-        val outputPixels = IntArray(crop.width * crop.height)
         val gainScale = min(0.25f, THUMB_MAX_EDGE * 4f / max(crop.width, crop.height).toFloat())
             .coerceAtLeast(1f / max(crop.width, crop.height).toFloat())
         val gainWidth = max(1, (crop.width * gainScale).roundToInt())
@@ -101,13 +98,17 @@ object HdrPipeline {
         val gainCounts = IntArray(gainWidth * gainHeight)
         val rows = Array(frames.size) { IntArray(crop.width) }
         val radiance = FloatArray(4)
+        val outputRow = IntArray(crop.width)
+        val bitmap = Bitmap.createBitmap(crop.width, crop.height, Bitmap.Config.ARGB_8888)
 
+        // Write one row directly into the Bitmap instead of holding a second
+        // full-frame IntArray. At 12 MP this removes roughly 48 MB of peak heap.
         for (y in 0 until crop.height) {
             loadAlignedRows(frames, alignment, crop, y, rows)
             for (x in 0 until crop.width) {
                 mergeRadiance(rows, x, exposureScales, referenceIndex, radiance)
                 val sceneLuma = radiance[3]
-                val normalizedLuma = ((sceneLuma - black).coerceAtLeast(0f) * keyScale)
+                val normalizedLuma = (sceneLuma - black).coerceAtLeast(0f) * keyScale
                 val sceneScale = if (sceneLuma > EPSILON) normalizedLuma / sceneLuma else 0f
                 val normalizedR = radiance[0] * sceneScale
                 val normalizedG = radiance[1] * sceneScale
@@ -121,7 +122,7 @@ object HdrPipeline {
                 val r = (HdrMath.linearToSrgb(mappedR).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
                 val g = (HdrMath.linearToSrgb(mappedG).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
                 val b = (HdrMath.linearToSrgb(mappedB).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
-                outputPixels[y * crop.width + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                outputRow[x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 
                 val gainStops = log2((normalizedLuma + EPSILON) / (mappedLuma + EPSILON))
                     .coerceIn(0f, MAX_GAIN_STOPS)
@@ -131,12 +132,12 @@ object HdrPipeline {
                 gainSums[gainIndex] += gainStops
                 gainCounts[gainIndex]++
             }
+            bitmap.setPixels(outputRow, 0, crop.width, 0, y, crop.width, 1)
         }
 
         val gainStops = FloatArray(gainSums.size) { index ->
             if (gainCounts[index] == 0) 0f else gainSums[index] / gainCounts[index]
         }
-        val bitmap = Bitmap.createBitmap(outputPixels, crop.width, crop.height, Bitmap.Config.ARGB_8888)
         return HdrMergeResult(
             workingBitmap = bitmap,
             gainField = HdrGainField(gainWidth, gainHeight, gainStops, MAX_GAIN_STOPS),
@@ -169,9 +170,10 @@ object HdrPipeline {
                 )
                 val fullDx = (thumbShift.dx * fullWidth.toFloat() / thumbSize.first).roundToInt()
                 val fullDy = (thumbShift.dy * fullHeight.toFloat() / thumbSize.second).roundToInt()
-                val safeX = fullDx.coerceIn(-fullWidth / 16, fullWidth / 16)
-                val safeY = fullDy.coerceIn(-fullHeight / 16, fullHeight / 16)
-                PixelShift(safeX, safeY)
+                PixelShift(
+                    dx = fullDx.coerceIn(-fullWidth / 16, fullWidth / 16),
+                    dy = fullDy.coerceIn(-fullHeight / 16, fullHeight / 16),
+                )
             }
         }
     }
@@ -266,7 +268,7 @@ object HdrPipeline {
         }
     }
 
-    /** Writes r, g, b and luma radiance into [out]. */
+    /** Writes linear radiance r, g, b and luma into [out]. */
     private fun mergeRadiance(
         rows: Array<IntArray>,
         x: Int,
@@ -299,9 +301,12 @@ object HdrPipeline {
             val radianceG = linearG / scale
             val radianceB = linearB / scale
             val radianceLuma = HdrMath.linearLuma(radianceR, radianceG, radianceB)
-            var weight = HdrMath.wellExposedWeight(encodedLuma)
+            var weight = HdrMath.wellExposedWeight(encodedLuma) *
+                HdrMath.encodedChannelReliability(sr, sg, sb)
             if (index == referenceIndex) {
-                weight = max(weight, 0.35f)
+                // Reference is the stable fallback, but a clipped reference must
+                // not overpower a well-exposed bracket frame.
+                weight = max(weight, 0.12f * HdrMath.encodedChannelReliability(sr, sg, sb))
             } else {
                 weight *= HdrMath.deghostWeight(referenceLuma, radianceLuma)
             }
