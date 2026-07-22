@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.OutputMode
@@ -39,6 +40,7 @@ fun ProOutputScreen(
     val hdrActive = settings.hdrCaptureMode != HdrCaptureMode.OFF
     val rawHdrActive = settings.hdrCaptureMode == HdrCaptureMode.RAW_THREE_FRAME
     val jpegHdrActive = settings.hdrCaptureMode == HdrCaptureMode.THREE_FRAME
+    val doubleExposureActive = settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -54,7 +56,7 @@ fun ProOutputScreen(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Dynamic range is captured before synthetic NIR and the selected Aerochrome or monochrome IR stock. Standard remains the motion-safe default.",
+                text = "The active capture method is always shown on the Live screen, in the saved message, and in the Gallery. HDR remains HDR when movement is detected; uncertain regions use motion-protected fusion instead of silently becoming Standard.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
@@ -68,14 +70,14 @@ fun ProOutputScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.large,
-                    tonalElevation = if (settings.hdrCaptureMode == mode) 4.dp else 1.dp,
+                    tonalElevation = if (settings.hdrCaptureMode == mode && !doubleExposureActive) 4.dp else 1.dp,
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         FilterChip(
-                            selected = settings.hdrCaptureMode == mode,
+                            selected = settings.hdrCaptureMode == mode && !doubleExposureActive,
                             enabled = enabled,
                             onClick = { viewModel.setHdrCaptureMode(mode) },
                             label = { Text(mode.label, fontWeight = FontWeight.SemiBold) },
@@ -84,13 +86,13 @@ fun ProOutputScreen(
                         when (mode) {
                             HdrCaptureMode.OFF -> Unit
                             HdrCaptureMode.THREE_FRAME -> Text(
-                                text = "Uses approximately −2 / 0 / +2 EV where possible, aligns translation, and deghosts toward the normal JPEG exposure. Best for static or slow scenes.",
+                                text = "Uses approximately −2 / 0 / +2 EV where possible. Wind, people, water, or uncertain camera movement no longer cancel the HDR capture: edges and moving detail stay anchored to the normal exposure while broad clipped highlights and deep shadows can still use the bracket.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary,
                             )
                             HdrCaptureMode.RAW_THREE_FRAME -> Text(
                                 text = if (trueRawHdrSupported) {
-                                    "Fixes ISO, brackets shutter, merges black-subtracted RAW_SENSOR Bayer radiance before demosaic, then applies camera white balance and the reported sensor-to-linear-sRGB transform."
+                                    "Fixes ISO, brackets shutter, merges black-subtracted RAW_SENSOR Bayer radiance before demosaic, and uses the same motion-protected reference anchoring when alignment is uncertain."
                                 } else {
                                     "Unavailable on this active lens. It requires RAW_SENSOR, MANUAL_SENSOR, Bayer CFA, black/white-level metadata, and capture colour metadata."
                                 },
@@ -101,6 +103,22 @@ fun ProOutputScreen(
                     }
                 }
             }
+
+            SectionTitle("Creative Standard capture")
+            FilterChip(
+                selected = doubleExposureActive,
+                onClick = {
+                    viewModel.setDoubleExposureMode(
+                        if (doubleExposureActive) DoubleExposureMode.OFF
+                        else DoubleExposureMode.FILM_BALANCED,
+                    )
+                },
+                label = { Text("Double Exposure") },
+            )
+            Text(
+                text = "First press stores frame 1 and places a transparent guide over the live view. Recompose, then press again. The two half-exposures are combined in linear light before the selected Aerochrome or monochrome film look is applied once. Enabling this mode turns HDR and RAW sidecar capture off.",
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             if (hdrActive) {
                 SectionTitle("HDR tone map before film")
@@ -142,15 +160,17 @@ fun ProOutputScreen(
                         Text(mode.description, style = MaterialTheme.typography.bodySmall)
                         val detail = when (mode) {
                             OutputMode.FULL_RESOLUTION -> when {
+                                doubleExposureActive ->
+                                    "Both source frames are held at a safe high-resolution working size, combined, and then sent through the same adaptive GPU export path."
                                 rawHdrActive ->
-                                    "Uses the RAW stream's practical size. If the mobile GPU cannot allocate the requested offscreen film-render target, capture automatically retries at descending safe resolutions instead of failing."
+                                    "Uses the RAW stream's practical size. If the mobile GPU cannot allocate the requested offscreen film-render target, capture retries at descending safe resolutions instead of failing."
                                 jpegHdrActive ->
-                                    "Uses a high-quality memory-bounded JPEG bracket. The film renderer now retries smaller aspect-preserving targets when a large framebuffer cannot be allocated."
+                                    "Uses a high-quality memory-bounded JPEG bracket and adaptive offscreen rendering."
                                 else ->
                                     "Maximum-quality source. The largest completed export depends on the camera stream, GPU texture size, and framebuffer memory."
                             }
                             OutputMode.HQ_1080 ->
-                                "Merges and renders from a high-resolution source, then progressively reduces to exact Full HD. GPU allocation fallback preserves completion on constrained devices."
+                                "Merges or combines from a high-resolution source, renders the film look, then progressively reduces to exact Full HD."
                             OutputMode.FAST_1080 ->
                                 "Uses a lower-latency 16:9 source near Full HD and normalizes aligned dimensions such as 1920×1088 to exact Full HD."
                         }
@@ -180,7 +200,7 @@ fun ProOutputScreen(
             )
             Text(
                 text = if (ultraHdrPlatform) {
-                    "Creates a backward-compatible SDR JPEG plus a gain map regenerated after the Aerochrome/IR transform. Dark film-intent regions are protected from inappropriate display brightening."
+                    "Creates a backward-compatible SDR JPEG plus a gain map regenerated after the Aerochrome/IR transform."
                 } else {
                     "This device can save the tone-mapped SDR result but cannot attach an Android Ultra HDR gain map."
                 },
@@ -196,6 +216,7 @@ fun ProOutputScreen(
                     label = {
                         Text(
                             when {
+                                doubleExposureActive -> "Save both source frames"
                                 rawHdrActive -> "No JPEG original in RAW mode"
                                 jpegHdrActive -> "Reference JPEG"
                                 else -> "Original JPEG"
@@ -204,6 +225,7 @@ fun ProOutputScreen(
                     },
                 )
                 val rawToggleEnabled = when {
+                    doubleExposureActive -> false
                     rawHdrActive -> trueRawHdrSupported
                     jpegHdrActive -> false
                     else -> rawSidecarSupported
@@ -215,6 +237,7 @@ fun ProOutputScreen(
                     label = {
                         Text(
                             when {
+                                doubleExposureActive -> "RAW unavailable in Double Exposure"
                                 rawHdrActive -> "Save RAW bracket DNGs"
                                 jpegHdrActive -> "RAW unavailable in JPEG HDR"
                                 rawSidecarSupported -> "RAW DNG sidecar"
@@ -236,8 +259,9 @@ fun ProOutputScreen(
                 ) {
                     Text(
                         text = when {
-                            rawHdrActive -> "True RAW HDR merges sensor mosaics before demosaic. Saving bracket DNGs is optional; disabling it keeps the in-app RAW merge but avoids three sidecar files."
-                            jpegHdrActive -> "JPEG HDR is available on more lenses and is lighter on storage. It cannot save a matching RAW bracket in this cycle."
+                            doubleExposureActive -> "Double Exposure is a two-step Standard capture. The first frame remains pending until the second succeeds or you cancel it from the Live screen."
+                            rawHdrActive -> "True RAW HDR merges sensor mosaics before demosaic. Saving bracket DNGs is optional."
+                            jpegHdrActive -> "JPEG HDR is available on more lenses and is lighter on storage. Motion-protected areas retain the normal exposure rather than cancelling the entire HDR file."
                             capabilities == null -> "RAW and bracket capability are checked when the camera session is ready."
                             rawSidecarSupported -> "This lens supports a Standard RAW DNG + JPEG sidecar workflow."
                             else -> "This active lens does not support simultaneous RAW DNG + JPEG capture."
@@ -245,15 +269,11 @@ fun ProOutputScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
-                    Text(
-                        text = "The live preview remains single-frame. Moving subjects can reduce recovered range locally because deghosting favors the reference exposure rather than inventing multiple silhouettes.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
                 }
             }
 
             Text(
-                text = "Selected: ${settings.hdrCaptureMode.label} • ${settings.hdrToneMap.label} • ${settings.outputMode.label} • ${if (settings.ultraHdrExport && hdrActive && ultraHdrPlatform) "Ultra HDR" else "SDR JPEG"}",
+                text = "Selected: ${settings.requestedCaptureLabel} • ${settings.hdrToneMap.label} • ${settings.outputMode.label} • ${if (settings.ultraHdrExport && hdrActive && ultraHdrPlatform) "Ultra HDR" else "SDR JPEG"}",
                 style = MaterialTheme.typography.labelLarge,
             )
             Spacer(Modifier.height(24.dp))
