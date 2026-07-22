@@ -12,12 +12,19 @@ import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureResult
 import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.HardwareTestState
+import com.renardoberou.spectralcamera.core.HdrCaptureMode
+import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
+import com.renardoberou.spectralcamera.core.camera.CapturedExposure
 import com.renardoberou.spectralcamera.core.data.CameraSettingsRepository
 import com.renardoberou.spectralcamera.core.export.OutputPipeline
 import com.renardoberou.spectralcamera.core.hardware.HardwareTestAnalyzer
+import com.renardoberou.spectralcamera.core.hdr.HdrMergeResult
+import com.renardoberou.spectralcamera.core.hdr.HdrPipeline
+import com.renardoberou.spectralcamera.core.hdr.UltraHdrExporter
+import com.renardoberou.spectralcamera.core.hdr.UltraHdrImage
 import com.renardoberou.spectralcamera.core.media.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,10 +46,6 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     private val settingsRepository = CameraSettingsRepository(application)
     private val mediaRepository = MediaRepository(application)
     private val hardwareAnalyzer = HardwareTestAnalyzer()
-
-    // Manual exposure is SESSION state: never persisted, and layered over the
-    // repository flow here (forcing it false at read time fought every
-    // DataStore re-emission, snapping the Manual switch off instantly).
     private val manualModeSession = MutableStateFlow(false)
 
     val settings: StateFlow<CameraSettings> = settingsRepository.settings
@@ -62,7 +65,6 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         refreshGallery()
     }
 
-    /** Receives small RGBA frames from the analysis stream (hardware-test screen only). */
     fun onAnalysisFrame(bitmap: Bitmap) {
         _hardwareState.value = hardwareAnalyzer.analyze(bitmap)
     }
@@ -80,74 +82,155 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setSaveOriginal(enabled: Boolean) = updateSettings { it.copy(saveOriginal = enabled) }
     fun setFrontFacing(enabled: Boolean) = updateSettings { it.copy(frontFacing = enabled) }
     fun setOutputMode(mode: OutputMode) = updateSettings { it.copy(outputMode = mode) }
-    fun setSaveRawSidecar(enabled: Boolean) = updateSettings { it.copy(saveRawSidecar = enabled) }
+
+    fun setHdrCaptureMode(mode: HdrCaptureMode) = updateSettings { current ->
+        when (mode) {
+            HdrCaptureMode.OFF -> current.copy(hdrCaptureMode = mode, ultraHdrExport = false)
+            HdrCaptureMode.THREE_FRAME -> current.copy(
+                hdrCaptureMode = mode,
+                // This cycle implements a JPEG exposure bracket. RAW remains a
+                // single-shutter sidecar workflow rather than silently making
+                // three large DNG files.
+                saveRawSidecar = false,
+            )
+        }
+    }
+
+    fun setHdrToneMap(mode: HdrToneMap) = updateSettings { it.copy(hdrToneMap = mode) }
+
+    fun setUltraHdrExport(enabled: Boolean) = updateSettings { current ->
+        val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        current.copy(
+            ultraHdrExport = enabled && supported && current.hdrCaptureMode == HdrCaptureMode.THREE_FRAME,
+        )
+    }
+
+    fun setSaveRawSidecar(enabled: Boolean) = updateSettings { current ->
+        if (enabled) {
+            current.copy(
+                saveRawSidecar = true,
+                hdrCaptureMode = HdrCaptureMode.OFF,
+                ultraHdrExport = false,
+            )
+        } else {
+            current.copy(saveRawSidecar = false)
+        }
+    }
+
     fun setHardwareEv(value: Float) = updateSettings { it.copy(hardwareEv = value) }
     fun setManualMode(enabled: Boolean) { manualModeSession.value = enabled }
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
-
     fun setIntensity(value: Float) = updateSettings { it.copy(intensity = value) }
-
     fun setZebra(enabled: Boolean) = updateSettings { it.copy(zebraEnabled = enabled) }
-    fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) = updateSettings { it.copy(sensorMode = mode) }
+    fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) =
+        updateSettings { it.copy(sensorMode = mode) }
 
     fun updateAdjustments(transform: (com.renardoberou.spectralcamera.core.ManualAdjustments) -> com.renardoberou.spectralcamera.core.ManualAdjustments) {
-        updateSettings { settings -> settings.copy(adjustments = transform(settings.adjustments)) }
+        updateSettings { current -> current.copy(adjustments = transform(current.adjustments)) }
     }
 
     /**
-     * Captures one shutter result and applies the selected output policy around
-     * the shared GPU film renderer. HQ 1080 renders the high-resolution crop
-     * before downsampling; Fast 1080 downscales before rendering. A temporary
-     * DNG sidecar, when present, is copied by MediaRepository and then deleted.
+     * Full still pipeline:
+     *
+     * camera bracket -> output-mode geometry -> scene-linear HDR merge -> global
+     * normalization/tone map -> shared synthetic-NIR/film shader -> output-size
+     * finishing -> optional processed-image Ultra HDR gain map -> MediaStore.
      */
     suspend fun captureAndSave(
         cameraController: CameraController,
         process: suspend (Bitmap, CameraSettings) -> Bitmap,
     ): CaptureResult {
-        val currentSettings = settings.value
-        val frame = cameraController.capture()
-        var renderInput: Bitmap? = null
+        val requestedSettings = settings.value
+        val frame = cameraController.capture(requestedSettings)
+        val effectiveSettings = if (frame.isHdrBracket) {
+            requestedSettings
+        } else {
+            // A camera with insufficient bracket range can fall back to one
+            // frame; keep output metadata and auto-level behavior truthful.
+            requestedSettings.copy(hdrCaptureMode = HdrCaptureMode.OFF, ultraHdrExport = false)
+        }
+
+        val prepared = mutableListOf<CapturedExposure>()
+        var hdrMerge: HdrMergeResult? = null
+        var filmInput: Bitmap? = null
         var rendered: Bitmap? = null
-        var processed: Bitmap? = null
+        var finalOutput: Bitmap? = null
+        var ultraHdr: UltraHdrImage? = null
         try {
-            val prepared = withContext(Dispatchers.Default) {
-                OutputPipeline.prepareForRender(frame.bitmap, currentSettings.outputMode)
+            frame.exposures.forEach { exposure ->
+                val bitmap = withContext(Dispatchers.Default) {
+                    OutputPipeline.prepareForRender(exposure.bitmap, effectiveSettings.outputMode)
+                }
+                prepared += CapturedExposure(bitmap, exposure.evOffset)
             }
-            renderInput = prepared
-            val filmRender = process(prepared, currentSettings)
+
+            val working = if (frame.isHdrBracket) {
+                withContext(Dispatchers.Default) {
+                    HdrPipeline.merge(
+                        frames = prepared,
+                        referenceIndex = frame.referenceIndex,
+                        toneMap = effectiveSettings.hdrToneMap,
+                    )
+                }.also { hdrMerge = it }.workingBitmap
+            } else {
+                prepared[frame.referenceIndex].bitmap
+            }
+            filmInput = working
+
+            val filmRender = process(working, effectiveSettings)
             rendered = filmRender
-            val finalOutput = withContext(Dispatchers.Default) {
-                OutputPipeline.finalizeExport(filmRender, currentSettings.outputMode)
+            val finished = withContext(Dispatchers.Default) {
+                OutputPipeline.finalizeExport(filmRender, effectiveSettings.outputMode)
             }
-            processed = finalOutput
+            finalOutput = finished
+
+            if (effectiveSettings.ultraHdrExport && hdrMerge != null) {
+                ultraHdr = withContext(Dispatchers.Default) {
+                    UltraHdrExporter.attachIfSupported(finished, requireNotNull(hdrMerge).gainField)
+                }
+            }
+            val saveBitmap = ultraHdr?.bitmap ?: finished
             val result = withContext(Dispatchers.IO) {
                 mediaRepository.saveCapture(
-                    processed = finalOutput,
-                    original = frame.bitmap,
+                    processed = saveBitmap,
+                    original = frame.referenceBitmap,
                     rawSidecar = frame.rawSidecarFile,
-                    settings = currentSettings,
+                    settings = effectiveSettings,
+                    ultraHdr = ultraHdr != null,
                 )
             }
             refreshGallery()
             return result
         } finally {
             frame.rawSidecarFile?.delete()
-            recycleDistinct(frame.bitmap, renderInput, rendered, processed)
+            ultraHdr?.recycle()
+            val allBitmaps = buildList {
+                addAll(frame.exposures.map { it.bitmap })
+                addAll(prepared.map { it.bitmap })
+                add(hdrMerge?.workingBitmap)
+                add(filmInput)
+                add(rendered)
+                add(finalOutput)
+            }
+            recycleDistinct(*allBitmaps.toTypedArray())
         }
     }
 
     /**
-     * Imports an existing photo through the same film and output pipeline used
-     * by capture. Imported DNG development is not implemented in this cycle;
-     * ImageDecoder still supplies a display-referred Bitmap.
+     * Gallery import remains a single display-referred source. Computational
+     * bracketing and Ultra HDR generation are capture-only until a DNG/multi-
+     * exposure import workflow exists.
      */
     suspend fun importAndSave(
         uri: Uri,
         process: suspend (Bitmap, CameraSettings) -> Bitmap,
     ): CaptureResult {
-        val currentSettings = settings.value
-        val app = getApplication<android.app.Application>()
+        val effectiveSettings = settings.value.copy(
+            hdrCaptureMode = HdrCaptureMode.OFF,
+            ultraHdrExport = false,
+        )
+        val app = getApplication<Application>()
         val decoded = withContext(Dispatchers.IO) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val source = ImageDecoder.createSource(app.contentResolver, uri)
@@ -170,13 +253,13 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         var processed: Bitmap? = null
         try {
             val prepared = withContext(Dispatchers.Default) {
-                OutputPipeline.prepareForRender(original, currentSettings.outputMode)
+                OutputPipeline.prepareForRender(original, effectiveSettings.outputMode)
             }
             renderInput = prepared
-            val filmRender = process(prepared, currentSettings)
+            val filmRender = process(prepared, effectiveSettings)
             rendered = filmRender
             val finalOutput = withContext(Dispatchers.Default) {
-                OutputPipeline.finalizeExport(filmRender, currentSettings.outputMode)
+                OutputPipeline.finalizeExport(filmRender, effectiveSettings.outputMode)
             }
             processed = finalOutput
             val result = withContext(Dispatchers.IO) {
@@ -184,7 +267,8 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                     processed = finalOutput,
                     original = original,
                     rawSidecar = null,
-                    settings = currentSettings,
+                    settings = effectiveSettings,
+                    ultraHdr = false,
                 )
             }
             refreshGallery()
