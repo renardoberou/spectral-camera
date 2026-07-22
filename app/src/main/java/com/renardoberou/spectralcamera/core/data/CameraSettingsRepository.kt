@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
+import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.ManualAdjustments
@@ -71,6 +72,10 @@ class CameraSettingsRepository(context: Context) {
             manualMode = false,
             manualIso = prefs[MANUAL_ISO] ?: 400,
             manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
+            focusMode = prefs[FOCUS_MODE]?.let { name ->
+                runCatching { FocusMode.valueOf(name) }.getOrNull()
+            } ?: FocusMode.CONTINUOUS,
+            manualFocusPosition = (prefs[MANUAL_FOCUS_POSITION] ?: 0.15f).coerceIn(0f, 1f),
             intensity = (prefs[INTENSITY] ?: 1f).coerceIn(0.25f, 1f),
             zebraEnabled = prefs[ZEBRA] ?: false,
         )
@@ -104,6 +109,8 @@ class CameraSettingsRepository(context: Context) {
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
             prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
+            prefs[FOCUS_MODE] = settings.focusMode.name
+            prefs[MANUAL_FOCUS_POSITION] = settings.manualFocusPosition.coerceIn(0f, 1f)
             prefs[INTENSITY] = settings.intensity
             prefs[ZEBRA] = settings.zebraEnabled
         }
@@ -136,6 +143,8 @@ class CameraSettingsRepository(context: Context) {
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
         val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
+        val FOCUS_MODE = stringPreferencesKey("focus_mode")
+        val MANUAL_FOCUS_POSITION = floatPreferencesKey("manual_focus_position")
         val INTENSITY = floatPreferencesKey("look_intensity")
         val ZEBRA = booleanPreferencesKey("zebra_enabled")
     }
