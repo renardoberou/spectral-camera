@@ -711,7 +711,7 @@ void main() {
     vec2 r1 = vec2(0.016, 0.016);
     vec2 r2 = vec2(0.032, 0.032);
     vec2 r3 = vec2(0.050, 0.050);
-    vec3 acc = src;
+    vec3 acc = raw;
     float wsum = 1.0;
     vec3 tap;
     float tw;
