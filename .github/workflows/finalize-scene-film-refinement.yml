@@ -3,6 +3,8 @@ name: Finalize scene-to-film refinement
 on:
   push:
     branches: [agent/aerochrome-tonal-refinement]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -10,6 +12,7 @@ permissions:
 
 jobs:
   finalize:
+    if: github.event_name == 'push' || github.head_ref == 'agent/aerochrome-tonal-refinement'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
