@@ -100,7 +100,6 @@ enum class OutputMode(
     ),
 }
 
-/** Capture-domain dynamic-range strategy. */
 enum class HdrCaptureMode(
     val label: String,
     val description: String,
@@ -137,6 +136,21 @@ enum class HdrToneMap(
     ),
 }
 
+/** Standard-capture creative sequence, deliberately separate from HDR. */
+enum class DoubleExposureMode(
+    val label: String,
+    val description: String,
+) {
+    OFF(
+        label = "Single exposure",
+        description = "One Standard source frame.",
+    ),
+    FILM_BALANCED(
+        label = "Double exposure",
+        description = "Capture two separate compositions, combine them in linear light, then apply the selected film look once.",
+    ),
+}
+
 data class ManualAdjustments(
     val contrast: Float = 1.0f,
     val exposureCompensation: Float = 0f,
@@ -162,6 +176,7 @@ data class CameraSettings(
     val outputMode: OutputMode = OutputMode.FULL_RESOLUTION,
     val hdrCaptureMode: HdrCaptureMode = HdrCaptureMode.OFF,
     val hdrToneMap: HdrToneMap = HdrToneMap.NATURAL,
+    val doubleExposureMode: DoubleExposureMode = DoubleExposureMode.OFF,
     val ultraHdrExport: Boolean = false,
     /** Standard capture saves one DNG; True RAW HDR saves each bracket DNG when enabled. */
     val saveRawSidecar: Boolean = false,
@@ -171,7 +186,13 @@ data class CameraSettings(
     val manualShutterNs: Long = 8_000_000L,
     val intensity: Float = 1f,
     val zebraEnabled: Boolean = false,
-)
+) {
+    val requestedCaptureLabel: String
+        get() = when {
+            doubleExposureMode == DoubleExposureMode.FILM_BALANCED -> "Double Exposure"
+            else -> hdrCaptureMode.label
+        }
+}
 
 data class CameraCapabilities(
     val hasFlash: Boolean,
@@ -206,6 +227,7 @@ data class GalleryItem(
     val sensorModeLabel: String,
     val isOriginal: Boolean,
     val isUltraHdr: Boolean = false,
+    val captureModeLabel: String = "Standard",
 )
 
 data class HardwareTestState(
@@ -224,8 +246,26 @@ data class HardwareTestState(
 data class CaptureResult(
     val processedUri: Uri,
     val originalUri: Uri?,
+    val originalUris: List<Uri> = originalUri?.let(::listOf) ?: emptyList(),
     val rawUri: Uri? = null,
     val rawUris: List<Uri> = emptyList(),
     val displayName: String,
     val ultraHdr: Boolean = false,
-)
+    val captureModeLabel: String = "Standard",
+    val captureDetail: String = "1 frame",
+    val frameCount: Int = 1,
+    val motionProtected: Boolean = false,
+) {
+    val summary: String
+        get() = buildString {
+            append(captureModeLabel)
+            if (motionProtected) append(" • motion protected")
+            append(" • ")
+            append(captureDetail)
+        }
+}
+
+sealed interface CaptureActionResult {
+    data class Saved(val result: CaptureResult) : CaptureActionResult
+    data class AwaitingSecondExposure(val message: String) : CaptureActionResult
+}
