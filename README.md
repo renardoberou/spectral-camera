@@ -1,29 +1,31 @@
 # Spectral Camera
 
-An Android camera app for simulated infrared and Aerochrome-style photography. The live viewfinder and saved file use the same OpenGL ES film engine, while the still pipeline can optionally collect and merge additional scene information before that engine runs.
+An Android camera app for simulated infrared and Aerochrome-style photography. The live viewfinder and saved file use the same OpenGL ES film engine, while still capture can optionally collect more scene information before the film model runs.
 
-**Current development version:** 1.17.0 (versionCode 45) · **Status:** active development. The film engine has been manually exercised on a Motorola Edge 60 Fusion running Android 16. Computational HDR, Ultra HDR JPEG encoding/display, RAW capture, stream negotiation, and device integration still require the physical-device validation listed below.
+**Current development version:** 1.17.0 (versionCode 45) · **Status:** active development. The film engine has been manually exercised on a Motorola Edge 60 Fusion running Android 16. The new framebuffer fallback, True RAW HDR, Ultra HDR JPEG round trip, lens capability gates, latency, memory, and device integration still require the physical validation listed below.
 
 **Latest signed stable release:** [`v1.8.2`](https://github.com/renardoberou/spectral-camera/releases/tag/v1.8.2). Stable releases are signed only by the tag-triggered release workflow using private GitHub Actions secrets.
 
 ## Honesty note
 
-**The internal phone camera does not capture a dedicated infrared channel.** Every built-in look is a visible-RGB simulation using chromaticity analysis, a synthesized vegetation/NIR proxy, and film-characteristic-curve modelling. Computational HDR improves the visible source information available to that simulation; it does not turn the phone into a true infrared camera.
+**The internal phone camera does not capture a dedicated infrared channel.** Every built-in IR/Aerochrome look remains a simulation using visible colour, material classification, a synthesized vegetation/NIR proxy, and film-characteristic-curve modelling. HDR can preserve more visible source information for that simulation; it does not make the phone a true infrared camera.
 
-External IR and thermal modes remain UI/framework placeholders. No external sensor capture path is wired or tested.
+“True RAW HDR” refers to the dynamic-range source pipeline: multiple minimally processed `RAW_SENSOR` Bayer frames are merged before demosaic and colour conversion. It does not mean the phone sensor acquires true infrared wavelengths.
 
-## Imaging pipeline
+External IR and thermal modes remain UI/framework placeholders. No external sensor path is currently wired or tested.
 
-The optional still pipeline is:
+## Complete still pipeline
 
 ```text
 Camera
   ↓
-Optional three-frame exposure bracket
+Standard JPEG, bracketed JPEG, or bracketed RAW_SENSOR Bayer
   ↓
-Translation alignment + reference-biased deghosting
+Optional translation alignment + reference-biased deghosting
   ↓
-Exposure-normalized linear-light radiance merge
+Exposure-normalized radiance merge
+  ↓
+RAW path: demosaic + captured WB gains + captured colour transform
   ↓
 Global normalization + selected HDR tone map
   ↓
@@ -31,63 +33,103 @@ Synthetic NIR / material classification
   ↓
 Rollei / HIE / SFX / Aerochrome film engine
   ↓
-Full Resolution / HQ 1080 / Fast 1080 finishing
+Framebuffer-safe Full Resolution / HQ 1080 / Fast 1080 finishing
   ↓
 Optional processed-image Ultra HDR gain map
 ```
 
-### Standard and Computational HDR capture
+## Capture modes
 
-- **Standard** records one JPEG-derived render source. It is fastest and remains the preferred mode for moving subjects.
-- **Computational HDR** records up to three real exposures around the current metering point, nominally near −2, 0, and +2 EV where the active camera range permits.
-- In manual mode, supported devices bracket shutter time while holding ISO fixed.
-- CameraX exposure futures are awaited before each shutter event, so the requested compensation or shutter value is active before capture.
-- Frames are aligned using exposure-normalized logarithmic luminance thumbnails and a translation estimate.
-- The merger converts sRGB to linear light, normalizes each exposure to radiance, rejects clipped extremes, and biases disagreement/motion toward the normal exposure.
-- The result is normalized and tone-mapped before synthetic-NIR estimation. HDR is therefore source preparation, not a post-film “HDR effect.”
+### Standard
 
-Computational HDR uses a practical high-quality binned stream rather than requesting three 50 MP bitmaps. This limits memory pressure while retaining more than enough detail for HQ 1080 and typical mobile output. The exact stream remains device-dependent.
+One JPEG-derived render source. This is the fastest and most reliable mode for movement. On supported cameras it can also save one untouched DNG sidecar.
 
-### HDR tone maps
+### Computational HDR
 
-The Pro imaging screen exposes three global, halo-free tone maps for the merged source:
+- Captures bracketed JPEG frames around the current metering point, nominally near −2, 0, and +2 EV where the active lens permits.
+- In manual mode, holds ISO and brackets shutter time.
+- Awaits each CameraX/Camera2 exposure request before triggering the corresponding frame.
+- Aligns exposure-normalized log-luminance thumbnails.
+- Converts encoded sRGB into a linear-light estimate.
+- Rejects clipped exposures and biases moving/disagreeing regions toward the reference JPEG.
+- Normalizes and tone-maps before synthetic-NIR estimation.
+
+This mode is available on more devices than True RAW HDR, but the phone ISP has already applied white balance, denoising, colour conversion, sharpening, compression, and possibly local processing to each source frame.
+
+### True RAW HDR
+
+When the active lens exposes the required Camera2/CameraX capabilities, Spectral Camera can process a real RAW bracket:
+
+- configures `ImageCapture` for in-memory `RAW_SENSOR` output;
+- obtains the current metered shutter/ISO from Camera2 metadata when available;
+- fixes ISO and brackets shutter time;
+- locks AWB during the bracket where supported;
+- matches each RAW image to its `TotalCaptureResult` by sensor timestamp;
+- copies the packed 16-bit Bayer plane while respecting row and pixel stride;
+- subtracts static or dynamic black levels;
+- normalizes against static or dynamic sensor white level;
+- aligns in whole 2×2 CFA cells so red, green, and blue mosaic sites never cross;
+- merges exposure-normalized radiance in the Bayer mosaic **before demosaic**;
+- performs a transparent first-generation bilinear demosaic;
+- applies the captured `RggbChannelVector` gains and `COLOR_CORRECTION_TRANSFORM` into linear sRGB;
+- normalizes and tone-maps before the unchanged spectral-film engine.
+
+The mode is capability-gated. It requires RAW output, `MANUAL_SENSOR`, a supported Bayer CFA, black/white-level metadata, exposure metadata, WB gains, and a colour transform. Unsupported lenses must not expose it as available.
+
+“Save RAW bracket DNGs” optionally writes every captured RAW member using `DngCreator` and the matching capture result. Disabling that option still runs the in-memory RAW merge without keeping three sidecars.
+
+## HDR tone maps
+
+The Pro imaging screen exposes three global, halo-free mappings before the film engine:
 
 - **Natural** — restrained shadow lift and highlight recovery.
 - **Filmic** — deeper toe and a longer shoulder before the selected emulsion curve.
 - **Low Contrast** — stronger logarithmic compression for severe backlight or later manual grading.
 
-These are global luminance mappings. The app deliberately does not use local contrast HDR operators that create halos or plastic microcontrast before the film simulation.
+No local-contrast HDR operator is used. This avoids conventional HDR halos and plastic microcontrast before the film emulation.
 
-### Ultra HDR display and export
+## The Full/HQ capture failure and its fix
 
-On Android 14 and later, a successful computational-HDR capture can be exported as a backward-compatible Ultra HDR JPEG:
+Large HDR captures previously completed their camera bracket but could then fail with:
 
-- the processed film image is the SDR base image;
-- Spectral Camera builds a **new** gain map after the Aerochrome/IR transform rather than reusing invalid pre-film HDR metadata;
-- gain is gated by final processed luminance so deliberately dark EIR skies, IR water, and dense film shadows do not become luminous HDR patches;
-- SDR-only software displays the normal JPEG base;
-- gain-map-aware HDR displays can render additional highlight headroom;
-- the in-app detail viewer changes the window to HDR mode only when the decoded bitmap actually reports a gain map.
+```text
+Capture framebuffer incomplete: 0
+```
 
-Ultra HDR encoding and display must still be verified on physical Android 14+ devices and independent JPEG/R-aware viewers before release.
+The failure was in the offscreen film renderer, not in exposure capture. A large still requires a source RGBA texture, target RGBA texture/framebuffer, direct readback buffer, and output bitmap at the same time. `GL_MAX_TEXTURE_SIZE` only proves a dimension is legal; it does not prove that the combined allocation fits mobile GPU and process memory.
+
+The still pipeline now retries only framebuffer/texture/out-of-memory allocation failures at descending aspect-preserving render sizes. It does not recapture the bracket. Mode-specific safety tiers preserve the largest result the active GPU can actually complete:
+
+- Full Resolution: up to 4096, then 3456, 3072, 2560, 2304, 2048, or 1920 long edge as necessary;
+- HQ 1080: high-resolution merge/render with 3072 → 1920 fallback, followed by exact Full HD finishing;
+- Fast 1080: 1920 → 1280 safety range.
+
+Non-allocation camera or shader errors are still surfaced rather than silently hidden. A future tiled renderer can preserve still larger exports without one full-frame RGBA framebuffer.
 
 ## Pro output modes
 
-- **Full Resolution** — Standard capture requests the camera's largest practical JPEG source. Computational HDR uses a memory-bounded high-quality bracket stream.
-- **HQ 1080** — preserves the high-resolution source through HDR merge and film rendering, then progressively reduces to exact `1920×1080` or `1080×1920`.
-- **Fast 1080** — requests a lower-latency 16:9 source near Full HD and normalizes aligned dimensions such as `1920×1088` to exact Full HD before film rendering.
+- **Full Resolution** — uses the largest practical source and produces the largest offscreen film render the active GPU completes safely.
+- **HQ 1080** — preserves a high-resolution source through merge and film rendering, then progressively reduces to exact `1920×1080` or `1080×1920`.
+- **Fast 1080** — requests a lower-latency 16:9 source near Full HD and normalizes aligned dimensions such as `1920×1088` to exact Full HD.
 
 High-quality JPEG source capture requests quality 100. Fast 1080 intentionally uses the lower-latency CameraX policy and quality 95. Processed JPEG output uses quality 100.
 
-## RAW sidecars
+## Ultra HDR display/export
 
-On cameras that report simultaneous RAW+JPEG support, Standard capture can save an untouched DNG beside the processed JPEG. The companion JPEG still feeds the current film renderer.
+On Android 14 and later, either HDR capture mode can request a backward-compatible Ultra HDR JPEG:
 
-RAW sidecar and three-frame Computational HDR are mutually exclusive in this development cycle. The app does **not** yet demosaic, profile, merge, or render a RAW burst internally. A future scene-linear RAW pipeline would require three DNG captures plus camera-specific black-level, white-balance, color-matrix, demosaic, alignment, and merge handling.
+- the processed film image is the SDR base;
+- a new gain map is generated **after** the Aerochrome or monochrome transform;
+- recovered headroom is gated by final processed luminance so film-intent dark sky, water, and shadow do not become glowing display regions;
+- SDR viewers show the base JPEG;
+- compatible HDR displays can show additional highlight headroom;
+- the in-app viewer enables HDR window mode only when the decoded bitmap actually contains a gain map.
+
+Ultra HDR encoding, portrait/landscape orientation, independent decoding, and HDR-panel behavior remain physical-device release gates.
 
 ## Film-look families
 
-Every preset belongs to one of two structured families. `core/FilmLook.kt` stores the stock parameters; `core/gl/SpectralGlPipeline.kt` supplies one shared renderer per family.
+Every preset belongs to one structured family. `core/FilmLook.kt` stores stock parameters; `core/gl/SpectralGlPipeline.kt` supplies the shared family renderers.
 
 ### Monochrome IR
 
@@ -110,53 +152,40 @@ Every preset belongs to one of two structured families. `core/FilmLook.kt` store
 | Aerochrome Gold | Orange-filter interpretation with warmer foliage and teal sky. |
 | Aerochrome Faded / Vintage | Lifted, desaturated and warm aged-print character. |
 
-No experimental or novelty preset category is exposed.
+No novelty/experimental category is exposed.
 
-## Manual and capture controls
-
-- hardware exposure compensation in photographic stops;
-- manual ISO and shutter where Camera2 `MANUAL_SENSOR` is supported;
-- tap focus, torch and front/rear switching;
-- digital exposure, Blacks, Whites, Contrast, Saturation, Hue, Grain, Bloom, Sharpness, channel controls, sky suppression and foliage lift;
-- stock-specific always-on baseline grain, with the Grain control adding to it;
-- output mode, HDR capture, HDR tone map, Ultra HDR export, original/reference JPEG and RAW-sidecar controls in the separate Pro imaging screen.
-
-The live viewfinder remains single-frame for responsiveness. Computational HDR is a still-capture operation, so its recovered range is visible after capture rather than as a real-time fused preview.
-
-## File identity and gallery
+## Files and gallery
 
 Files save under `DCIM/SpectralCamera` through MediaStore. Names identify:
 
 - `proc` — processed SDR JPEG;
-- `uhdr` — processed Ultra HDR JPEG/R;
-- `orig` — untouched Standard source or the reference exposure from an HDR bracket;
-- `dng` — untouched RAW sidecar;
-- sensor mode, film preset, output mode and `HDR3`/`SDR1` capture strategy.
+- `uhdr` — processed Ultra HDR JPEG;
+- `orig` — Standard source or JPEG-HDR reference exposure;
+- `dng`, `dng01`, `dng02`, `dng03` — Standard sidecar or RAW-HDR bracket members;
+- `SDR1` — Standard;
+- `JHDR2`/`JHDR3` — JPEG Computational HDR;
+- `RHDR2`/`RHDR3` — True RAW HDR;
+- sensor mode, preset, and output mode.
 
-The parser remains compatible with the previous pro-output naming convention and the oldest `spectral_raw_...jpg` original-JPEG convention. DNG sidecars stay out of the in-app JPEG gallery but remain available to system and RAW-development applications.
+DNGs remain outside the in-app JPEG gallery but are available to system and RAW-development applications. The gallery parser remains compatible with previous pro-output and oldest `spectral_raw_...jpg` conventions.
 
 ## Validation
 
-`docs/VALIDATION.md` is the release checklist for:
-
-- Aerochrome and monochrome-IR failure scenes;
-- Full/HQ/Fast geometry and visual parity;
-- RAW capability and fallback;
-- exposure-bracket timing and restoration;
-- static alignment, handheld translation and moving-subject deghosting;
-- tone-map behavior before both film families;
-- Android 14+ Ultra HDR encode/decode/display and SDR fallback.
+- `docs/VALIDATION.md` contains the release checklist for film failure scenes, output geometry, bracket timing, exposure restoration, alignment, deghosting, RAW metadata, DNG integrity, Ultra HDR, memory, and unsupported-lens fallback.
+- `docs/PLAN_2026-07-22_true-raw-hdr-and-framebuffer-fix.md` records the observed bug, the solved root cause, the True RAW HDR architecture, implementation status, and release gates.
 
 ## Known limitations
 
-- RGB-to-NIR estimation remains approximate even when HDR improves source range.
-- HDR currently merges bracketed display-referred JPEGs, not sensor-linear RAW frames.
-- Alignment is translation-only; rotation, perspective change, parallax, leaves in wind, people and water motion can force local fallback toward the reference exposure.
-- Computational HDR is slower than Standard capture and should not be treated as the default for action.
-- Ultra HDR gain is reconstructed from pre-film scene headroom and post-film luminance. It is a conservative display enhancement, not a retained physical radiance field after arbitrary false-colour transformation.
-- Gallery import is single-frame bitmap processing; it cannot synthesize a computational bracket.
-- Full-resolution output is constrained by the camera HAL and `GL_MAX_TEXTURE_SIZE`.
-- Camera orientation, bracket timing, memory pressure, RAW/DNG integrity, Ultra HDR JPEG round-trip and HDR display all require physical-device verification.
+- RGB-to-NIR estimation remains approximate even when HDR preserves more visible detail.
+- JPEG HDR is not sensor-linear because the ISP has already processed its sources.
+- True RAW HDR is currently Bayer-only and uses a first-generation bilinear demosaic.
+- RAW alignment is translation-only and constrained to CFA-cell shifts. Rotation, perspective, parallax, leaves, people, and moving water can reduce recovered range or fail validation.
+- Camera vendors may omit or vary required WB/colour metadata.
+- Computational HDR and True RAW HDR are slower than Standard and should not be the action default.
+- Full Resolution may adaptively reduce render dimensions when one large RGBA framebuffer cannot be allocated.
+- Gallery import is single-frame bitmap processing and cannot reconstruct a missing bracket.
+- Ultra HDR is reconstructed display intent after a false-colour transform, not an untouched physical scene-radiance field.
+- All new camera and display behavior still requires physical-device validation.
 
 ## Test status
 
@@ -169,41 +198,44 @@ GitHub Actions runs:
 Focused JVM coverage includes:
 
 - gallery permission policy;
-- exact Full HD center-crop/orientation geometry;
-- automatic and manual HDR bracket planning;
+- exact Full HD crop/orientation geometry;
+- automatic and manual bracket planning;
 - sRGB/linear transfer functions;
-- tone-map bounds and monotonicity;
-- reference-biased deghost weights;
-- translation-alignment recovery.
+- tone-map bounds, monotonicity, and middle-grey behavior;
+- deghost weighting and translation recovery;
+- all four Bayer CFA layouts;
+- RAW black/white normalization;
+- RAW clipping weights;
+- RAW exposure-product behavior;
+- sensor RGB colour-transform math.
 
-There is no camera-capable CI, instrumentation image suite, or automated HDR-display verification. Physical-device checks remain mandatory.
+There is no camera-capable CI, automated DNG integrity suite, or automated HDR-display verification. A green build is necessary but not sufficient for release.
 
 ## Requirements
 
 - Android 8.0+ (`minSdk 26`), compiled against SDK 36 and targeting SDK 35;
 - Camera permission;
+- active-lens RAW and manual-sensor capability for True RAW HDR;
 - Android 14+ for gain-map Ultra HDR export/display;
-- `READ_MEDIA_IMAGES` on Android 13+ for full library access;
-- `READ_MEDIA_VISUAL_USER_SELECTED` handling on Android 14+;
-- `READ_EXTERNAL_STORAGE` through Android 12L where legacy full-library access is requested;
+- Android media permissions appropriate to the OS version;
 - no internet permission.
 
 ## Build and signing
 
-Without release-signing environment variables, `assembleRelease` intentionally produces `app-release-unsigned.apk`. Supplying only part of the signing environment is a configuration error. Stable release publication runs only from the tag-triggered release workflow described in `docs/RELEASE.md`.
+Without release-signing environment variables, `assembleRelease` intentionally produces an unsigned APK. Partial signing configuration is rejected. Stable release publication runs only from the tag-triggered workflow described in `docs/RELEASE.md`.
 
-The app transmits no images or telemetry. All capture preparation, HDR merge, film rendering and export run on-device.
+The app transmits no images or telemetry. Capture preparation, RAW/JPEG merge, film rendering, and export run on-device.
 
 ## Architecture
 
-- `core/FilmLook.kt` — structured monochrome-IR and Aerochrome stock parameters.
+- `core/FilmLook.kt` — monochrome-IR and Aerochrome stock parameter tables.
 - `core/gl/SpectralGlPipeline.kt` — live and still synthetic-NIR/film renderer.
-- `core/hdr/HdrMath.kt` — bracket planning, transfer functions, tone maps and translation estimator.
-- `core/hdr/HdrPipeline.kt` — alignment, linear-light merge, normalization, deghosting and headroom field.
-- `core/hdr/UltraHdrExporter.kt` — post-film gain-map generation and attachment.
+- `core/hdr/HdrMath.kt` / `HdrPipeline.kt` — JPEG bracket planning, alignment, merge, and tone mapping.
+- `core/hdr/RawHdrMath.kt` / `RawHdrPipeline.kt` — CFA-safe sensor-linear RAW merge before demosaic.
+- `core/hdr/UltraHdrExporter.kt` — post-film gain-map generation.
 - `core/export/OutputPipeline.kt` — Full/HQ/Fast geometry and finishing.
-- `core/camera/CameraController.kt` — CameraX session, real exposure brackets, JPEG and RAW+JPEG capture.
-- `core/media/MediaRepository.kt` — typed SDR/Ultra-HDR/DNG storage and backward-compatible gallery parsing.
-- `core/state/SpectralViewModel.kt` — end-to-end capture orchestration.
-- `ui/screens/ProOutputScreen.kt` — capture, tone-map and output controls.
-- `ui/screens/GalleryScreen.kt` — SDR-compatible gallery plus dynamic gain-map HDR display.
+- `core/camera/CameraController.kt` — CameraX/Camera2 sessions, exposure brackets, RAW_SENSOR and DNG capture.
+- `core/media/MediaRepository.kt` — typed SDR/Ultra-HDR/DNG storage and backward-compatible parsing.
+- `core/state/SpectralViewModel.kt` — end-to-end capture orchestration and adaptive GPU render fallback.
+- `ui/screens/ProOutputScreen.kt` — capture, tone-map, source-file, and output controls.
+- `ui/screens/GalleryScreen.kt` — SDR-compatible gallery and dynamic gain-map HDR display.
