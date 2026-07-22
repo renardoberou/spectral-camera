@@ -40,8 +40,6 @@ object HdrBracketPlanner {
             (base + requestedIndices).coerceIn(supportedRange.first, supportedRange.last),
         )
 
-        // Near an exposure-range boundary, preserve a three-frame bracket by
-        // using the widest distinct values available around the base.
         if (targets.size < 3) {
             targets += supportedRange.first
             targets += supportedRange.last
@@ -66,8 +64,7 @@ object HdrBracketPlanner {
     ): List<Pair<Long, Float>> {
         if (baseShutterNs <= 0L || supportedRange.first > supportedRange.last) return emptyList()
         val base = baseShutterNs.coerceIn(supportedRange.first, supportedRange.last)
-        val desired = listOf(-requestedSpanStops, 0f, requestedSpanStops)
-        return desired
+        return listOf(-requestedSpanStops, 0f, requestedSpanStops)
             .map { ev ->
                 val shutter = (base.toDouble() * 2.0.pow(ev.toDouble()))
                     .roundToLongSafe()
@@ -111,6 +108,17 @@ object HdrMath {
         return 0.025f + exp(-0.5f * distance * distance)
     }
 
+    /**
+     * Whole-pixel reliability guard. Luma alone misses a clipped single colour
+     * channel, which can inject false colour into Aerochrome classification.
+     */
+    fun encodedChannelReliability(r: Float, g: Float, b: Float): Float {
+        val maximum = max(r, max(g, b)).coerceIn(0f, 1f)
+        val shadow = smoothstep(0.006f, 0.055f, maximum)
+        val highlight = 1f - smoothstep(0.94f, 0.995f, maximum)
+        return (0.015f + 0.985f * shadow * highlight).coerceIn(0.015f, 1f)
+    }
+
     /** Downweight moving or misregistered content toward the reference exposure. */
     fun deghostWeight(referenceRadianceLuma: Float, candidateRadianceLuma: Float): Float {
         val differenceStops = abs(
@@ -120,29 +128,39 @@ object HdrMath {
         return (0.02f + 0.98f * exp(-0.5f * normalized * normalized)).coerceIn(0.02f, 1f)
     }
 
+    /**
+     * Global luminance mappings. The HDR normalization stage keys scene median
+     * near 0.18, so every curve deliberately leaves middle grey in a useful
+     * photographic range before the stock-specific film curve runs.
+     */
     fun toneMapLuma(value: Float, whitePoint: Float, mode: HdrToneMap): Float {
         val x = value.coerceAtLeast(0f)
         val white = whitePoint.coerceAtLeast(1.01f)
         return when (mode) {
             HdrToneMap.NATURAL -> {
-                // Extended Reinhard: identity-like mids, bounded shoulder, and
-                // a white point controlled by the scene percentile.
                 val mapped = x * (1f + x / (white * white)) / (1f + x)
                 mapped.coerceIn(0f, 1f)
             }
             HdrToneMap.FILMIC -> {
-                // Luminance-only ACES approximation. Applying the resulting
-                // scale to RGB preserves chromaticity for spectral classifiers.
-                val normalized = x / white
-                val mapped = (normalized * (2.51f * normalized + 0.03f)) /
-                    (normalized * (2.43f * normalized + 0.59f) + 0.14f)
+                // Luminance-only ACES approximation with a conservative exposure
+                // bias. Unlike x/white normalization, this keeps 18% grey from
+                // collapsing toward black when the scene white point is high.
+                val exposureBias = (0.75f * (6f / white).pow(0.08f)).coerceIn(0.62f, 0.88f)
+                val n = x * exposureBias
+                val mapped = (n * (2.51f * n + 0.03f)) /
+                    (n * (2.43f * n + 0.59f) + 0.14f)
                 mapped.coerceIn(0f, 1f)
             }
             HdrToneMap.LOW_CONTRAST -> {
-                // Log compression maximizes retained scene range for harsh
-                // backlight while avoiding the local halos of conventional HDR.
-                val denominator = ln(1f + white)
-                if (denominator <= EPSILON) 0f else (ln(1f + x) / denominator).coerceIn(0f, 1f)
+                // A stronger log compression with a four-times exposure scale
+                // preserves keyed middle grey while fitting severe highlights.
+                val strength = 4f
+                val denominator = ln(1f + strength * white)
+                if (denominator <= EPSILON) {
+                    0f
+                } else {
+                    (ln(1f + strength * x) / denominator).coerceIn(0f, 1f)
+                }
             }
         }
     }
@@ -207,8 +225,6 @@ object HdrTranslationEstimator {
                     y += step
                 }
                 if (count == 0) continue
-                // MAD dominates; a small RMS term rejects offsets matching only
-                // broad flat regions while misaligning edge structure.
                 val mean = sum / count
                 val rms = sqrt(sumSquares / count)
                 val score = mean + rms * 0.15f
