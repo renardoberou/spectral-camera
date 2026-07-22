@@ -53,7 +53,7 @@ class HdrMathTest {
     }
 
     @Test
-    fun everyToneMapIsMonotonicAndBounded() {
+    fun everyToneMapIsMonotonicBoundedAndKeepsMiddleGreyUseful() {
         HdrToneMap.values().forEach { mode ->
             var previous = -1f
             for (step in 0..200) {
@@ -63,7 +63,19 @@ class HdrMathTest {
                 assertTrue("$mode must be monotonic", mapped + 1e-6f >= previous)
                 previous = mapped
             }
+            val middleGrey = HdrMath.toneMapLuma(0.18f, whitePoint = 6f, mode = mode)
+            assertTrue("$mode middle grey=$middleGrey", middleGrey in 0.12f..0.30f)
         }
+    }
+
+    @Test
+    fun clippedOrNearlyBlackChannelsReceiveLittleTrust() {
+        val healthy = HdrMath.encodedChannelReliability(0.30f, 0.45f, 0.38f)
+        val clipped = HdrMath.encodedChannelReliability(1f, 0.55f, 0.40f)
+        val black = HdrMath.encodedChannelReliability(0.002f, 0.003f, 0.002f)
+        assertTrue(healthy > 0.95f)
+        assertTrue(clipped < 0.10f)
+        assertTrue(black < 0.10f)
     }
 
     @Test
