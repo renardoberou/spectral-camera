@@ -1,80 +1,200 @@
-# Plan: photographer focus modes
+# Plan: first-class focus modes
 
 **Date:** 2026-07-22  
 **Branch:** `agent/hdr-imaging-pipeline`  
 **Draft PR:** #25  
-**Status:** implemented and build-verified; physical-lens validation required
+**Status:** implemented and Android-CI verified; physical-lens validation required
 
-## Objective
+## 1. Objective
 
-Add explicit focus behavior without disturbing the validated Standard, Computational HDR, True RAW HDR, Ultra HDR, output-mode, or Double Exposure pipelines.
+Add photographer-facing focus behavior without destabilizing the existing Standard, Computational HDR, True RAW HDR, Ultra HDR, Double Exposure, manual-exposure, or output-mode workflows.
 
-## Product modes
+The focus system must be honest about the active lens. It exposes only behavior reported by Camera2, falls back safely when the user changes lenses, and keeps one focus distance throughout an HDR bracket wherever the hardware permits.
 
-- **Continuous AF:** continuously follows focus. A tap temporarily prioritizes the selected subject and auto-releases.
-- **Tap & Lock:** tap to autofocus and hold until Unlock or a mode change.
-- **Macro AF:** use the camera-reported macro autofocus mode, tap, and hold.
-- **Manual Focus:** normalized control from infinity to the nearest reported position. A squared response gives more useful precision at distant focus.
-- **Infinity:** manual zero-diopter focus for landscapes, skies, and architecture.
-- **Fixed Focus:** truthful state for lenses with no adjustable focus.
+## 2. Implemented modes
 
-Unsupported modes are disabled per active physical lens. The app does not imitate macro or manual focus digitally.
+### Continuous AF
 
-## Camera architecture
+- Uses continuous-picture autofocus, or continuous-video where that is the only continuous mode reported.
+- A viewfinder tap temporarily prioritizes the selected subject.
+- The tap action automatically releases after three seconds so continuous tracking resumes.
 
-Exposure and focus are emitted through one combined Camera2 request-options builder. This prevents a manual-exposure update from erasing focus settings and prevents a focus update from turning auto exposure back on.
+### Tap & Lock
 
-Capability detection uses the active lens's available autofocus modes, minimum focus distance, and focus-distance calibration level.
+- A viewfinder tap runs one-shot autofocus.
+- Focus remains locked because automatic cancellation is disabled.
+- Exposure remains controlled independently by the user's Auto or Manual exposure setting.
+- A visible Unlock focus control releases the lock.
 
-Manual focus uses Camera2 lens distance values: zero is infinity and the lens-reported maximum is its nearest supported position. Uncalibrated lenses use a normalized label rather than claiming a physical distance.
+### Macro AF
 
-## HDR behavior
+- Exposed only when the active lens reports macro autofocus and a movable focus range.
+- A tap runs close-range autofocus and holds the result.
+- Unlock behavior matches Tap & Lock.
 
-Before a JPEG or RAW exposure bracket, the current lens distance is frozen when manual lens control and capture metadata are available. Manual and infinity modes are already deterministic. After the bracket, the selected focus and exposure behavior are restored together.
+### Manual Focus
 
-This matters because focus hunting changes magnification and edge position between HDR frames, which can be mistaken for scene movement during alignment.
+- Exposed only when the lens reports a movable focus range and supports autofocus-off requests.
+- The control runs from infinity to the nearest supported lens position.
+- Camera2 focus distance is expressed in diopters: zero is infinity and the reported maximum is the nearest focus position.
+- The normalized slider uses a squared mapping so the distant part of the range receives finer control.
+- A physical-distance estimate is shown only when the camera reports approximate or calibrated focus-distance metadata. Uncalibrated lenses show a neutral percentage toward near instead of claiming false precision.
 
-## Live interface
+### Infinity
 
-The live header displays the selected focus mode. The Focus panel exposes only modes supported by the selected lens, instructions for tap behavior, an Unlock control for held autofocus, and the manual-focus slider.
+- Exposed only where manual lens positioning is supported.
+- Sets autofocus off and requests a zero-diopter focus distance.
+- Intended for distant landscapes, sky, and architecture.
 
-Tap feedback reports focus acquired, focus locked, failed focus, exposure-only metering, ignored input under fully manual controls, or an unsupported operation.
+### Fixed Focus
 
-## Automated verification
+- Used when the active camera reports no movable focus mechanism.
+- Other focus modes are disabled.
+- Viewfinder taps may still meter automatic exposure, but the UI states that focus cannot change.
 
-Green Android CI run 196 verifies unit tests, debug APK creation, unsigned release APK creation, and signing safeguards for the focus-mode head.
+## 3. Capability detection and lens changes
 
-Pure JVM coverage includes manual-position-to-diopter mapping, increased far-distance precision, calibrated distance labels, and honest normalized labels for uncalibrated lenses.
+For each bound physical lens, the controller reads:
 
-## Physical validation matrix
+- available autofocus modes;
+- minimum focus distance;
+- focus-distance calibration quality;
+- continuous, auto, macro, and autofocus-off availability.
 
-Repeat on every rear lens and the front lens:
+The capability model is surfaced to Compose. Unsupported controls are disabled. When the user switches to a lens that cannot perform the stored mode, the app selects the best supported fallback in this order:
 
-1. Continuous AF from near to far and far to near.
-2. Continuous AF tap priority, then automatic return.
-3. Tap & Lock over several Standard captures.
-4. Tap & Lock across JPEG HDR and True RAW HDR brackets.
-5. Macro AF on a close textured subject.
-6. Manual Focus from infinity through midpoint to nearest position.
-7. Infinity on distant architecture and sky.
-8. Fixed-focus fallback on any non-adjustable camera.
-9. Manual exposure plus every focus mode.
-10. Lens switching while an unsupported focus mode is selected.
-11. Double Exposure with different intentional focus distances for frames 1 and 2.
+1. Continuous AF;
+2. Tap & Lock;
+3. Macro AF;
+4. Manual Focus;
+5. Infinity;
+6. Fixed Focus.
 
-## Release criteria
+This prevents a front camera or secondary rear lens from inheriting a control it cannot execute.
 
-- No unsupported focus mode is presented as functional.
-- Tap & Lock remains held until Unlock, another tap, or a mode change.
-- Continuous AF resumes after its temporary tap priority.
-- Manual focus does not drift or get overridden by autofocus.
-- HDR brackets do not pump focus between exposures.
-- Changing ISO or shutter does not clear focus mode, and changing focus does not re-enable auto exposure.
-- Focus labels remain honest when distance calibration is unavailable.
+## 4. Interaction with exposure
 
-## Known limitations
+Camera2 interop request options replace the previous option bundle. Focus and exposure are therefore assembled into one request rather than being applied independently and accidentally overriding one another.
 
-- Lens support is vendor- and camera-specific.
-- Reported physical distance can remain approximate even on calibrated hardware.
-- Infinity is the camera's zero-diopter actuator position, not a guarantee of perfect optical calibration at every temperature.
-- Focus peaking is not part of this cycle; it is a separate image-analysis feature rather than a focus mode.
+- Auto exposure remains active when only focus is manual.
+- Manual exposure and Manual Focus can operate simultaneously.
+- Tap & Lock and Macro hold focus only; they do not intentionally hold auto exposure.
+- In Manual Focus, Infinity, and Fixed Focus, a viewfinder tap meters exposure when exposure is Auto.
+- With both exposure and focus manual, a viewfinder tap is ignored and the UI explains why.
+
+## 5. HDR and RAW HDR focus stability
+
+An HDR bracket must not refocus between under, reference, and over frames.
+
+Before JPEG or RAW HDR capture, the controller obtains the current lens focus distance where available. It then applies autofocus-off plus that distance while changing exposure values. Manual Focus and Infinity use their explicit requested positions. After the bracket, the complete user exposure/focus request bundle is restored.
+
+This applies to:
+
+- automatic JPEG exposure-compensation brackets;
+- manual JPEG shutter brackets;
+- fixed-ISO True RAW HDR shutter brackets.
+
+On a device that reports autofocus but does not permit direct lens-distance control, the app cannot guarantee a hard manual hold. That limitation must be checked per lens.
+
+## 6. User interface
+
+The Live screen contains a separate collapsible Focus panel beside Exposure.
+
+It shows:
+
+- the selected focus mode in the persistent header;
+- only supported mode chips;
+- tap-result messages such as Focused, Focus locked, Focus failed, Exposure metered, or Unsupported;
+- a manual focus slider and lens-position label;
+- an Unlock focus control for Tap & Lock and Macro;
+- a fixed-focus explanation on non-moving lenses.
+
+Focus mode and manual position are persisted. MediaStore descriptions also record the selected focus mode for newly saved captures.
+
+## 7. Automated verification
+
+Android CI run 197 passed at head `e95bc8354e863710328e6f25bb102dfbf9e8e686`:
+
+- JVM unit tests;
+- debug APK build;
+- unsigned release APK build;
+- release-signing guard.
+
+`FocusMathTest` covers:
+
+- infinity mapping to zero diopters;
+- nearest position mapping to the lens maximum;
+- nonlinear slider response;
+- calibrated/approximate distance labels;
+- refusal to claim physical distance for uncalibrated lenses.
+
+Camera focus motion cannot be validated in JVM CI.
+
+## 8. Physical-device release gates
+
+Test each available rear lens and the front camera.
+
+### Continuous AF
+
+1. Start on a distant detailed subject.
+2. Move to a close detailed subject.
+3. Confirm the preview follows both directions.
+4. Tap a subject and confirm focus prioritizes it, then resumes continuous behavior.
+
+### Tap & Lock
+
+1. Tap a high-contrast subject.
+2. Move the camera so nearer and farther objects enter the frame.
+3. Confirm focus remains at the locked distance.
+4. Take a Standard capture and confirm the saved image matches the lock.
+5. Unlock and confirm normal autofocus resumes.
+
+### Macro AF
+
+1. Use a close textured object within the lens's practical range.
+2. Confirm Macro is disabled on lenses that do not report it.
+3. Confirm a successful macro lock survives a still capture.
+
+### Manual Focus
+
+1. Move the slider to infinity and inspect a distant subject.
+2. Move progressively toward near and confirm the focus plane moves monotonically closer.
+3. Test Auto Exposure + Manual Focus.
+4. Test Manual Exposure + Manual Focus.
+5. Confirm uncalibrated lenses show no misleading metre/centimetre value.
+
+### Infinity
+
+1. Photograph distant architecture or landscape detail.
+2. Confirm the lens does not hunt after selection.
+3. Confirm viewfinder taps affect only automatic exposure where applicable.
+
+### HDR focus consistency
+
+1. Lock focus on a static subject.
+2. Capture Computational HDR and inspect high-contrast edges for focus breathing between bracket frames.
+3. Repeat with True RAW HDR.
+4. Repeat with Manual Focus and Infinity.
+5. Confirm the user's focus mode is restored after success, cancellation, and capture error.
+
+### Lens fallback
+
+1. Select a specialist mode on the main rear camera.
+2. Switch to every other lens and the front camera.
+3. Confirm unsupported modes are disabled and a supported fallback is visibly selected.
+4. Confirm returning to the original lens leaves the camera functional.
+
+### Double Exposure
+
+1. Capture frame 1 with one deliberate focus position.
+2. Change focus and capture frame 2.
+3. Confirm each source retains its intended plane of focus and the final composite renders normally.
+
+## 9. Honest limitations
+
+- Focus capability reporting varies by camera vendor and lens.
+- CameraX one-shot focus behavior must be verified against Camera2 interop on the physical target device.
+- Macro availability does not guarantee a genuinely short working distance.
+- Reported physical distance may be approximate or uncalibrated.
+- Focus peaking, magnified manual-focus assistance, subject recognition, face/eye AF, and per-lens remembered preferences are not part of this cycle.
+- A hard HDR focus hold is possible only when the camera exposes direct lens-distance control.
