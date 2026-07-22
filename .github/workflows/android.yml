@@ -23,13 +23,13 @@ jobs:
       - name: Apply pending physical lens selector
         if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/hdr-imaging-pipeline'
         run: |
-          set -euo pipefail
+          set -uo pipefail
           pending=.github/workflows/apply-lens-selector.yml
           if [ ! -f "$pending" ]; then
             echo "No pending lens-selector integration."
             exit 0
           fi
-          python3 - <<'BOOT'
+          python3 - <<'BOOT' 2>&1 | tee lens-integration.log
           from pathlib import Path
           from textwrap import dedent
 
@@ -42,6 +42,8 @@ jobs:
           script = dedent(block)
           exec(compile(script, 'apply-lens-selector', 'exec'), {})
           BOOT
+          status=${PIPESTATUS[0]}
+          exit "$status"
 
       - name: Commit integrated physical lens selector
         if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/hdr-imaging-pipeline'
@@ -111,6 +113,10 @@ jobs:
           {
             echo '### Build failure, run ${{ github.run_number }}'
             echo '```'
+            if [ -f lens-integration.log ]; then
+              echo '=== LENS INTEGRATION ==='
+              cat lens-integration.log
+            fi
             grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong" -A 2 build.log 2>/dev/null | head -c 30000
             echo
             echo "=== LOG TAIL ==="
