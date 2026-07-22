@@ -18,7 +18,8 @@ data class RawSensorFrame(
     val cropHeight: Int,
     val cfaArrangement: Int,
     val blackLevels: FloatArray,
-    val whiteLevel: Float,
+    /** Camera2 exposes static and dynamic white levels with different numeric key types. */
+    val whiteLevel: Number,
     val exposureTimeNs: Long,
     val sensitivityIso: Int,
     val whiteBalanceGains: FloatArray,
@@ -37,7 +38,7 @@ data class RawSensorFrame(
         require(blackLevels.size == 4)
         require(whiteBalanceGains.size == 4)
         require(colorTransform.size == 9)
-        require(whiteLevel > 0f)
+        require(whiteLevel.toFloat() > 0f)
         require(exposureTimeNs > 0L)
         require(sensitivityIso > 0)
     }
@@ -45,16 +46,24 @@ data class RawSensorFrame(
     fun codeAt(x: Int, y: Int): Int = pixels[y * width + x].toInt() and 65535
 }
 
-data class CapturedFrame(
+/**
+ * A RAW shutter bracket is captured in ascending shutter order, so the middle
+ * frame is the normal/reference exposure. This avoids depending on a preview
+ * metadata race when selecting the deghost reference.
+ */
+class CapturedFrame(
     val exposures: List<CapturedExposure> = emptyList(),
     val rawExposures: List<RawSensorFrame> = emptyList(),
-    val referenceIndex: Int = 0,
+    requestedReferenceIndex: Int = 0,
     val rawSidecarFile: File? = null,
 ) {
+    val referenceIndex: Int
+
     init {
         require(exposures.isNotEmpty() xor rawExposures.isNotEmpty())
         val count = if (exposures.isNotEmpty()) exposures.size else rawExposures.size
-        require(referenceIndex in 0 until count)
+        require(requestedReferenceIndex in 0 until count)
+        referenceIndex = if (rawExposures.size > 1) rawExposures.size / 2 else requestedReferenceIndex
     }
 
     val referenceBitmap: Bitmap? get() = exposures.getOrNull(referenceIndex)?.bitmap
