@@ -52,11 +52,9 @@ data class HdrMergeResult(
 /**
  * JPEG computational HDR.
  *
- * The normal exposure is now the visual anchor. Darker/brighter frames are
- * allowed to contribute only where the reference is genuinely clipped or very
- * dark, only away from hard edges, and only when alignment is confident. This
- * prevents the translucent triple-image failure seen on the real device while
- * retaining useful cloud and shadow recovery in flat regions.
+ * The normal exposure is the visual anchor. Darker/brighter frames contribute
+ * only where the reference is clipped or very dark, only away from hard edges,
+ * and only when exposure-invariant alignment is confident.
  */
 object HdrPipeline {
     private const val THUMB_MAX_EDGE = 240
@@ -81,6 +79,9 @@ object HdrPipeline {
         val alignment = estimates.map { it.shift }
         val alignmentConfidence = FloatArray(frames.size) { index ->
             if (index == referenceIndex) 1f else estimates[index].confidence
+        }
+        require(alignmentConfidence.indices.any { it != referenceIndex && alignmentConfidence[it] > 0f }) {
+            "HDR alignment rejected every non-reference exposure"
         }
         val crop = commonCrop(width, height, alignment)
         require(crop.width > 32 && crop.height > 32) { "HDR alignment left no usable common image area" }
@@ -375,7 +376,6 @@ object HdrPipeline {
         return 0.2126f * r + 0.7152f * g + 0.0722f * b
     }
 
-    /** Writes reference-anchored linear radiance r, g, b and luma into [out]. */
     private fun mergeRadiance(
         rows: Array<IntArray>,
         x: Int,
