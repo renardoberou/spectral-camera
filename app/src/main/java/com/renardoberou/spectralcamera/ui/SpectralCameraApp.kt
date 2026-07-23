@@ -52,6 +52,7 @@ import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
 import com.renardoberou.spectralcamera.ui.screens.HardwareTestScreen
+import com.renardoberou.spectralcamera.ui.screens.ImportPreviewScreen
 import com.renardoberou.spectralcamera.ui.screens.LiveCameraScreen
 import com.renardoberou.spectralcamera.ui.screens.ProOutputScreen
 import com.renardoberou.spectralcamera.ui.theme.SpectralCameraTheme
@@ -62,6 +63,8 @@ private sealed class Route(val route: String, val label: String) {
     data object Output : Route("output", "Output")
     data object Gallery : Route("gallery", "Gallery")
     data object Hardware : Route("hardware", "Hardware")
+    // Not a bottom-nav destination: reached from Import photo / Reprocess.
+    data object ImportPreview : Route("import_preview", "Import")
 }
 
 @Composable
@@ -237,9 +240,10 @@ private fun AppShell(
                             }
                         },
                         onImport = { uri ->
-                            viewModel.importAndSave(uri) { raw, captureSettings ->
-                                glView.process(raw, captureSettings)
-                            }
+                            // Open Import Preview instead of saving immediately: the
+                            // whole point is choosing a look FOR THIS PHOTO.
+                            viewModel.beginImportPreview(uri) { raw, s2 -> glView.process(raw, s2) }
+                            navController.navigate(Route.ImportPreview.route)
                         },
                         onOpenGallery = { navController.navigate(Route.Gallery.route) },
                         onOpenHardware = { navController.navigate(Route.Hardware.route) },
@@ -256,9 +260,8 @@ private fun AppShell(
                     GalleryScreen(
                         viewModel = viewModel,
                         onReprocess = { uri ->
-                            viewModel.importAndSave(uri) { raw, captureSettings ->
-                                glView.process(raw, captureSettings)
-                            }
+                            viewModel.beginImportPreview(uri) { raw, s2 -> glView.process(raw, s2) }
+                            navController.navigate(Route.ImportPreview.route)
                         },
                     )
                 }
@@ -266,6 +269,14 @@ private fun AppShell(
                     HardwareTestScreen(
                         viewModel = viewModel,
                         cameraController = cameraController,
+                    )
+                }
+                composable(Route.ImportPreview.route) {
+                    ImportPreviewScreen(
+                        viewModel = viewModel,
+                        process = { raw, s2 -> glView.process(raw, s2) },
+                        onDone = { navController.popBackStack() },
+                        onCancelled = { navController.popBackStack() },
                     )
                 }
             }

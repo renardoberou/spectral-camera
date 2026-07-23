@@ -1,5 +1,6 @@
 package com.renardoberou.spectralcamera.core
 
+import android.graphics.Bitmap
 import android.net.Uri
 
 enum class LookFamily(val label: String) {
@@ -335,6 +336,21 @@ data class HardwareTestState(
         fun idle() = HardwareTestState()
     }
 }
+
+/**
+ * Local, per-photo state for the Import Preview screen: the user picks a
+ * photo, dials in settings just for it, and previews the result before
+ * saving - Save uses THESE settings, not necessarily the live camera's
+ * current settings.
+ */
+data class ImportPreviewState(
+    val uri: Uri,
+    val original: Bitmap,
+    val settings: CameraSettings,
+    val preview: Bitmap?,
+    val isRendering: Boolean = false,
+    val isSaving: Boolean = false,
+)
 
 data class CaptureResult(
     val processedUri: Uri,

@@ -38,6 +38,8 @@ import com.renardoberou.spectralcamera.core.media.MediaRepository
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow as VmMutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -536,15 +538,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             "texture allocation" in text
     }
 
-    suspend fun importAndSave(
-        uri: Uri,
-        process: suspend (Bitmap, CameraSettings) -> Bitmap,
-    ): CaptureResult {
-        val effectiveSettings = settings.value.copy(
-            hdrCaptureMode = HdrCaptureMode.OFF,
-            doubleExposureMode = DoubleExposureMode.OFF,
-            ultraHdrExport = false,
-        )
+    private suspend fun decodeUri(uri: Uri): Bitmap {
         val app = getApplication<Application>()
         val decoded = withContext(Dispatchers.IO) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -557,12 +551,27 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
                 MediaStore.Images.Media.getBitmap(app.contentResolver, uri)
             }
         }
-        val original = if (decoded.config != Bitmap.Config.ARGB_8888) {
+        return if (decoded.config != Bitmap.Config.ARGB_8888) {
             decoded.copy(Bitmap.Config.ARGB_8888, false).also { decoded.recycle() }
         } else {
             decoded
         }
+    }
 
+    /** Full-resolution render + save with an EXPLICIT settings snapshot (the
+     * settings the user chose for THIS photo, not necessarily the live
+     * camera's current settings). Shared by the one-tap import path and the
+     * Import Preview screen's Save action. */
+    private suspend fun renderAndSave(
+        original: Bitmap,
+        settings: CameraSettings,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureResult {
+        val effectiveSettings = settings.copy(
+            hdrCaptureMode = HdrCaptureMode.OFF,
+            doubleExposureMode = DoubleExposureMode.OFF,
+            ultraHdrExport = false,
+        )
         var renderInput: Bitmap? = null
         var rendered: Bitmap? = null
         var processed: Bitmap? = null
@@ -594,6 +603,111 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
             recycleDistinct(original, renderInput, rendered, processed)
         }
     }
+
+    suspend fun importAndSave(
+        uri: Uri,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureResult {
+        val original = decodeUri(uri)
+        return renderAndSave(original, settings.value, process)
+    }
+
+    // ---- Import Preview: choose/preview settings for a specific photo -----
+
+    private var previewRenderJob: Job? = null
+    private var previewRenderToken: Int = 0
+
+    private val _importPreview = VmMutableStateFlow<ImportPreviewState?>(null)
+    val importPreview: StateFlow<ImportPreviewState?> = _importPreview
+
+    fun beginImportPreview(
+        uri: Uri,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ) {
+        viewModelScope.launch {
+            val original = runCatching { decodeUri(uri) }.getOrNull() ?: return@launch
+            val initialSettings = settings.value.copy(
+                hdrCaptureMode = HdrCaptureMode.OFF,
+                doubleExposureMode = DoubleExposureMode.OFF,
+                ultraHdrExport = false,
+            )
+            _importPreview.value = ImportPreviewState(
+                uri = uri,
+                original = original,
+                settings = initialSettings,
+                preview = null,
+                isRendering = true,
+            )
+            renderPreview(original, initialSettings, process)
+        }
+    }
+
+    fun updatePreviewSettings(
+        transform: (CameraSettings) -> CameraSettings,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ) {
+        val state = _importPreview.value ?: return
+        val updated = transform(state.settings)
+        _importPreview.value = state.copy(settings = updated, isRendering = true)
+        renderPreview(state.original, updated, process)
+    }
+
+    /** Latest-wins preview render: a monotonic token discards any in-flight
+     * render that a newer control change has already superseded, so quick
+     * successive taps never let a stale preview frame arrive late. */
+    private fun renderPreview(
+        original: Bitmap,
+        settings: CameraSettings,
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ) {
+        val token = ++previewRenderToken
+        previewRenderJob?.cancel()
+        previewRenderJob = viewModelScope.launch {
+            val longEdge = maxOf(original.width, original.height)
+            val previewSource = if (longEdge > 1024) {
+                val scale = 1024f / longEdge
+                withContext(Dispatchers.Default) {
+                    Bitmap.createScaledBitmap(
+                        original,
+                        (original.width * scale).roundToInt().coerceAtLeast(1),
+                        (original.height * scale).roundToInt().coerceAtLeast(1),
+                        true,
+                    )
+                }
+            } else {
+                original
+            }
+            val rendered = runCatching { process(previewSource, settings) }.getOrNull()
+            if (previewSource !== original && !previewSource.isRecycled) previewSource.recycle()
+            if (token != previewRenderToken) {
+                rendered?.let { if (!it.isRecycled) it.recycle() }
+                return@launch
+            }
+            val current = _importPreview.value ?: return@launch
+            current.preview?.let { if (!it.isRecycled && it !== rendered) it.recycle() }
+            _importPreview.value = current.copy(preview = rendered, isRendering = false)
+        }
+    }
+
+    suspend fun confirmImportPreview(
+        process: suspend (Bitmap, CameraSettings) -> Bitmap,
+    ): CaptureResult? {
+        val state = _importPreview.value ?: return null
+        _importPreview.value = state.copy(isSaving = true)
+        val result = runCatching { renderAndSave(state.original, state.settings, process) }
+        state.preview?.let { if (!it.isRecycled) it.recycle() }
+        _importPreview.value = null
+        return result.getOrThrow()
+    }
+
+    fun cancelImportPreview() {
+        val state = _importPreview.value ?: return
+        previewRenderJob?.cancel()
+        if (!state.original.isRecycled) state.original.recycle()
+        state.preview?.let { if (!it.isRecycled) it.recycle() }
+        _importPreview.value = null
+    }
+
 
     fun refreshGallery() {
         val currentItems = _galleryState.value.items

@@ -81,7 +81,7 @@ fun LiveCameraScreen(
     capabilities: CameraCapabilities?,
     galleryCount: Int,
     onCapture: suspend () -> CaptureActionResult,
-    onImport: suspend (android.net.Uri) -> CaptureResult,
+    onImport: suspend (android.net.Uri) -> Unit,
     onOpenGallery: () -> Unit,
     onOpenHardware: () -> Unit,
 ) {
@@ -119,9 +119,9 @@ fun LiveCameraScreen(
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                captureLabel = "Processing import…"
+                captureLabel = "Opening import preview…"
                 runCatching { onImport(uri) }
-                    .onSuccess { captureLabel = "Saved ${it.summary}" }
+                    .onSuccess { captureLabel = "Ready for capture" }
                     .onFailure { captureLabel = "Import failed: ${it.message ?: it.javaClass.simpleName}" }
             }
         }
@@ -714,7 +714,7 @@ fun LiveCameraScreen(
 }
 
 @Composable
-private fun PresetSheet(
+internal fun PresetSheet(
     current: SpectralPreset,
     onPick: (SpectralPreset) -> Unit,
 ) {
@@ -831,7 +831,7 @@ private fun AdjustmentsSheet(
 }
 
 @Composable
-private fun SteppedControl(
+internal fun SteppedControl(
     label: String,
     options: List<Pair<String, Float>>,
     value: Float,
