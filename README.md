@@ -8,7 +8,7 @@ Built for photographers, artists, and researchers who want consistent, film-like
 
 ## Current version
 
-**1.19.2 (versionCode 49)**  
+**1.19.6 (versionCode 53)**  
 Status: Active development
 
 This version introduces:
@@ -21,7 +21,7 @@ This version introduces:
 - Full focus system (AF + manual + infinity)
 - Compact, production-ready Live UI
 - Refined pre-film tone, red-detail, highlight-shoulder, and sky response
-- Cache-busting adaptive launcher icon refresh
+- Validated density-specific PNG launcher artwork with a round-safe variant
 
 ---
 
@@ -139,6 +139,17 @@ The current rendering engine shapes the normalized scene before material renderi
 - sky classification explicitly excludes foliage, reduces clear-blue noise, and preserves cloud structure.
 
 This improves difficult Standard captures while remaining compatible with the larger source range supplied by Computational HDR and True RAW HDR. It cannot reconstruct detail already clipped by the sensor or phone ISP.
+
+---
+
+## Launcher artwork
+
+The launcher uses the supplied dark-background Spectral Camera artwork directly as density-specific PNG files.
+
+- The normal launcher icon preserves the full 1536×1536 composition without zooming or adaptive foreground cropping.
+- The round icon uses the same artwork at 88% scale on the matching dark background so the upper-left viewfinder remains visible inside circular masks.
+- CI validates PNG signatures, dimensions, CRCs, manifest references, and the packaged APK resources.
+- The previously corrupted WebP and temporary adaptive-icon resources are not part of the active launcher path.
 
 ---
 
