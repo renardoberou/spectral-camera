@@ -620,7 +620,7 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     }
 
     // ---- Classic film: uPreset 11-13 --------------------------------
-    if (uPreset > 10.5) {
+    if (uPreset >= 11) {
         return standardFilm(src, smoothLuma);
     }
     // ---- Aerochrome: uPreset 6-10, one shared colorimetry engine for all
