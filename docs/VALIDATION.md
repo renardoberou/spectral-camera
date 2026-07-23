@@ -108,7 +108,11 @@ Device re-shoot of both reference scenes (dawn + courtyard) is the remaining con
 | M7 | Red clothing / bright man-made objects | Renders on the plain film tone response, no special-cased artifacts. | Colour-classifier false positives (misread as foliage/sky). | Chromaticity gates require genuine green/blue dominance, not just brightness | Reviewed; needs re-shoot |
 | M8 | Haze / overcast field | Flat, low-contrast light captured faithfully - soft but not muddy; foliage still gets a mild glow. | Overcast scenes reading identically to full sun (no differentiation); flat light going muddy grey. | `skyHazy` absolute-brightness detector alongside chroma detector | Reviewed; needs re-shoot |
 
-**Stock-personality check:** Rollei/HIE/SFX/Moderate/Fine-Grain/Soft-Vintage
+**Stock-personality check (2026-07-23b: parameter spread WIDENED - curve
+shape, Wood lift, sky density, and baseline-grain separation all increased
+along the documented axes, orderings machine-verified, Rollei the fixed
+anchor; judge on the next device re-shoot):**
+Rollei/HIE/SFX/Moderate/Fine-Grain/Soft-Vintage
 must be visibly distinct on the *same* source frame - primarily via halation
 spread (tight vs. wide ring balance), sky density (`skyStrength`), highlight
 ceiling (`ceiling`), and grain clump scale. If two stocks look
