@@ -86,15 +86,22 @@ multiplies tone; (c) cap the maximum suppression so full-classified sky retains 
 to Aerochrome's paleCol path. This is the highest-priority mono cycle item after this validation
 round.
 
+**FIXED 2026-07-23 (docs/PLAN_2026-07-23_mono-family-hardening.md):** the sky blob was confirmed on
+a second real-device scene (all 6 mono presets, cloudy midday courtyard) together with two more mono
+failures: dense shaded canopy crushing to posterized black masses (M3/A4) and the pool rendering as
+a dead void (M2). All three fixed via candidate methods (a)+(c) plus a shadow-canopy classifier
+branch and a classification-keyed water floor; verified numerically per-stock on the real photo.
+Device re-shoot of both reference scenes (dawn + courtyard) is the remaining confirmation step.
+
 ---
 
 ## Monochrome IR
 
 | # | Scene | Expected behavior | Unacceptable failure modes | Engine hook | Status |
 |---|---|---|---|---|---|
-| M1 | Noon sky with cloud detail | Sky suppressed toward Zone I-II; cloud structure stays visible, not crushed to a flat void. | Sky banding/seam; clouds disappearing into a flat dark plateau. | `skyDown` / `skyStr` in `irLuminance()`; IGN dither | Fixed (P1 grain/dither pass); needs re-shoot |
-| M2 | Reflective water | Dark but alive: Zone I-II with visible specular ripple, never a dead void. | Pure Zone-0 black water with no sheen ("void-black"). | `monoWaterLife()` floor+detail (P4 fix) | Fixed (v1.14); needs re-shoot |
-| M3 | Wooded shadow | Shadowed canopy keeps intra-canopy structure (tone-modulated Wood lift), not a fused white sheet. | Shadow canopy flattening to solid white or staying flat dark with no glow. | `toneMod` in `irLuminance()` Wood-effect lift | Reviewed; needs re-shoot |
+| M1 | Noon sky with cloud detail | Sky suppressed toward Zone I-II; cloud structure stays visible, not crushed to a flat void. | Sky banding/seam; clouds disappearing into a flat dark plateau. | `skyDown` / `skyStr` in `irLuminance()`; IGN dither | **2026-07-23 on-device (overcast): sky-blob smudges confirmed on this scene too; fixed same day (proportional `skyChroma` ramp, decisive-blueness `skyHazy`, 0.86 suppression cap). Needs re-shoot to confirm; cloud-structure retention still to be judged on a blue-sky-with-clouds scene.** |
+| M2 | Reflective water | Dark but alive: Zone I-II with visible specular ripple, never a dead void. | Pure Zone-0 black water with no sheen ("void-black"). | Water floor+sheen keyed on source darkness OR classified suppression (2026-07-23 fix) | **2026-07-23 on-device: FAILED (bright blue pool rendered as void on all 6 presets - the v1.14 floor keyed on source darkness only). Fixed same day (suppression-keyed floor); needs re-shoot to confirm.** |
+| M3 | Wooded shadow | Shadowed canopy keeps intra-canopy structure (tone-modulated Wood lift), not a fused white sheet. | Shadow canopy flattening to solid white or staying flat dark with no glow. | `toneMod` Wood lift + `shadowVegM` blue-cast-tolerant shadow-canopy branch (2026-07-23) | **2026-07-23 on-device: FAILED (blue-cast shaded canopy fell out of the veg classifier and crushed to posterized black on all 6 presets). Fixed same day; needs re-shoot to confirm.** |
 | M4 | Leaf detail against sky | Individual leaf/branch silhouettes stay separable against a suppressed sky; no matte-line halo at the foliage/sky boundary. | Hard cutout edges; sky mask bleeding onto leaf silhouettes. | `skyMask` per-pixel gate + generous soft edge | Reviewed; needs re-shoot |
 | M5 | Bark / masonry / stone | Even midtone texture retained; no classifier flicker ("leopard-spot" patchwork). | Blotchy black/white patches on a uniform material from per-pixel chroma noise. | Chroma-bilateral `srcC` denoise feeding classifiers | Fixed; needs re-shoot |
 | M6 | Pale skin | Slight brightening (NIR penetration), smooth, not blown out. | Skin blowing to paper white; skin picking up the sky/water suppression. | `skin` lift branch in `irLuminance()` | Reviewed; needs re-shoot |

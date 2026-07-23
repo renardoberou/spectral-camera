@@ -406,7 +406,7 @@ float irHDCurve(float e, float lo, float span, float toePow, float k, float ceil
     return clamp(sh * ceiling + 0.008, 0.0, 1.0);
 }
 
-float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, float liftAmt, float skyStr) {
+float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, float liftAmt, float skyStr, out float suppressOut) {
     // R72-filtered emulsion: blue is blocked, green heavily attenuated, so the
     // base signal is dominated by red (the film's declining NIR tail rides on
     // its red sensitisation).
@@ -440,16 +440,27 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // Two detectors: chromaticity (saturated blue sky) plus an absolute
     // pale/hazy-sky signal (bright with B >= G >= R), which chromaticity
     // alone misses. Vegetation is excluded (foliage always has G >= B).
-    float skyChroma = smoothstep(0.03, 0.11, nbb - max(nrr, ngg * 0.97));
+    // Proportional ramp (upper edge 0.20, not 0.11): the old near-binary
+    // classifier snapped from ~0 to ~1 across its decision boundary and
+    // imprinted that boundary as a hard tonal edge (the "sky blob" artifact
+    // seen on-device). A wide ramp turns partial blueness into partial,
+    // spatially smooth density instead.
+    float skyChroma = smoothstep(0.03, 0.20, nbb - max(nrr, ngg * 0.97));
+    // Hazy detector needs DECISIVE blueness (b-g edge 0.04..0.12): neutral
+    // overcast cloud (b ~= g) must not partially fire and stamp grey smudges.
     float skyHazy = smoothstep(0.34, 0.85, cc.b)
-        * smoothstep(0.02, 0.09, cc.b - cc.g)
+        * smoothstep(0.04, 0.12, cc.b - cc.g)
         * smoothstep(-0.01, 0.05, cc.b - cc.r);
-    float skyDown = clamp(skyChroma * 0.8 + skyHazy * 0.5, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
+    float skyDown = clamp(skyChroma * 0.9 + skyHazy * 0.35, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
     // skyStr is the per-stock sky-suppression strength from FilmLookLibrary
     // (HIE: denser skies; SFX/Fine-Grain: milder).
     // positional: zenith sky suppresses fully; low-in-frame blue (pools,
-    // reflections) darkens far less, keeping Zone II texture instead of void
-    ir = ir * (1.0 - skyDown * (skyStr * (0.59 + 0.50 * skyT)));
+    // reflections) darkens far less, keeping Zone II texture instead of void.
+    // Suppression is capped: fully classified sky keeps a Zone I-II floor
+    // (like Aerochrome's pale-sky path) rather than going to void black.
+    float suppress = min(skyDown * (skyStr * (0.59 + 0.50 * skyT)), 0.86);
+    ir = ir * (1.0 - suppress);
+    suppressOut = suppress;
 
     // Water absorbs NIR heavily -> near black
     float water = skyDown * smoothstep(0.0, 0.40, smoothLuma) * (1.0 - veg);
@@ -530,6 +541,16 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     foliage = clamp(foliage + oliveFoliageM * (1.0 - foliage), 0.0, 1.0);
     float chromaDistM = max(max(abs(nrM - 0.3333), abs(ngM - 0.3333)), abs(nbM - 0.3333));
     foliage = foliage * smoothstep(0.035, 0.058, chromaDistM);
+    // Shadow-canopy branch: shaded dense foliage picks up a blue skylight
+    // cast and desaturates toward neutral, so the gates above drop it to
+    // zero Wood lift and it crushes to a posterized black mass (the M3/A4
+    // failure seen on-device). Green-over-red dominance with a mild
+    // tolerated blue excess, dark regions only - sky (strong blue excess)
+    // and neutral facades (no green margin) both stay excluded.
+    float shadowVegM = smoothstep(0.012, 0.05, ngM - nrM)
+        * (1.0 - smoothstep(0.03, 0.09, nbM - ngM))
+        * (1.0 - smoothstep(0.28, 0.50, smoothLuma));
+    foliage = max(foliage, shadowVegM * 0.75);
 
     // Halation is a POINT-SOURCE effect: light punching through the emulsion
     // around genuinely bright spots. Keyed on local contrast (luma above the
@@ -543,16 +564,21 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
     // uHaloGrain uniforms (Kotlin FilmLookLibrary.monoLookFor), so adding a
     // seventh stock never touches this function.
     if (uPreset <= 5) {
-        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, uMonoCurve2.y, uMonoCurve2.z);
+        float suppress = 0.0;
+        float ir = irLuminance(src, srcC, foliage, smoothLuma, skyT, uMonoCurve2.y, uMonoCurve2.z, suppress);
         float m = irHDCurve(ir, uMonoCurve.x, uMonoCurve.y, uMonoCurve.z, uMonoCurve.w, uMonoCurve2.x);
         vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
         m = clamp(m + (hal.x * uHaloGrain.y + hal.y * uHaloGrain.z) * halo, 0.0, 1.0);
         // Water floor + sheen: dark regions keep Zone-I tone and their
-        // specular ripple back - IR water is never a void. Safe on deep
-        // shadow (gains only a whisper of tone at the film's own floor).
+        // specular ripple back - IR water is never a void. Keys on BOTH
+        // source darkness AND classified suppressed low-in-frame blue
+        // (pools/reflections): a bright blue pool the shader itself darkens
+        // was previously missed by the source-darkness test alone and
+        // rendered as a dead void.
         float darkFloor = 1.0 - smoothstep(0.04, 0.14, smoothLuma);
-        m = max(m, darkFloor * uMonoCurve2.w);
-        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * darkFloor * 0.8, 0.0, 1.0);
+        float waterLife = max(darkFloor, suppress * (1.0 - smoothstep(0.25, 0.55, skyT)));
+        m = max(m, waterLife * uMonoCurve2.w);
+        m = clamp(m + max(0.0, lumaOf(src) - smoothLuma) * waterLife * 0.8, 0.0, 1.0);
         return vec3(m);
     }
 
