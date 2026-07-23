@@ -4,14 +4,18 @@ Professional Android camera for **simulated infrared and Aerochrome-style photog
 
 Built for photographers, artists, and researchers who want consistent, film-like IR rendering — not gimmicky filters.
 
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_spectral_camera.webp" alt="Spectral Camera canonical analog-camera icon" width="180" />
+</p>
+
 ---
 
 ## Current version
 
-**1.19.0 (versionCode 47)**  
+**1.20.2 (versionCode 50)**  
 Status: Active development
 
-This version introduces:
+This version introduces and stabilizes:
 
 - Pro output pipeline (Full / HQ 1080 / Fast 1080)
 - Computational HDR (JPEG)
@@ -20,6 +24,21 @@ This version introduces:
 - Double Exposure (film-style)
 - Full focus system (AF + manual + infinity)
 - Compact, production-ready Live UI
+- Expanded monochrome IR stock personality separation
+- Canonical analog-camera launcher icon approved as the app identity
+
+---
+
+## Canonical icon
+
+The official Spectral Camera launcher identity is now the analog-camera artwork stored at:
+
+```text
+app/src/main/res/mipmap-xxxhdpi/ic_spectral_camera.webp
+app/src/main/res/mipmap-xxxhdpi/ic_spectral_camera_round.webp
+```
+
+The manifest points directly at these canonical resources. Do not restore the temporary `ic_launcher_119x` resources, generic robot placeholders, or unrelated lens-vector experiments.
 
 ---
 
@@ -157,109 +176,3 @@ Fully camera-aware. No fake controls.
 - Backward-compatible JPEG
 - Gain map generated AFTER film simulation
 - No HDR halos or fake glow
-
----
-
-## Film systems
-
-### Monochrome IR
-
-- Rollei Infrared 400
-- Kodak HIE
-- Ilford SFX
-- Fine-grain / vintage variants
-
-### Aerochrome
-
-- Classic
-- Soft
-- Dense
-- Gold
-- Faded
-
-All based on **film behavior**, not presets.
-
----
-
-## Live UI (new)
-
-Designed for real use:
-
-- No redundant top controls
-- Presets integrated with Exposure + Focus
-- Compact header (more screen for framing)
-- Bottom navigation handles gallery + hardware
-
----
-
-## Files
-
-Saved to:
-
-```
-DCIM/SpectralCamera
-```
-
-Includes:
-
-- processed images
-- HDR outputs
-- RAW DNG (optional)
-- Double Exposure sources
-
-Metadata records:
-- preset
-- capture mode
-- focus mode
-
----
-
-## Limitations
-
-- IR is simulated (not real sensor IR)
-- RAW HDR uses simple demosaic (for now)
-- HDR alignment is global (not optical flow)
-- focus capabilities depend on device
-
----
-
-## Build
-
-```bash
-./gradlew assembleDebug
-```
-
-Release builds require signing keys.
-
----
-
-## Positioning
-
-This is not a filter app.
-
-It is a **computational photography tool** for:
-
-- IR simulation
-- Aerochrome aesthetics
-- experimental imaging
-- artistic production
-
----
-
-## Next directions
-
-- RAW-developed pipeline (no bitmap stage)
-- focus peaking
-- better demosaic
-- optical-flow HDR
-- external IR sensor support
-
----
-
-## License
-
-Private / in development
-
----
-
-Spectral Camera — built for people who care about the image.
