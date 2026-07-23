@@ -938,6 +938,9 @@ internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.AEROCHROME_DENSE -> 8
     SpectralPreset.AEROCHROME_GOLD -> 9
     SpectralPreset.AEROCHROME_FADED -> 10
+    SpectralPreset.EKTAR_100 -> 11
+    SpectralPreset.CINESTILL_800T -> 12
+    SpectralPreset.TRI_X_400 -> 13
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
