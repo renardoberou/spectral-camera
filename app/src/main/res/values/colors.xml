@@ -7,4 +7,5 @@
     <color name="spectral_secondary">#67D7C4</color>
     <color name="spectral_tertiary">#E9B94E</color>
     <color name="spectral_error">#F16A78</color>
+    <color name="ic_launcher_background">#FEFDFE</color>
 </resources>
