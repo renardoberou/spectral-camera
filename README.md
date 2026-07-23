@@ -8,7 +8,7 @@ Built for photographers, artists, and researchers who want consistent, film-like
 
 ## Current version
 
-**1.19.0 (versionCode 47)**  
+**1.19.6 (versionCode 53)**  
 Status: Active development
 
 This version introduces:
@@ -20,6 +20,8 @@ This version introduces:
 - Double Exposure (film-style)
 - Full focus system (AF + manual + infinity)
 - Compact, production-ready Live UI
+- Refined pre-film tone, red-detail, highlight-shoulder, and sky response
+- Validated density-specific PNG launcher artwork with a round-safe variant
 
 ---
 
@@ -38,228 +40,159 @@ HDR improves input data. It does NOT create true infrared capture.
 
 ---
 
-## Core pipeline
+## Core imaging pipeline
 
-```text
-Camera (rear or selfie)
+Camera / import
+
 ↓
-Optional HDR / RAW HDR / Double Exposure
+
+Optional multi-frame capture
+
 ↓
-Scene-linear merge
+
+HDR merge (JPEG or RAW where supported)
+
 ↓
-Normalization + tone mapping
+
+Normalization + pre-film scene curve + tone mapping
+
 ↓
+
 Synthetic NIR estimation
+
 ↓
-Film simulation (Rollei / HIE / Aerochrome / etc.)
+
+Film rendering
+- Rollei 400 IR styles
+- Ilford SFX / HIE inspired monochrome IR
+- Aerochrome-inspired colour IR families
+
 ↓
-High-quality export
-```
 
-Everything runs **on-device**.
-
----
-
-## Capture modes
-
-### Standard
-
-Fast, reliable, single-frame capture.
-
-Best for:
-- movement
-- street photography
-- handheld shooting
+Output
+- Full Resolution
+- HQ 1080
+- Fast 1080
+- Optional Ultra HDR JPEG
 
 ---
 
-### Computational HDR
+## Main features
 
-Multi-frame JPEG merge with:
-- motion protection
-- exposure anchoring
-- clean highlight recovery
+### 1. Pro output pipeline
+- Full Resolution export
+- HQ 1080 export
+- Fast 1080 export
+- output-specific processing instead of naive resize
 
-Best for:
-- high contrast scenes
-- handheld landscapes
+### 2. HDR and RAW HDR
+- JPEG Computational HDR
+- True RAW HDR where hardware allows
+- RAW sidecar support where available
+- scene-linear merge before final rendering
 
----
+### 3. Film-like IR rendering
+- Aerochrome-style colour response
+- monochrome IR families
+- physically-motivated material classification
+- refined pre-film curve, selective red highlight taper, smooth shoulder, and cleaner sky handling
 
-### True RAW HDR
+### 4. Focus control
+- Continuous AF
+- Tap & Lock
+- Macro AF (when supported)
+- Manual Focus
+- Infinity
+- Fixed Focus fallback
 
-Sensor-level HDR:
-- merges Bayer data before demosaic
-- preserves maximum dynamic range
-- uses real camera metadata
+### 5. Double Exposure
+- two-step capture flow
+- transparent first-frame guide
+- balanced blend before film rendering
 
-Best for:
-- professional work
-- grading
-- print
-
----
-
-### Double Exposure
-
-Two-shot film-style workflow:
-
-1. Capture frame 1
-2. Recompose using overlay
-3. Capture frame 2
-4. Merge in linear light
-
-Best for:
-- artistic work
-- layered compositions
+### 6. Honest product behavior
+- no false claim of true infrared capture
+- no false claim of full RAW-developed processing when unavailable
+- capability-dependent features shown honestly
 
 ---
 
-## Focus system
+## Live UI
 
-Fully camera-aware. No fake controls.
+The Live screen is optimized for actual shooting, not demo clutter.
 
-### Modes
-
-- **Continuous AF** — tracking autofocus
-- **Tap & Lock** — focus and hold
-- **Macro AF** — close-range focus (if supported)
-- **Manual Focus** — direct lens control
-- **Infinity** — locked far focus
-- **Fixed Focus** — honest fallback
-
-### Key behavior
-
-- Focus and exposure are unified (no resets)
-- HDR keeps a single focus plane
-- Manual focus uses real lens distance when available
+- Compact header
+- Presets beside Exposure and Focus
+- Bottom navigation for Gallery and Hardware
+- Rear/selfie switching
+- Film and capture controls available without covering the frame
 
 ---
 
-## Output quality
+## Scene-to-film response
 
-### Modes
+The current rendering engine shapes the normalized scene before material rendering:
 
-- **Full Resolution** — maximum quality
-- **HQ 1080** — best Full HD output
-- **Fast 1080** — real-time performance
+- a middle-grey-anchored curve lifts deep shadows slightly and compresses source highlights;
+- red-dominant materials retain local texture and taper saturation only in highlights;
+- a hue-preserving final shoulder prevents hard channel clipping;
+- sky classification explicitly excludes foliage, reduces clear-blue noise, and preserves cloud structure.
 
-### Details
-
-- Exact 1920×1080 output
-- High-quality scaling (not naive resize)
-- Adaptive GPU-safe rendering
+This improves difficult Standard captures while remaining compatible with the larger source range supplied by Computational HDR and True RAW HDR. It cannot reconstruct detail already clipped by the sensor or phone ISP.
 
 ---
 
-## Ultra HDR (Android 14+)
+## Launcher artwork
 
-- Backward-compatible JPEG
-- Gain map generated AFTER film simulation
-- No HDR halos or fake glow
+The launcher uses the supplied dark-background Spectral Camera artwork directly as density-specific PNG files.
 
----
-
-## Film systems
-
-### Monochrome IR
-
-- Rollei Infrared 400
-- Kodak HIE
-- Ilford SFX
-- Fine-grain / vintage variants
-
-### Aerochrome
-
-- Classic
-- Soft
-- Dense
-- Gold
-- Faded
-
-All based on **film behavior**, not presets.
+- The normal launcher icon preserves the full 1536×1536 composition without zooming or adaptive foreground cropping.
+- The round icon uses the same artwork at 88% scale on the matching dark background so the upper-left viewfinder remains visible inside circular masks.
+- CI validates PNG signatures, dimensions, CRCs, manifest references, and the packaged APK resources.
+- The previously corrupted WebP and temporary adaptive-icon resources are not part of the active launcher path.
 
 ---
 
-## Live UI (new)
+## Commercial position
 
-Designed for real use:
+Spectral Camera is not intended to be a novelty “infrared filter app.”
 
-- No redundant top controls
-- Presets integrated with Exposure + Focus
-- Compact header (more screen for framing)
-- Bottom navigation handles gallery + hardware
+It is being built as a **professional computational camera tool** for:
+- artists
+- photographers
+- visual researchers
+- commercial image-makers who want repeatable simulated IR results on Android
 
----
-
-## Files
-
-Saved to:
-
-```
-DCIM/SpectralCamera
-```
-
-Includes:
-
-- processed images
-- HDR outputs
-- RAW DNG (optional)
-- Double Exposure sources
-
-Metadata records:
-- preset
-- capture mode
-- focus mode
+The goal is consistency, control, and output quality.
 
 ---
 
 ## Limitations
 
-- IR is simulated (not real sensor IR)
-- RAW HDR uses simple demosaic (for now)
-- HDR alignment is global (not optical flow)
-- focus capabilities depend on device
+Current honest limitations include:
+
+- simulated IR only unless external hardware is used
+- no claim of true IR sensor capture
+- JPEG HDR still depends partly on phone ISP behavior
+- RAW HDR quality depends on hardware support
+- severe optical flare or clipped sunlight cannot be fully reconstructed from clipped Standard JPEG input
 
 ---
 
-## Build
+## Development direction
 
-```bash
-./gradlew assembleDebug
-```
+Current priorities:
 
-Release builds require signing keys.
-
----
-
-## Positioning
-
-This is not a filter app.
-
-It is a **computational photography tool** for:
-
-- IR simulation
-- Aerochrome aesthetics
-- experimental imaging
-- artistic production
+- improve scene consistency against premium film apps
+- preserve realistic red and foliage texture
+- improve highlight behavior in severe backlight
+- keep sky gradients smooth and clean
+- continue validating against real outdoor scenes, not synthetic examples
 
 ---
 
-## Next directions
+## License / usage
 
-- RAW-developed pipeline (no bitmap stage)
-- focus peaking
-- better demosaic
-- optical-flow HDR
-- external IR sensor support
+Repository under active development.
 
----
-
-## License
-
-Private / in development
-
----
-
-Spectral Camera — built for people who care about the image.
+Public release / store packaging should describe outputs as **simulated infrared / Aerochrome-style renderings** unless true external spectral hardware is connected.

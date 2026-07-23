@@ -103,6 +103,39 @@ float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
+// Gentle scene-to-film exposure shaping BEFORE material classification
+// and stock colour rendering. The rational curve is exactly anchored at
+// middle grey (0.5), lifts low values slightly, and compresses high values.
+// A hue-preserving headroom limit prevents saturated channels from clipping
+// while the luminance is lifted.
+float preFilmLuma(float x, float strength) {
+    float v = clamp(x, 0.0, 1.0);
+    float s = max(strength, 0.0);
+    return clamp(v * (1.0 + 0.5 * s) / (1.0 + s * v), 0.0, 1.0);
+}
+
+vec3 applyPreFilmCurve(vec3 c, float strength) {
+    vec3 safe = clamp(c, 0.0, 1.0);
+    float sourceLuma = lumaOf(safe);
+    float mappedLuma = preFilmLuma(sourceLuma, strength);
+    float scale = mappedLuma / max(sourceLuma, 0.0001);
+    float peak = max(safe.r, max(safe.g, safe.b));
+    float headroomScale = 1.0 / max(peak, 0.0001);
+    return safe * min(scale, headroomScale);
+}
+
+// Final hue-preserving shoulder. Values below the knee are untouched;
+// extreme highlight energy approaches white asymptotically instead of
+// being chopped by the final clamp. This also protects saturated red
+// channels after exposure, contrast, sharpening and bloom controls.
+vec3 softOutputShoulder(vec3 c) {
+    vec3 safe = max(c, vec3(0.0));
+    float peak = max(safe.r, max(safe.g, safe.b));
+    if (peak <= 0.92) return safe;
+    float mappedPeak = 0.92 + 0.08 * (1.0 - exp(-(peak - 0.92) / 0.08));
+    return safe * (mappedPeak / max(peak, 0.0001));
+}
+
 float hashNoise(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -250,8 +283,12 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float magenta = clamp(greenShare * (0.30 + 0.30 * species) * magentaBoost, 0.0, 1.0);
     vec3 folRed = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
     vec3 folMag = mix(folRed, vec3(0.92, 0.05, 0.48), magenta);
-    float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
-    float hiRoll = smoothstep(0.62, 0.95, folL) * 0.5;
+    // Preserve leaf/petal structure with a restrained source-detail term.
+    // Highlight reds move toward a paler dye response before they can
+    // become a flat max-red patch.
+    float folDetail = clamp(luma - smoothLuma, -0.08, 0.08);
+    float folL = clamp((luma - 0.14) * 1.50 + folDetail * 0.32, 0.0, 1.0);
+    float hiRoll = smoothstep(0.56, 0.92, folL) * 0.58;
     vec3 folCol = mix(folMag, vec3(1.0, 0.62, 0.72), hiRoll) * folL;
 
     // warmth requires actual RED participation (cyan can no longer read warm)
@@ -314,9 +351,12 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     vec3 dyeG = mix(ir, vec3(lumaOf(ir)) * vec3(1.06, 1.0, 0.90), 0.40);
     ir = mix(ir, dyeG, manMade * 0.45);
 
-    // slide-film S-curve: crushed toe, rolled shoulder. curveMix is the
-    // per-look contrast-character dial (Soft/Faded flatten it, Dense hardens it).
+    // Slide-film S-curve with a protected toe. The pre-film scene curve
+    // already supplies the long shoulder; this stage gives reversal-film
+    // separation without deleting the lowest useful shadow texture.
     vec3 s1 = ir * ir * (3.0 - 2.0 * ir);
+    float toeProtect = (1.0 - smoothstep(0.04, 0.24, lumaOf(ir))) * 0.28;
+    s1 = mix(s1, ir, toeProtect);
     ir = mix(ir, s1, curveMix);
 
     // Baked-in reversal-film saturation, HEADROOM-LIMITED: the boost tapers
@@ -342,6 +382,20 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     tSat = mix(tSat, 1.0, greyC * 0.7);
     ir = clamp(vec3(il) + dSat * tSat, 0.0, 1.0);
 
+    // Red-dominant dye response: retain local source variation and taper
+    // saturation as red highlights become dense. This applies to mapped
+    // foliage and genuinely red subjects without changing neutrals, water,
+    // skin or sky.
+    float redMask = smoothstep(0.06, 0.28, ir.r - max(ir.g, ir.b)) * (1.0 - skyMask);
+    float redLuma = lumaOf(ir);
+    float redHighlight = redMask * smoothstep(0.52, 0.90, redLuma);
+    float redSatScale = 1.0 - redHighlight * 0.30;
+    vec3 redAdjusted = vec3(redLuma) + (ir - vec3(redLuma)) * redSatScale;
+    float redDetail = clamp(luma - smoothLuma, -0.08, 0.08) * redMask;
+    float redTargetLuma = clamp(lumaOf(redAdjusted) + redDetail * 0.16, 0.0, 1.0);
+    float redScale = redTargetLuma / max(lumaOf(redAdjusted), 0.001);
+    float redPeak = max(redAdjusted.r, max(redAdjusted.g, redAdjusted.b));
+    ir = redAdjusted * min(redScale, 1.0 / max(redPeak, 0.001));
 
     // EIR sky: a single hue-locked ramp from deep blue to pale blue-white,
     // keyed monotonically on source luminance. No hue rotation and a gentle
@@ -377,7 +431,12 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float clearBlue = smoothstep(0.05, 0.14, nb - max(nr, ng));
     float lift = smoothstep(0.30, 1.0, smoothLuma) * (1.0 - clearBlue);
     vec3 skyCol = mix(deepCol, paleCol, lift);
-    skyCol = clamp(skyCol + (luma - smoothLuma) * 0.6, 0.0, 1.0);
+// Clear blue sky receives only a low-frequency brightness modulation;
+// cloud structure receives more detail. This reduces blue-channel noise
+// without smearing real clouds.
+float skyDetail = clamp(luma - smoothLuma, -0.10, 0.10);
+float skyDetailGain = mix(0.44, 0.16, clearBlue);
+skyCol = clamp(skyCol + skyDetail * skyDetailGain, 0.0, 1.0);
     ir = mix(ir, clamp(skyCol, 0.0, 1.0), skyMask * 0.94);
     return ir;
 }
@@ -588,7 +647,13 @@ void main() {
     float rawLuma = lumaOf(raw);
     // Capture-time auto-levels: gentle black/white points measured from the
     // still's own histogram (Kotlin side). Preview passes 0/1 = identity.
-    vec3 src = clamp((raw - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+    // Monochrome already has a full H&D curve, so it receives only a tiny
+    // scene pre-shape. Aerochrome receives the stronger reversal-film input
+    // shoulder requested by the field-frame review.
+    float sceneCurveStrength = uPreset <= 5 ? 0.05 : (0.14 + uAeroTone.x * 0.12);
+    vec3 src = applyPreFilmCurve(
+        clamp((raw - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+        sceneCurveStrength);
 
     // ---- sky detection ---------------------------------------------------
     // Sky is a low-frequency phenomenon, so the mask is built from a wide
@@ -636,14 +701,17 @@ void main() {
     cTap = texture2D(uTexture, vTexCoord + vec2(-cr2.x, -cr2.y) * 0.7).rgb;
     cW = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(cTap) - rawLuma)); cAcc += cTap * cW; cWsum += cW;
     vec3 srcC = cAcc / cWsum;
-    // auto-levels must hit the classification colour identically
-    srcC = clamp((srcC - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0);
+    // Auto-levels and the luminance-only pre-film curve must hit the
+    // classification colour identically. Chromaticity remains unchanged.
+    srcC = applyPreFilmCurve(
+        clamp((srcC - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+        sceneCurveStrength);
     // ------------------------------------------------------------------------
 
     vec2 r1 = vec2(0.016, 0.016);
     vec2 r2 = vec2(0.032, 0.032);
     vec2 r3 = vec2(0.050, 0.050);
-    vec3 acc = src;
+    vec3 acc = raw;
     float wsum = 1.0;
     vec3 tap;
     float tw;
@@ -679,9 +747,13 @@ void main() {
     tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
     tap = texture2D(uTexture, vTexCoord + r3 * vec2(-0.7, -0.7)).rgb;
     tw = 1.0 - smoothstep(0.0, 0.35, abs(lumaOf(tap) - srcLuma)); acc += tap * tw; wsum += tw;
-    vec3 blur = acc / wsum;
+vec3 blur = acc / wsum;
+// Keep sky detection in the same normalized scene domain as src/srcC.
+blur = applyPreFilmCurve(
+    clamp((blur - vec3(uAutoLo)) / max(uAutoHi - uAutoLo, 0.001), 0.0, 1.0),
+    sceneCurveStrength);
 
-    float bLuma = lumaOf(blur);
+float bLuma = lumaOf(blur);
     float bMax = max(blur.r, max(blur.g, blur.b));
     float bMin = min(blur.r, min(blur.g, blur.b));
     float bSat = (bMax - bMin) / max(bMax, 0.001);
@@ -700,9 +772,26 @@ void main() {
         * (1.0 - smoothstep(satHi - 0.14, satHi, bSat))
         * highInFrame;
     float skyMask = clamp(blueSky * (0.30 + 0.70 * skyPrior) + flatSky, 0.0, 1.0);
-    // saturate the mask inside the sky so partially-treated chalky fringes
-    // cannot appear around clouds; the soft edge lives only at the horizon
+    // Saturate the mask inside the sky so partially-treated chalky fringes
+    // cannot appear around clouds; the soft edge lives only at the horizon.
     skyMask = smoothstep(0.12, 0.45, skyMask);
+
+    // Explicit sky/foliage separation. Backlit leaves can be bright and blue-
+    // influenced in the wide average; exposure-invariant vegetation chroma
+    // therefore gets a direct veto before sky colour is applied.
+    float skyTotalC = srcC.r + srcC.g + srcC.b + 0.001;
+    float skyNr = srcC.r / skyTotalC;
+    float skyNg = srcC.g / skyTotalC;
+    float skyNb = srcC.b / skyTotalC;
+    float skyNotBlue = 1.0 - smoothstep(0.0, 0.06, skyNb - max(skyNr, skyNg));
+    float skyVegStrict = smoothstep(-0.01, 0.08, skyNg - skyNb)
+        * smoothstep(0.0, 0.05, skyNg - skyNr) * skyNotBlue;
+    float skyOlive = smoothstep(0.12, 0.22, skyNg - skyNb)
+        * (1.0 - smoothstep(0.03, 0.09, abs(skyNg - skyNr))) * skyNotBlue;
+    float skyChromaDist = max(max(abs(skyNr - 0.3333), abs(skyNg - 0.3333)), abs(skyNb - 0.3333));
+    float skyFoliage = clamp(skyVegStrict + skyOlive, 0.0, 1.0)
+        * smoothstep(0.035, 0.058, skyChromaDist);
+    skyMask *= 1.0 - skyFoliage * 0.96;
 
     // Skin/warm guard: any pixel that is warm-toned (red >= green >= blue, the
     // skin signature) is excluded from the sky mask outright. This is what
@@ -713,7 +802,9 @@ void main() {
         smoothstep(0.02, 0.10, src.b - max(src.r, src.g * 0.97)));
     skyMask *= gate * (1.0 - warmSkin * 0.85);
     skyMask = clamp(skyMask * (1.0 + uSkySuppress * 0.8), 0.0, 1.0);
-    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
+// The final IGN dither already breaks 8-bit ramps. Keep only a tiny mask
+// perturbation so classification does not become visible blue speckle.
+skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.002, 0.0, 1.0);
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, srcC, skyMask, skyT, bLuma);
@@ -806,6 +897,10 @@ void main() {
             float d = (lumaOf(c) - 0.42) / 0.30;
             float densityWeight = exp(-d * d);
             grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
+        } else {
+            // Keep some film texture, but do not let uniform Aerochrome grain
+            // masquerade as blue-channel noise in a smooth sky gradient.
+            grainAmp *= mix(1.0, 0.42, skyMask);
         }
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
         c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
@@ -833,6 +928,7 @@ void main() {
     // source. 1.0 = full effect; lower values are the pro dial-it-back
     // control every film-emulation workflow expects.
     c = mix(src, c, clamp(uIntensity, 0.0, 1.0));
+    c = softOutputShoulder(c);
 
     // Clipping zebras (preview only; the capture path passes uZebra = 0):
     // diagonal stripes over anything within a breath of clipping, so blown
