@@ -12,7 +12,7 @@ Built for photographers, artists, and researchers who want consistent, film-like
 
 ## Current version
 
-**1.20.2 (versionCode 50)**  
+**1.20.3 (versionCode 51)**  
 Status: Active development
 
 This version introduces and stabilizes:
