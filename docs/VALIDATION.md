@@ -108,6 +108,14 @@ Device re-shoot of both reference scenes (dawn + courtyard) is the remaining con
 | M7 | Red clothing / bright man-made objects | Renders on the plain film tone response, no special-cased artifacts. | Colour-classifier false positives (misread as foliage/sky). | Chromaticity gates require genuine green/blue dominance, not just brightness | Reviewed; needs re-shoot |
 | M8 | Haze / overcast field | Flat, low-contrast light captured faithfully - soft but not muddy; foliage still gets a mild glow. | Overcast scenes reading identically to full sun (no differentiation); flat light going muddy grey. | `skyHazy` absolute-brightness detector alongside chroma detector | Reviewed; needs re-shoot |
 
+## Classic Film (uPreset 11-13, 2026-07-23c)
+
+| # | Scene | Expected behavior | Unacceptable failure modes | Engine hook | Status |
+|---|---|---|---|---|---|
+| S1 | Ektar 100: saturated garden + skin | Vivid reds/blues, faithful skin, near-invisible grain, crisp | Neon skin shift; visible grain; muddy contrast | `standardFilm()` sat bias + fine grain | New; needs first device shoot |
+| S2 | CineStill 800T: lights at night / daylight street | RED halation around lights; cool teal-shadow daylight; lifted cine blacks | Neutral halos; warm daylight; crushed blacks | `uHaloTint` red + warmth/teal dials | New; needs first device shoot |
+| S3 | Tri-X 400: street scene | Punchy pan B&W, textured blacks, honest gritty grain | Grey mush; silky grain; blocked shadows | `monoMix` pan + coarse grain dials | New; needs first device shoot |
+
 **Stock-personality check (2026-07-23b: parameter spread WIDENED - curve
 shape, Wood lift, sky density, and baseline-grain separation all increased
 along the documented axes, orderings machine-verified, Rollei the fixed

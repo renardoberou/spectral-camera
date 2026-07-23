@@ -731,7 +731,7 @@ private fun PresetSheet(
             style = MaterialTheme.typography.bodySmall,
         )
         val grouped = SpectralPreset.values().groupBy { it.family }
-        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME).forEach { family ->
+        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME, LookFamily.STANDARD_FILM).forEach { family ->
             val presets = grouped[family].orEmpty()
             if (presets.isEmpty()) return@forEach
             Text(

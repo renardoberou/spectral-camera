@@ -5,6 +5,7 @@ import android.net.Uri
 enum class LookFamily(val label: String) {
     MONOCHROME_IR("Monochrome IR"),
     AEROCHROME("Aerochrome / False Colour"),
+    STANDARD_FILM("Classic Film"),
 }
 
 enum class SpectralPreset(
@@ -66,6 +67,21 @@ enum class SpectralPreset(
         label = "Aerochrome Faded / Vintage",
         description = "Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character.",
         family = LookFamily.AEROCHROME,
+    ),
+    EKTAR_100(
+        label = "Kodak Ektar 100",
+        description = "World's finest-grain colour negative: vivid but faithful saturation with the famous red/blue pop, punchy clean contrast, nearly invisible grain.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    CINESTILL_800T(
+        label = "CineStill 800T",
+        description = "Tungsten-balanced cine stock without remjet: signature red halation around lights, cool teal daylight cast, lifted cinematic blacks.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    TRI_X_400(
+        label = "Kodak Tri-X 400",
+        description = "The photojournalism classic: punchy panchromatic B&W, rich textured blacks, forgiving highlights, honest gritty grain.",
+        family = LookFamily.STANDARD_FILM,
     ),
 }
 

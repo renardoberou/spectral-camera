@@ -95,6 +95,10 @@ uniform vec4 uMonoCurve2;  // ceiling, woodLift, skyStrength, waterFloor
 uniform vec4 uAeroTone;    // curveMix, satCap, magentaBoost, skyDepthBoost
 uniform vec4 uAeroTone2;   // gold, fade, (reserved), (reserved)
 uniform vec4 uHaloGrain;   // haloThreshold, haloTight, haloWide, grainClump
+uniform vec4 uStdTone;     // warmth, tealShadows, saturation, contrast
+uniform vec4 uStdTone2;    // toeLift, ceiling, redBias, blueBias
+uniform vec4 uStdTone3;    // monoMix, panRed, -, -
+uniform vec3 uHaloTint;    // halation dye colour (CineStill = red)
 uniform float uGrainBias;      // per-stock grain amplitude multiplier
 uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
@@ -512,6 +516,39 @@ vec2 halationEnergy(vec2 uv, float threshold) {
     return vec2(tight, wide) / (8.0 * span);
 }
 
+// ---- Classic (non-IR) film engine: uPreset 11-13. One generic path driven
+// entirely by StandardFilmLook dials; deliberately independent of the IR
+// engines (zero changes to monoLook/aeroLook paths).
+vec3 standardFilm(vec3 src, float smoothLuma) {
+    vec3 c = src;
+    float luma = lumaOf(c);
+    // white-balance character: + = warm (Ektar), - = tungsten-cool (800T day)
+    float wb = uStdTone.x;
+    c.r = clamp(c.r * (1.0 + wb), 0.0, 1.0);
+    c.b = clamp(c.b * (1.0 - wb * 0.9), 0.0, 1.0);
+    // teal shadow split-tone (CineStill's tungsten shadow character)
+    float shadowW = 1.0 - smoothstep(0.0, 0.55, luma);
+    c = clamp(c + vec3(-0.6, 0.25, 1.0) * (uStdTone.y * 0.25) * shadowW, 0.0, 1.0);
+    // panchromatic mono conversion (Tri-X): slightly red-favouring mix
+    float pan = dot(c, vec3(uStdTone3.y, 0.50, 0.50 - uStdTone3.y));
+    c = mix(c, vec3(pan), uStdTone3.x);
+    // negative-film tone: contrast s-curve, then lifted-toe..shoulder remap
+    vec3 s1 = c * c * (3.0 - 2.0 * c);
+    c = mix(c, s1, uStdTone.w);
+    c = vec3(uStdTone2.x) + c * (uStdTone2.y - uStdTone2.x);
+    // saturation with per-channel bias (Ektar's red/blue pop)
+    float il = lumaOf(c);
+    vec3 d = c - vec3(il);
+    d.r *= uStdTone2.z;
+    d.b *= uStdTone2.w;
+    c = clamp(vec3(il) + d * uStdTone.z, 0.0, 1.0);
+    // halation in the stock's own dye colour - CineStill's is RED (no remjet)
+    float edgeGate = smoothstep(0.015, 0.09, lumaOf(src) - smoothLuma);
+    vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
+    c += uHaloTint * (hal.x * uHaloGrain.y + hal.y * uHaloGrain.z) * edgeGate;
+    return clamp(c, 0.0, 1.0);
+}
+
 vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLuma) {
     float luma = lumaOf(src);
     // synthetic NIR proxy shared by the IR presets: vegetation glows (Wood
@@ -582,6 +619,10 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         return vec3(m);
     }
 
+    // ---- Classic film: uPreset 11-13 --------------------------------
+    if (uPreset > 10.5) {
+        return standardFilm(src, smoothLuma);
+    }
     // ---- Aerochrome: uPreset 6-10, one shared colorimetry engine for all
     // five grades. Family-dial numbers come from uAeroTone* / uHaloGrain
     // (Kotlin FilmLookLibrary.aeroLookFor()). This is the only remaining
@@ -1268,6 +1309,17 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
             }
+            LookFamily.STANDARD_FILM -> {
+                val look = FilmLookLibrary.standardLookFor(currentSettings.preset)
+                GLES20.glUniform4f(program.uStdTone, look.warmth, look.tealShadows, look.saturation, look.contrast)
+                GLES20.glUniform4f(program.uStdTone2, look.toeLift, look.ceiling, look.redBias, look.blueBias)
+                GLES20.glUniform4f(program.uStdTone3, look.monoMix, look.panRed, 0f, 0f)
+                GLES20.glUniform3f(program.uHaloTint, look.haloR, look.haloG, look.haloB)
+                GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
+                GLES20.glUniform1f(program.uGrainBias, look.grainBias)
+                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
+                GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+            }
             LookFamily.AEROCHROME -> {
                 val look = FilmLookLibrary.aeroLookFor(currentSettings.preset)
                 GLES20.glUniform4f(program.uAeroTone, look.curveMix, look.satCap, look.magentaBoost, look.skyDepthBoost)
@@ -1340,6 +1392,10 @@ class SpectralRenderer(
         val uAeroTone = GLES20.glGetUniformLocation(id, "uAeroTone")
         val uAeroTone2 = GLES20.glGetUniformLocation(id, "uAeroTone2")
         val uHaloGrain = GLES20.glGetUniformLocation(id, "uHaloGrain")
+        val uStdTone = GLES20.glGetUniformLocation(id, "uStdTone")
+        val uStdTone2 = GLES20.glGetUniformLocation(id, "uStdTone2")
+        val uStdTone3 = GLES20.glGetUniformLocation(id, "uStdTone3")
+        val uHaloTint = GLES20.glGetUniformLocation(id, "uHaloTint")
         val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
         val uGrainBase = GLES20.glGetUniformLocation(id, "uGrainBase")
         val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")

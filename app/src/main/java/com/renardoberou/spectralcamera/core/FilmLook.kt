@@ -53,6 +53,27 @@ data class MonoIRLook(
  *  - skyDepthBoost: sky density multiplier (>1 = denser/deeper, <1 = paler).
  *  - fade: vintage lifted-black / desaturation amount applied post-grade.
  */
+/**
+ * One standard (non-IR) film stock. Canonical characteristics per stock are
+ * documented in docs/PLAN_2026-07-23c_classic-film-family.md.
+ */
+data class StandardFilmLook(
+    val warmth: Float,        // +warm / -tungsten-cool white-balance character
+    val tealShadows: Float,   // shadow split-tone toward teal (CineStill daylight)
+    val saturation: Float,
+    val contrast: Float,      // s-curve mix
+    val toeLift: Float,       // lifted blacks (cine negative)
+    val ceiling: Float,       // highlight shoulder cap
+    val redBias: Float,       // per-channel saturation bias (Ektar pop)
+    val blueBias: Float,
+    val monoMix: Float,       // 1 = panchromatic B&W (Tri-X)
+    val panRed: Float,        // red weight of the panchromatic mix
+    val haloR: Float, val haloG: Float, val haloB: Float,  // halation dye colour
+    val haloThreshold: Float, val haloTight: Float, val haloWide: Float,
+    val grainClump: Float, val grainBias: Float, val grainBase: Float,
+    val acutanceBias: Float,
+)
+
 data class AerochromeLook(
     val gold: Float,
     val curveMix: Float,
@@ -134,6 +155,43 @@ object FilmLookLibrary {
         ),
     )
 
+    private val standardLooks: Map<SpectralPreset, StandardFilmLook> = mapOf(
+        // Kodak Ektar 100: the world's finest-grain colour negative. Vivid
+        // (esp. reds/blues) yet faithful; punchy clean contrast; whisper grain.
+        SpectralPreset.EKTAR_100 to StandardFilmLook(
+            warmth = 0.045f, tealShadows = 0f, saturation = 1.30f, contrast = 0.60f,
+            toeLift = 0.004f, ceiling = 0.985f, redBias = 1.15f, blueBias = 1.10f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
+            haloThreshold = 0.965f, haloTight = 0.06f, haloWide = 0.02f,
+            grainClump = 0.45f, grainBias = 0.6f, grainBase = 0.02f,
+            acutanceBias = 0.18f,
+        ),
+        // CineStill 800T: Vision3 500T with the remjet anti-halation layer
+        // removed - hence the signature RED halos around lights - tungsten-
+        // balanced (daylight goes cool/teal), lifted cinematic blacks.
+        SpectralPreset.CINESTILL_800T to StandardFilmLook(
+            warmth = -0.10f, tealShadows = 0.55f, saturation = 1.06f, contrast = 0.36f,
+            toeLift = 0.035f, ceiling = 0.975f, redBias = 1.0f, blueBias = 1.06f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.20f, haloB = 0.14f,
+            haloThreshold = 0.80f, haloTight = 0.55f, haloWide = 0.42f,
+            grainClump = 1.05f, grainBias = 1.0f, grainBase = 0.14f,
+            acutanceBias = 0f,
+        ),
+        // Kodak Tri-X 400: the photojournalism classic - punchy panchromatic
+        // curve, rich textured blacks, forgiving shoulder, honest gritty grain.
+        SpectralPreset.TRI_X_400 to StandardFilmLook(
+            warmth = 0f, tealShadows = 0f, saturation = 1.0f, contrast = 0.68f,
+            toeLift = 0.012f, ceiling = 0.958f, redBias = 1.0f, blueBias = 1.0f,
+            monoMix = 1f, panRed = 0.30f,
+            haloR = 0.85f, haloG = 0.85f, haloB = 0.85f,
+            haloThreshold = 0.90f, haloTight = 0.10f, haloWide = 0.05f,
+            grainClump = 1.35f, grainBias = 1.15f, grainBase = 0.26f,
+            acutanceBias = 0.12f,
+        ),
+    )
+
     private val aeroLooks: Map<SpectralPreset, AerochromeLook> = mapOf(
         // Aerochrome Classic: the reference EIR grade this app was built on.
         SpectralPreset.AEROCHROME_FALSE_COLOR to AerochromeLook(
@@ -175,4 +233,8 @@ object FilmLookLibrary {
 
     fun aeroLookFor(preset: SpectralPreset): AerochromeLook =
         aeroLooks[preset] ?: aeroLooks.getValue(SpectralPreset.AEROCHROME_FALSE_COLOR)
+
+    fun standardLookFor(preset: SpectralPreset): StandardFilmLook =
+        standardLooks[preset] ?: standardLooks.getValue(SpectralPreset.EKTAR_100)
+
 }
