@@ -16,9 +16,9 @@
     <application
         android:name=".SpectralCameraApp"
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher_1196"
+        android:icon="@drawable/ic_launcher_1196"
         android:label="Spectral Camera"
-        android:roundIcon="@mipmap/ic_launcher_1196_round"
+        android:roundIcon="@drawable/ic_launcher_1196_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SpectralCamera">
         <activity

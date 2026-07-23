@@ -33,8 +33,8 @@ jobs:
       - name: Validate launcher source resources
         run: |
           set -euo pipefail
-          grep -q 'android:icon="@mipmap/ic_launcher_1196"' app/src/main/AndroidManifest.xml
-          grep -q 'android:roundIcon="@mipmap/ic_launcher_1196_round"' app/src/main/AndroidManifest.xml
+          grep -q 'android:icon="@drawable/ic_launcher_1196"' app/src/main/AndroidManifest.xml
+          grep -q 'android:roundIcon="@drawable/ic_launcher_1196_round"' app/src/main/AndroidManifest.xml
           if git ls-files | grep -q 'ic_launcher_1195'; then
             echo "::error::Broken temporary 1.19.5 launcher resources are still tracked."
             exit 1
@@ -44,15 +44,7 @@ jobs:
           import struct
           import zlib
 
-          expected = {
-              "mdpi": 48,
-              "hdpi": 72,
-              "xhdpi": 96,
-              "xxhdpi": 144,
-              "xxxhdpi": 192,
-          }
-
-          def validate_png(path: Path, size: int) -> None:
+          def validate_png(path: Path) -> None:
               data = path.read_bytes()
               if data[:8] != b"\x89PNG\r\n\x1a\n":
                   raise SystemExit(f"{path}: invalid PNG signature")
@@ -60,17 +52,16 @@ jobs:
               if data[12:16] != b"IHDR" or length != 13:
                   raise SystemExit(f"{path}: missing canonical IHDR")
               width, height = struct.unpack(">II", data[16:24])
-              if (width, height) != (size, size):
-                  raise SystemExit(f"{path}: expected {size}x{size}, got {width}x{height}")
+              if (width, height) != (192, 192):
+                  raise SystemExit(f"{path}: expected 192x192, got {width}x{height}")
               stored_crc = struct.unpack(">I", data[29:33])[0]
               actual_crc = zlib.crc32(data[12:29]) & 0xFFFFFFFF
               if stored_crc != actual_crc:
                   raise SystemExit(f"{path}: corrupt IHDR CRC")
 
-          for density, size in expected.items():
-              root = Path(f"app/src/main/res/mipmap-{density}")
-              validate_png(root / "ic_launcher_1196.png", size)
-              validate_png(root / "ic_launcher_1196_round.png", size)
+          root = Path("app/src/main/res/drawable-nodpi")
+          validate_png(root / "ic_launcher_1196.png")
+          validate_png(root / "ic_launcher_1196_round.png")
           PY
 
       - name: Set up JDK 17
@@ -94,41 +85,13 @@ jobs:
       - name: Verify launcher resources inside debug APK
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import struct
-          import zipfile
-          import zlib
-
-          apk = Path("app/build/outputs/apk/debug/app-debug.apk")
-          expected = {
-              "mdpi": 48,
-              "hdpi": 72,
-              "xhdpi": 96,
-              "xxhdpi": 144,
-              "xxxhdpi": 192,
-          }
-
-          with zipfile.ZipFile(apk) as archive:
-              names = set(archive.namelist())
-              if any("ic_launcher_1195" in name for name in names):
-                  raise SystemExit("APK still contains broken temporary launcher resources")
-              for density, size in expected.items():
-                  for suffix in ("", "_round"):
-                      name = f"res/mipmap-{density}-v4/ic_launcher_1196{suffix}.png"
-                      if name not in names:
-                          raise SystemExit(f"APK missing {name}")
-                      data = archive.read(name)
-                      if data[:8] != b"\x89PNG\r\n\x1a\n":
-                          raise SystemExit(f"{name}: invalid PNG signature")
-                      width, height = struct.unpack(">II", data[16:24])
-                      if (width, height) != (size, size):
-                          raise SystemExit(f"{name}: expected {size}x{size}, got {width}x{height}")
-                      stored_crc = struct.unpack(">I", data[29:33])[0]
-                      actual_crc = zlib.crc32(data[12:29]) & 0xFFFFFFFF
-                      if stored_crc != actual_crc:
-                          raise SystemExit(f"{name}: corrupt IHDR CRC")
-          PY
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          unzip -l "$apk" | grep -q 'res/drawable-nodpi-v4/ic_launcher_1196.png'
+          unzip -l "$apk" | grep -q 'res/drawable-nodpi-v4/ic_launcher_1196_round.png'
+          if unzip -l "$apk" | grep -q 'ic_launcher_1195'; then
+            echo "::error::APK still contains broken temporary launcher resources."
+            exit 1
+          fi
 
       - name: Verify ordinary CI release is unsigned
         run: |
@@ -153,12 +116,16 @@ jobs:
           {
             echo '### Build failure, run ${{ github.run_number }}'
             echo '```'
-            grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong" -A 2 build.log 2>/dev/null | head -c 30000
-            echo
-            echo "=== LOG TAIL ==="
-            tail -c 25000 build.log 2>/dev/null
+            if [ -f build.log ]; then
+              grep -nE "^e: |error: |Caused by|FAILURE:|What went wrong" -A 2 build.log | head -c 30000 || true
+              echo
+              echo "=== LOG TAIL ==="
+              tail -c 25000 build.log || true
+            else
+              echo "The workflow failed before Gradle started. Inspect the failed validation step in the Actions log."
+            fi
             echo '```'
-          } > /tmp/body.md || true
+          } > /tmp/body.md
           gh issue create --repo "$GITHUB_REPOSITORY" --title "CI failure: run ${{ github.run_number }}" --body-file /tmp/body.md
 
       - name: Upload ephemeral debug APK
