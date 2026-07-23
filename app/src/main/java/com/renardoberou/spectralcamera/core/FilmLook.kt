@@ -88,17 +88,17 @@ object FilmLookLibrary {
         // Kodak HIE: no anti-halation backing, deep toe, hardest drama,
         // strongest bloom - the famous ethereal glow.
         SpectralPreset.HIGH_CONTRAST_IR to MonoIRLook(
-            toeLo = 4.6f, toeSpan = 5.2f, toePow = 2.60f, toeK = 0.26f, ceiling = 0.965f,
-            woodLift = 0.64f, skyStrength = 0.92f,
+            toeLo = 4.6f, toeSpan = 5.2f, toePow = 2.75f, toeK = 0.22f, ceiling = 0.968f,
+            woodLift = 0.68f, skyStrength = 0.95f,
             haloThreshold = 0.78f, haloTight = 0.70f, haloWide = 0.45f,
-            grainClump = 1.15f, grainBias = 1.15f, grainBase = 0.18f,
+            grainClump = 1.25f, grainBias = 1.2f, grainBase = 0.24f,
             waterFloor = 0.05f, acutanceBias = 0.05f,
         ),
         // Ilford SFX 200: gentler extended-red response, grey acetate base
         // gives good halation protection - minimal glow, smoother tonality.
         SpectralPreset.WHITE_FOLIAGE_DARK_SKY to MonoIRLook(
-            toeLo = 5.0f, toeSpan = 5.8f, toePow = 2.05f, toeK = 0.40f, ceiling = 0.945f,
-            woodLift = 0.38f, skyStrength = 0.78f,
+            toeLo = 5.0f, toeSpan = 5.8f, toePow = 1.95f, toeK = 0.42f, ceiling = 0.945f,
+            woodLift = 0.36f, skyStrength = 0.74f,
             haloThreshold = 0.87f, haloTight = 0.22f, haloWide = 0.10f,
             grainClump = 0.85f, grainBias = 0.90f, grainBase = 0.08f,
             waterFloor = 0.06f, acutanceBias = 0.10f,
@@ -109,27 +109,27 @@ object FilmLookLibrary {
             toeLo = 4.9f, toeSpan = 5.6f, toePow = 2.15f, toeK = 0.34f, ceiling = 0.950f,
             woodLift = 0.46f, skyStrength = 0.82f,
             haloThreshold = 0.84f, haloTight = 0.30f, haloWide = 0.16f,
-            grainClump = 0.95f, grainBias = 0.95f, grainBase = 0.10f,
+            grainClump = 0.95f, grainBias = 0.95f, grainBase = 0.08f,
             waterFloor = 0.06f, acutanceBias = 0.08f,
         ),
         // Fine-Grain Infrared: neutral, print-friendly, minimal drama. The
         // mildest Wood effect and sky suppression in the family, finest
         // grain, tightest halation - a "clean" IR stock, not a mood stock.
         SpectralPreset.MONO_IR_FINE_GRAIN to MonoIRLook(
-            toeLo = 5.05f, toeSpan = 5.65f, toePow = 2.00f, toeK = 0.42f, ceiling = 0.940f,
-            woodLift = 0.34f, skyStrength = 0.70f,
+            toeLo = 5.05f, toeSpan = 5.65f, toePow = 1.88f, toeK = 0.46f, ceiling = 0.932f,
+            woodLift = 0.30f, skyStrength = 0.62f,
             haloThreshold = 0.90f, haloTight = 0.14f, haloWide = 0.06f,
-            grainClump = 0.65f, grainBias = 0.70f, grainBase = 0.05f,
+            grainClump = 0.55f, grainBias = 0.65f, grainBase = 0.03f,
             waterFloor = 0.07f, acutanceBias = 0.20f,
         ),
         // Soft Vintage IR: print-oriented, romantic. Wide low-contrast span,
         // soft toe and shoulder, low ceiling (milky highlights), dreamy wide
         // halation, coarser grain, lifted blacks throughout.
         SpectralPreset.MONO_IR_SOFT_VINTAGE to MonoIRLook(
-            toeLo = 4.85f, toeSpan = 6.0f, toePow = 1.85f, toeK = 0.50f, ceiling = 0.900f,
-            woodLift = 0.44f, skyStrength = 0.68f,
+            toeLo = 4.85f, toeSpan = 6.3f, toePow = 1.78f, toeK = 0.54f, ceiling = 0.882f,
+            woodLift = 0.44f, skyStrength = 0.60f,
             haloThreshold = 0.80f, haloTight = 0.45f, haloWide = 0.30f,
-            grainClump = 1.30f, grainBias = 1.20f, grainBase = 0.16f,
+            grainClump = 1.45f, grainBias = 1.25f, grainBase = 0.20f,
             waterFloor = 0.09f, acutanceBias = -0.05f,
         ),
     )
