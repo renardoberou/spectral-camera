@@ -18,7 +18,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,14 +48,40 @@ fun ImportPreviewScreen(
     onCancelled: () -> Unit,
 ) {
     val state by viewModel.importPreview.collectAsStateWithLifecycle()
+    val loading by viewModel.importLoading.collectAsStateWithLifecycle()
+    val loadError by viewModel.importError.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var showPresets by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
 
-    // If preview state is cleared from elsewhere (e.g. process death), leave
-    // the screen instead of showing a blank editor with nothing to act on.
-    LaunchedEffect(state) {
-        if (state == null) onCancelled()
+    // While the photo is still decoding, state is legitimately null - this is
+    // NOT "cancelled". Cloud-backed sources (shared albums, "Collections",
+    // anything not already local to MediaStore) resolve through a slower
+    // path than local photos and must be given time to arrive; popping the
+    // screen the instant state == null used to close it before those photos
+    // ever finished loading. Only an explicit Cancel/Save leaves the screen.
+    if (state == null) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (loadError != null) {
+                Text(loadError ?: "", color = MaterialTheme.colorScheme.error)
+                Button(onClick = {
+                    viewModel.cancelImportPreview()
+                    onCancelled()
+                }) { Text("Back") }
+            } else {
+                CircularProgressIndicator()
+                Text("Opening photo\u2026", modifier = Modifier.padding(top = 12.dp))
+                OutlinedButton(onClick = {
+                    viewModel.cancelImportPreview()
+                    onCancelled()
+                }) { Text("Cancel") }
+            }
+        }
+        return
     }
 
     val current = state ?: return

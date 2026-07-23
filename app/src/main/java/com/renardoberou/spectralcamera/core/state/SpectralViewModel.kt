@@ -542,14 +542,26 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     private suspend fun decodeUri(uri: Uri): Bitmap {
         val app = getApplication<Application>()
         val decoded = withContext(Dispatchers.IO) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val source = ImageDecoder.createSource(app.contentResolver, uri)
-                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val viaImageDecoder = runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val source = ImageDecoder.createSource(app.contentResolver, uri)
+                    ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaStore.Images.Media.getBitmap(app.contentResolver, uri)
                 }
-            } else {
-                @Suppress("DEPRECATION")
-                MediaStore.Images.Media.getBitmap(app.contentResolver, uri)
+            }
+            // Fallback for providers ImageDecoder can reject or stall on -
+            // cloud-backed "Collections"/shared-album items resolve through
+            // a different content path than local MediaStore photos and can
+            // need a plain streamed read instead of ImageDecoder's source
+            // API. Retry via BitmapFactory before giving up.
+            viaImageDecoder.getOrElse {
+                app.contentResolver.openInputStream(uri)?.use { stream ->
+                    android.graphics.BitmapFactory.decodeStream(stream)
+                } ?: throw IllegalStateException("Unable to open the selected photo (no data at this URI).")
             }
         }
         return if (decoded.config != Bitmap.Config.ARGB_8888) {
@@ -615,23 +627,45 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
 
     // ---- Import Preview: choose/preview settings for a specific photo -----
 
+    private var previewLoadJob: Job? = null
     private var previewRenderJob: Job? = null
     private var previewRenderToken: Int = 0
 
     private val _importPreview = VmMutableStateFlow<ImportPreviewState?>(null)
     val importPreview: StateFlow<ImportPreviewState?> = _importPreview
 
+    // Decode failure (or a pending decode the screen should keep waiting on)
+    // is distinct from "there is nothing to show yet": the screen must NOT
+    // treat importPreview == null as "cancelled" while a decode is still in
+    // flight, or slower content providers (cloud-backed "Collections"/shared
+    // albums, which resolve through a different path than local MediaStore
+    // photos and can take noticeably longer to decode) would have the
+    // preview screen pop itself closed before the photo ever loads.
+    private val _importLoading = VmMutableStateFlow(false)
+    val importLoading: StateFlow<Boolean> = _importLoading
+
+    private val _importError = VmMutableStateFlow<String?>(null)
+    val importError: StateFlow<String?> = _importError
+
     fun beginImportPreview(
         uri: Uri,
         process: suspend (Bitmap, CameraSettings) -> Bitmap,
     ) {
-        viewModelScope.launch {
-            val original = runCatching { decodeUri(uri) }.getOrNull() ?: return@launch
+        _importError.value = null
+        _importLoading.value = true
+        previewLoadJob = viewModelScope.launch {
+            val original = runCatching { decodeUri(uri) }
+                .onFailure {
+                    _importError.value = "Couldn't open that photo: ${it.message ?: it.javaClass.simpleName}"
+                    _importLoading.value = false
+                }
+                .getOrNull() ?: return@launch
             val initialSettings = settings.value.copy(
                 hdrCaptureMode = HdrCaptureMode.OFF,
                 doubleExposureMode = DoubleExposureMode.OFF,
                 ultraHdrExport = false,
             )
+            _importLoading.value = false
             _importPreview.value = ImportPreviewState(
                 uri = uri,
                 original = original,
@@ -702,10 +736,15 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun cancelImportPreview() {
-        val state = _importPreview.value ?: return
+        previewLoadJob?.cancel()
         previewRenderJob?.cancel()
-        if (!state.original.isRecycled) state.original.recycle()
-        state.preview?.let { if (!it.isRecycled) it.recycle() }
+        _importLoading.value = false
+        _importError.value = null
+        val state = _importPreview.value
+        if (state != null) {
+            if (!state.original.isRecycled) state.original.recycle()
+            state.preview?.let { if (!it.isRecycled) it.recycle() }
+        }
         _importPreview.value = null
     }
 
