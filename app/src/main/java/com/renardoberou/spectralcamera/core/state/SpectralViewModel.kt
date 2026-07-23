@@ -17,6 +17,7 @@ import com.renardoberou.spectralcamera.core.GalleryItem
 import com.renardoberou.spectralcamera.core.HardwareTestState
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.HdrToneMap
+import com.renardoberou.spectralcamera.core.ImportPreviewState
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.camera.CameraController

@@ -204,6 +204,7 @@ private fun AppShell(
                                 Route.Output -> Icon(Icons.Outlined.Tune, contentDescription = null)
                                 Route.Gallery -> Icon(Icons.Outlined.Collections, contentDescription = null)
                                 Route.Hardware -> Icon(Icons.Outlined.Memory, contentDescription = null)
+                                Route.ImportPreview -> Unit // never in the bottom-nav list
                             }
                         },
                         label = { Text(route.label) },
