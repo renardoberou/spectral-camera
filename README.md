@@ -176,3 +176,50 @@ Fully camera-aware. No fake controls.
 - Backward-compatible JPEG
 - Gain map generated AFTER film simulation
 - No HDR halos or fake glow
+
+---
+
+## Film stocks
+
+### Monochrome Infrared (6 stocks)
+
+- **Rollei Infrared 400** — the reference IR look. Fine grain, elegant contrast, controlled halation. Restrained, neutral.
+- **Kodak HIE** — high-contrast drama. Deep toe, strongest bloom. The famous ethereal glow. Coarse grain.
+- **Ilford SFX 200** — gentler extended-red response. Grey-acetate base for halation protection. Minimal glow, smoother tonality.
+- **Moderate IR** — broad default between Rollei (restrained) and HIE (dramatic). Medium grain, medium everything.
+- **Fine-Grain Infrared** — neutral, print-friendly. Minimal drama. The cleanest IR stock. Finest grain.
+- **Soft Vintage IR** — print-oriented, romantic. Soft toe, low ceiling, milky highlights, wide halation. Lifted blacks. Coarser grain.
+
+### Aerochrome (5 looks)
+
+False-color rendering of the classic Kodak Aerochrome IR film:
+
+- **Classic** — the reference Aerochrome grade this app was built on.
+- **Soft** — gentler contrast, pastel magenta, paler sky, minimal glow. The everyday member.
+- **Dense** — punchier contrast, deeper cyan sky, dramatic halation. The hero-shot grade.
+- **Gold** — orange-filter EIR. Warmer foliage, teal sky.
+- **Faded** — desaturated, lifted blacks, warm cast, hazy pale sky. Aged-print character.
+
+### Classic Film (3 stocks)
+
+Standard photographic stocks rendered with their real film response:
+
+- **Kodak Ektar 100** — finest-grain color negative. Vivid reds/blues. Faithful skin. Punchy clean contrast. Whisper grain.
+- **CineStill 800T** — tungsten-balanced vision film. Signature RED halation around lights. Cool/teal daylight. Lifted cinematic blacks.
+- **Kodak Tri-X 400** — the photojournalism classic. Punchy panchromatic curve. Rich textured blacks. Honest gritty grain.
+
+### Grain
+
+Every stock carries an always-on baseline grain (`grainBase`, per FilmLookLibrary) so stock personality is visible at default settings — real film is never grainless. The **Grain** slider (0–1, independent of which stock is selected) adds on top.
+
+#### Grain characteristics by stock family
+
+**Monochrome IR** — grain density responds to exposure (strongest in midtones, tapering toward deep shadow and bright highlight), matching the visibility curve in a print and the behavior of real silver-halide emulsion. Per-stock grain personalities: HIE and Soft Vintage read visibly coarser, Fine-Grain reads tighter.
+
+**Aerochrome & Classic Film** — grain density is also exposure-responsive (2026-07-23e). Baseline grain levels are calibrated per stock; the Grain slider modulates on top.
+
+**Chroma grain (2026-07-23f)** — color-negative and Aerochrome stocks carry independent per-channel noise on top of the shared structural grain, rendering the dye-cloud speckle of real color film. Mono stocks (Tri-X in the Classic Film preset range) automatically revert to scalar-only grain via the existing `monoMix` uniform, so no chroma speckle appears on B&W stock.
+
+**Clump irregularity (2026-07-23f)** — grain strength clusters into irregular patches rather than reading as a uniform texture everywhere, closer to the Boolean/Poisson-disk crystal-cluster model real film follows.
+
+See `docs/PLAN_2026-07-23d_grain-quality-upgrade.md` and `docs/VALIDATION.md` for technical implementation detail and verification methodology.
