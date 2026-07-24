@@ -20,6 +20,7 @@ import com.renardoberou.spectralcamera.core.HdrToneMap
 import com.renardoberou.spectralcamera.core.ImportPreviewState
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
 import com.renardoberou.spectralcamera.core.camera.CapturedExposure
 import com.renardoberou.spectralcamera.core.capture.DoubleExposurePipeline
@@ -195,6 +196,8 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     fun setManualMode(enabled: Boolean) { manualModeSession.value = enabled }
     fun setManualIso(iso: Int) = updateSettings { it.copy(manualIso = iso) }
     fun setManualShutter(nanos: Long) = updateSettings { it.copy(manualShutterNs = nanos) }
+    fun setWhiteBalancePreset(preset: WhiteBalancePreset) =
+        updateSettings { it.copy(whiteBalancePreset = preset) }
     fun setFocusMode(mode: FocusMode) = updateSettings { it.copy(focusMode = mode) }
     fun setManualFocusPosition(position: Float) =
         updateSettings { it.copy(manualFocusPosition = position.coerceIn(0f, 1f)) }

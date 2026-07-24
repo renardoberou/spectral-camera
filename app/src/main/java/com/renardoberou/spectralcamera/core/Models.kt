@@ -214,6 +214,46 @@ enum class FocusTapResult {
     UNSUPPORTED,
 }
 
+enum class WhiteBalancePreset(
+    val label: String,
+    val kelvin: Int?,
+    val description: String,
+) {
+    AUTO(
+        label = "Auto",
+        kelvin = null,
+        description = "Adaptive camera white balance. The camera may change its estimate as the scene changes.",
+    ),
+    SUNNY(
+        label = "Sunny",
+        kelvin = 5_500,
+        description = "Daylight reference for direct sun and daylight-balanced colour film.",
+    ),
+    CLOUDY(
+        label = "Cloudy",
+        kelvin = 6_500,
+        description = "Warmer compensation for overcast daylight.",
+    ),
+    TUNGSTEN(
+        label = "Tungsten",
+        kelvin = 3_200,
+        description = "Tungsten-balanced reference, including CineStill 800T / VISION3 500T intent.",
+    ),
+    WHITE_LIGHT(
+        label = "White light",
+        kelvin = 4_100,
+        description = "Neutral starting point for cool-white LED and fluorescent lighting.",
+    ),
+    STREETLIGHT(
+        label = "Streetlight",
+        kelvin = 2_600,
+        description = "Very warm reference for sodium-like street lighting; deliberately not named Night mode.",
+    );
+
+    val temperatureLabel: String
+        get() = kelvin?.let { "$it K" } ?: "Adaptive"
+}
+
 data class ManualAdjustments(
     val contrast: Float = 1.0f,
     val exposureCompensation: Float = 0f,
@@ -247,6 +287,7 @@ data class CameraSettings(
     val manualMode: Boolean = false,
     val manualIso: Int = 400,
     val manualShutterNs: Long = 8_000_000L,
+    val whiteBalancePreset: WhiteBalancePreset = WhiteBalancePreset.AUTO,
     val focusMode: FocusMode = FocusMode.CONTINUOUS,
     /** Normalized lens position: 0 = infinity, 1 = nearest supported focus. */
     val manualFocusPosition: Float = 0.15f,
@@ -274,6 +315,8 @@ data class CameraCapabilities(
     val hdrBracketSupported: Boolean = false,
     /** RAW_SENSOR + MANUAL_SENSOR + Bayer metadata sufficient for an in-app RAW merge. */
     val trueRawHdrSupported: Boolean = false,
+    val supportedWhiteBalancePresets: Set<WhiteBalancePreset> = setOf(WhiteBalancePreset.AUTO),
+    val directKelvinWhiteBalancePresets: Set<WhiteBalancePreset> = emptySet(),
     val continuousFocusSupported: Boolean = false,
     val tapFocusSupported: Boolean = false,
     val macroFocusSupported: Boolean = false,
@@ -290,6 +333,12 @@ data class CameraCapabilities(
         Math.round(stops / safeStep).coerceIn(exposureRange.first, exposureRange.last)
 
     val exposureSupported: Boolean get() = exposureRange.first != exposureRange.last
+
+    fun supportsWhiteBalancePreset(preset: WhiteBalancePreset): Boolean =
+        preset in supportedWhiteBalancePresets
+
+    fun usesDirectKelvinWhiteBalance(preset: WhiteBalancePreset): Boolean =
+        preset in directKelvinWhiteBalancePresets
 
     fun supportsFocusMode(mode: FocusMode): Boolean = when (mode) {
         FocusMode.CONTINUOUS -> continuousFocusSupported

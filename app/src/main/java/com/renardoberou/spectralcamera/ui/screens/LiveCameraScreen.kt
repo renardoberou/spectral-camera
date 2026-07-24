@@ -67,6 +67,7 @@ import com.renardoberou.spectralcamera.core.FocusTapResult
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
 import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
@@ -90,6 +91,7 @@ fun LiveCameraScreen(
     var showPresets by remember { mutableStateOf(false) }
     var showExposure by remember { mutableStateOf(false) }
     var showFocus by remember { mutableStateOf(false) }
+    var showWhiteBalance by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
@@ -335,7 +337,10 @@ fun LiveCameraScreen(
                             selected = showExposure,
                             onClick = {
                                 showExposure = !showExposure
-                                if (showExposure) showFocus = false
+                                if (showExposure) {
+                                    showFocus = false
+                                    showWhiteBalance = false
+                                }
                             },
                             label = { Text(if (showExposure) "Exposure ▴" else "Exposure ▾") },
                         )
@@ -345,9 +350,25 @@ fun LiveCameraScreen(
                             selected = showFocus,
                             onClick = {
                                 showFocus = !showFocus
-                                if (showFocus) showExposure = false
+                                if (showFocus) {
+                                    showExposure = false
+                                    showWhiteBalance = false
+                                }
                             },
                             label = { Text(if (showFocus) "Focus ▴" else "Focus ▾") },
+                        )
+                    }
+                    if (capabilities != null) {
+                        FilterChip(
+                            selected = showWhiteBalance,
+                            onClick = {
+                                showWhiteBalance = !showWhiteBalance
+                                if (showWhiteBalance) {
+                                    showExposure = false
+                                    showFocus = false
+                                }
+                            },
+                            label = { Text("WB ${settings.whiteBalancePreset.label}") },
                         )
                     }
                     FilterChip(
@@ -511,6 +532,40 @@ fun LiveCameraScreen(
                                     label = { Text("Unlock focus") },
                                 )
                             }
+                        }
+                    }
+                }
+
+                if (capabilities != null && showWhiteBalance) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Column(
+                            Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "White balance • ${settings.whiteBalancePreset.temperatureLabel}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            WhiteBalanceControl(
+                                current = settings.whiteBalancePreset,
+                                capabilities = capabilities,
+                                onSelect = viewModel::setWhiteBalancePreset,
+                            )
+                            Text(
+                                text = when {
+                                    settings.whiteBalancePreset == WhiteBalancePreset.AUTO ->
+                                        settings.whiteBalancePreset.description
+                                    capabilities.usesDirectKelvinWhiteBalance(settings.whiteBalancePreset) ->
+                                        "Direct ${settings.whiteBalancePreset.temperatureLabel} CCT request on this lens."
+                                    else ->
+                                        "This lens uses its closest advertised fixed white-balance mode."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
                     }
                 }
@@ -852,6 +907,59 @@ internal fun SteppedControl(
                     onClick = { onSelect(option.second) },
                     label = { Text(option.first) },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhiteBalanceControl(
+    current: WhiteBalancePreset,
+    capabilities: CameraCapabilities,
+    onSelect: (WhiteBalancePreset) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        WhiteBalancePreset.values().toList().chunked(3).forEach { rowPresets ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                rowPresets.forEach { preset ->
+                    val enabled = capabilities.supportsWhiteBalancePreset(preset)
+                    val selected = current == preset
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .alpha(if (enabled) 1f else 0.42f)
+                            .then(if (enabled) Modifier.clickable { onSelect(preset) } else Modifier),
+                        shape = MaterialTheme.shapes.small,
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp, horizontal = 2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                preset.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                            Text(
+                                preset.temperatureLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 9.sp,
+                                color = MaterialTheme.colorScheme.secondary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

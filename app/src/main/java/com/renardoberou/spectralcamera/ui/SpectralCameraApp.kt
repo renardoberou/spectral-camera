@@ -47,6 +47,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
@@ -101,11 +102,19 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             }
         }
 
+        LaunchedEffect(capabilities, settings.whiteBalancePreset) {
+            val activeCapabilities = capabilities ?: return@LaunchedEffect
+            if (!activeCapabilities.supportsWhiteBalancePreset(settings.whiteBalancePreset)) {
+                viewModel.setWhiteBalancePreset(WhiteBalancePreset.AUTO)
+            }
+        }
+
         LaunchedEffect(
             capabilities,
             settings.manualMode,
             settings.manualIso,
             settings.manualShutterNs,
+            settings.whiteBalancePreset,
             settings.focusMode,
             settings.manualFocusPosition,
         ) {

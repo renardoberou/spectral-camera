@@ -12,7 +12,7 @@ Built for photographers, artists, and researchers who want consistent, film-like
 
 ## Current version
 
-**1.20.3 (versionCode 51)**  
+**1.21.3 (versionCode 56)**  
 Status: Active development
 
 This version introduces and stabilizes:
@@ -23,6 +23,7 @@ This version introduces and stabilizes:
 - Ultra HDR export (Android 14+)
 - Double Exposure (film-style)
 - Full focus system (AF + manual + infinity)
+- Manual white-balance presets with direct Android 16 Kelvin control and per-lens fallbacks
 - Compact, production-ready Live UI
 - Expanded monochrome IR stock personality separation
 - Canonical analog-camera launcher icon approved as the app identity
