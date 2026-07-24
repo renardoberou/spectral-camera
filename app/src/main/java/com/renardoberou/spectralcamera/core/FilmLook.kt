@@ -109,18 +109,27 @@ object FilmLookLibrary {
     private val monoLooks: Map<SpectralPreset, MonoIRLook> = mapOf(
         // Rollei Infrared 400: fine-grained, sharp, controlled halation,
         // elegant negative-film contrast - the reference restrained IR look.
-        // grainBase=0.19 (2026-07-24, was 0.10): the real film's published
-        // diffuse RMS granularity is 11, against Tri-X 400's 17 and Kodak
-        // HIE's 18 (same measurement convention for all three - directly
-        // comparable). Real Rollei:TriX:HIE = 11:17:18 - Rollei is
-        // moderately finer, not dramatically so. The old 0.10 made it
-        // ~3x quieter than Tri-X/HIE in-app; the real ratio is ~1.5-1.6x.
-        // 0.19 restores that ratio to within a few percent on both anchors.
+        // grainBase=0.14 (2026-07-24, third pass - was 0.19, originally 0.10).
+        // The 0.19 value correctly matched real RMS granularity ratios
+        // against Tri-X (17) and HIE (18) - but that fix anchored Rollei's
+        // ABSOLUTE amplitude to Tri-X/HIE's existing absolute values, which
+        // were themselves only ever tuned by eye and never independently
+        // re-verified. Nearly doubling Rollei's peak grain (2.24->4.26 LSB)
+        // read as noisy on a real device photo of a detailed subject (camo-
+        // pattern bag) - the first real stress test that specific value had
+        // seen. 0.14 (peak ~3.14 LSB, ratio to Tri-X ~0.47/HIE ~0.49) is a
+        // deliberate partial correction: still meaningfully closer to the
+        // real ratio (0.65/0.61) than the original 0.10 was (ratio 0.33),
+        // without fully committing to a target whose absolute scale
+        // depends on Tri-X/HIE's own unverified baseline. Tri-X, HIE, and
+        // Soft Vintage's absolute grain levels are flagged as open -
+        // they've never been independently stress-tested on a real busy
+        // subject the way this correction just was for Rollei.
         SpectralPreset.B_W_INFRARED to MonoIRLook(
             toeLo = 4.8f, toeSpan = 5.5f, toePow = 2.30f, toeK = 0.36f, ceiling = 0.948f,
             woodLift = 0.52f, skyStrength = 0.88f,
             haloThreshold = 0.86f, haloTight = 0.28f, haloWide = 0.14f,
-            grainClump = 1.0f, grainBias = 1.0f, grainBase = 0.19f,
+            grainClump = 1.0f, grainBias = 1.0f, grainBase = 0.14f,
             waterFloor = 0.055f, acutanceBias = 0.15f,
         ),
         // Kodak HIE: no anti-halation backing, deep toe, hardest drama,

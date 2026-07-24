@@ -260,3 +260,17 @@ grain share fell from 0.95/0.90 to 0.51/0.58, confirming the reduced floor takes
 as sourced. Highlight protection re-confirmed bit-identical by construction (shadowLift
 itself is exactly 0 above luma 0.34, independent of the scale multiplier). Reports and
 recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
+
+**Correction (2026-07-24, third pass):** a real device photo of a detailed subject (camo-
+pattern bag, straps) showed Rollei reading noisy - the ratio fix above correctly matched
+real RMS granularity data, but doubled Rollei's absolute peak amplitude (2.24->4.26 LSB)
+by anchoring it to Tri-X/HIE's absolute values, which were only ever tuned by eye and
+never independently re-verified against a real busy subject. Dialed back to
+`grainBase=0.14` (peak ~3.14 LSB) - a deliberate partial correction, still meaningfully
+closer to the real ratio than the original under-tuned 0.10 was, without fully
+committing to a target whose absolute scale depends on Tri-X/HIE's unverified baseline.
+**Tri-X 400, Kodak HIE, and Soft Vintage IR's absolute grain levels (peak 6.71/6.46/5.61
+LSB respectively, unchanged since the original step-1-5 grain work) are flagged as open**
+- none of them have been stress-tested on a real busy/detailed subject the way this
+correction just was for Rollei, and the same "ratio-correct but never absolute-verified"
+concern applies to all three.
