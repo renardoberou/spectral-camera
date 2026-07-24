@@ -176,3 +176,15 @@ mono's existing behavior); if shadow grain still reads as too subtle after an
 on-device check, that's a separate amplitude-scale question, not something this step
 claims to fix. See `docs/PLAN_2026-07-23d_grain-quality-upgrade.md` §2 step 2 and
 `docs/assets/grain-baseline-2026-07-23/step2/`. Needs on-device confirmation.
+
+**Steps 3+4 shipped (2026-07-23f):** per-channel color grain (chromatic presets only,
+gated by the same `monoMix` uniform Classic Film already uses, so Tri-X falls back to
+scalar automatically) and a clump-irregularity amplitude multiplier (mean-preserving,
+applied to every preset including mono — an intentional texture change, not claimed
+regression-safe like steps 2-3). Found and fixed a real latent bug along the way:
+`uStdTone3`/`monoMix` was missing from the cross-family uniform reset pattern already
+used for `uAeroTone`/`uMonoCurve`, which would have made the new chroma gate silently
+session-order-dependent (shoot Tri-X, switch to Aerochrome, chroma grain disables
+itself). Reproduced in the numpy pre-check before the fix shipped. See
+`docs/PLAN_2026-07-23d_grain-quality-upgrade.md` steps 3-4 and
+`docs/assets/grain-baseline-2026-07-23/step3-4/`. Needs on-device confirmation.

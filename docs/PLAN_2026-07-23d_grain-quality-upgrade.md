@@ -107,20 +107,69 @@ deliberately deferred — no scene-specific evidence yet justifies diverging fro
 single validated curve. Revisit if a future capture review shows a specific family
 needs a different center/span.
 
-### Step 3 — per-channel grain for color stocks
-Second/third `filmGrain()` sample per pixel, offset in hash-space per channel, only for
-non-mono presets (mono must stay scalar — chroma grain on B&W stock is wrong).
-Scaled down (~30-40% of the luma-channel amplitude) so it reads as chroma grain, not
-RGB misregistration. Cheap: 3 noise taps instead of 1 for color presets only.
+### Step 3 — per-channel color grain (DONE 2026-07-23f)
 
-### Step 4 — clump irregularity
-Add a third, lower-frequency `valueNoise()` octave used as a clump-density multiplier
-(not summed into the noise value) so grain intensity itself clusters into irregular
-blobs, closer to Boolean-model grain, instead of the current uniform-texture two-octave
-sum. One extra noise call, reused.
+**Shipped:** the grain block now computes a shared luma noise sample (as before) plus,
+for chromatic presets, two additional decorrelated noise samples combined on an
+opponent-color axis (`vec3(nCr, -0.5*(nCr+nCb), nCb)`), scaled to 35% of the luma
+amplitude and gated by a `chromaAmt` term.
 
-Each step gets its own numpy verification pass against this cycle's reference photo
-before touching `SpectralGlPipeline.kt`, per this repo's standing convention.
+**Gating design change from the original plan:** rather than branching on `uPreset`
+ranges (which would have needed a hard-coded exception for Tri-X, a mono stock living
+inside the "Classic Film" preset range), the gate reads `chromaAmt = (uPreset <= 5) ?
+0.0 : (1.0 - uStdTone3.x)` — i.e. it rides on the existing `monoMix` uniform. Tri-X
+(`monoMix = 1`) therefore falls back to scalar-only grain automatically, with no
+special case, because `1.0 - 1.0 = 0`.
+
+**Real bug found and fixed while implementing this:** `uStdTone3` (which carries
+`monoMix`) was only ever written by the `STANDARD_FILM` branch of `updateUniforms()`.
+Unlike `uAeroTone`/`uAeroTone2`/`uMonoCurve`/`uMonoCurve2` — which the existing code
+already resets to safe defaults in every branch specifically so stale values can't
+leak across a shared GL program — `uStdTone3` had no such reset in `MONOCHROME_IR` or
+`AEROCHROME`. This was harmless before (nothing outside `STANDARD_FILM` read it), but
+would have made the new chroma gate **session-order-dependent**: shoot Tri-X, then
+switch to an Aerochrome or Ektar preset in the same session, and chroma grain would
+silently disable itself because `monoMix` was still reading 1.0 from the previous
+frame. **Reproduced and confirmed in the numpy pre-check before touching the shader**
+(`docs/assets/grain-baseline-2026-07-23/step3-4/STEP3_4_PREVERIFY.md`, "STALE-UNIFORM
+BUG CHECK" rows). Fixed by adding the missing `glUniform4f(uStdTone3, 0f,0f,0f,0f)`
+reset to both branches, matching the pattern already used for the other uniforms.
+
+**Pre-verified in numpy** (measuring the raw pre-clip grain delta, not the post-clip
+pixel — see the correction note in the script header; the first draft of this check
+measured post-clip residuals and produced false decorrelation readings from clipping
+interacting with the reference photo's real per-channel color, not from chroma
+injection):
+- Mono presets (Rollei, HIE) and Tri-X: exactly zero cross-channel decorrelation,
+  matches the step-2 scalar-only delta.
+- CineStill, Aerochrome Dense: real, substantial decorrelation present (std of
+  channel-difference noise 0.00069–0.00088).
+- Ektar 100: decorrelation present but small (0.000075) — this is *expected*, not a
+  bug: Ektar has the smallest `grainBase` (0.02) of any stock in the library by
+  design ("the world's finest-grain colour negative"), so its whisper-grain amplitude
+  is proportionally tiny everywhere, chroma component included.
+
+### Step 4 — clump irregularity (DONE 2026-07-23f)
+
+**Shipped:** a third value-noise field, sampled at 4× the per-look clump scale (so
+a coarser stock's clumps scale up too), remapped to `0.5 + valueNoise(...)` and used
+as a **multiplier** on the final grain amplitude (not summed into the noise value).
+This makes visible grain strength cluster into irregular patches instead of reading
+as a uniform texture everywhere, closer to the Boolean/Poisson-disk crystal-cluster
+model described in the competitive research (step 0). Applied to every preset,
+including mono — this is a genuine, intentional appearance change on mono presets
+too (unlike step 2, this is **not** claimed to be regression-safe/identical to
+before; it is a deliberate visual improvement to the grain texture itself).
+
+**Pre-verified in numpy:** mask mean 0.9991–1.0005 across every stock (target 1.0 —
+confirms the multiplier doesn't shift overall calibrated amplitude), range exactly
+[0.5, 1.5] as designed, std ≈0.21 (the actual clumping variance introduced). HIE
+overall RMS delta with vs. without the mask: 0.00309 → 0.00316 (~2% change, in line
+with "shifts distribution, not overall amount").
+
+**Both steps shipped in one commit** since they touch the same code block and were
+requested together; each was pre-verified independently in the same script before
+either line was written into `SpectralGlPipeline.kt`.
 
 ## 3. Findings from this session's capture batch (separate follow-up tickets, not grain)
 
@@ -148,7 +197,13 @@ scope** for the grain cycle:
 - [x] Full remaining plan (steps 2-4) written up above.
 - [x] Step 2 (universal exposure-dependent density) — pre-verified in numpy, shipped
       in `SpectralGlPipeline.kt`, mono presets provably byte-identical.
-- [ ] Steps 3-4 (per-channel color grain, clump irregularity) — not started.
+- [x] Step 3 (per-channel color grain) — pre-verified in numpy, shipped. Also fixed a
+      real latent bug found during implementation: `uStdTone3`/`monoMix` was missing
+      from the cross-family uniform reset, which would have made the new chroma gate
+      silently session-order-dependent.
+- [x] Step 4 (clump irregularity) — pre-verified in numpy (mean-preserving, ~2% RMS
+      shift), shipped. Unlike steps 2-3, this is an intentional visual change on mono
+      presets too, not claimed to be identical to before.
 - [ ] Device re-shoot / on-device confirmation — required before this is considered
       truly done, consistent with this repo's verification standard for shader
       changes. CI (`assembleDebug`/`assembleRelease`) confirms the shader still
