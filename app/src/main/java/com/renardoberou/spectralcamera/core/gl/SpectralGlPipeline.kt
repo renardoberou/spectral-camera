@@ -455,7 +455,24 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     float skyHazy = smoothstep(0.34, 0.85, cc.b)
         * smoothstep(0.04, 0.12, cc.b - cc.g)
         * smoothstep(-0.01, 0.05, cc.b - cc.r);
-    float skyDown = clamp(skyChroma * 0.9 + skyHazy * 0.35, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
+    // Neutral-overcast detector (2026-07-24, second finding from device
+    // re-shoot): a real photo of a genuinely grey/white overcast sky (not
+    // blue-hazy, truly neutral - b approx g approx r) measured at ~0.90 luma
+    // in the OUTPUT with zero suppression - skyChroma requires blue
+    // dominance and skyHazy requires a DECISIVE b-g gap, so a flat neutral
+    // sky satisfies neither and was passing through completely unprocessed.
+    // Real IR film suppresses sky regardless of whether it's blue or grey
+    // (Rayleigh scattering is absent in NIR either way) - this was a real
+    // gap, not a deliberate design choice. Gated on brightness + LOW
+    // saturation (not high, unlike skyHazy) + skyT position, so it only
+    // catches genuinely flat/bright/neutral regions positioned sky-ward in
+    // frame, not a bright neutral shirt or wall lower in the picture.
+    float ccLuma = (cc.r + cc.g + cc.b) / 3.0;
+    float ccSat = max(cc.r, max(cc.g, cc.b)) - min(cc.r, min(cc.g, cc.b));
+    float skyOvercast = smoothstep(0.68, 0.90, ccLuma)
+        * (1.0 - smoothstep(0.03, 0.12, ccSat))
+        * smoothstep(0.35, 0.75, skyT);
+    float skyDown = clamp(skyChroma * 0.9 + skyHazy * 0.35 + skyOvercast * 0.30, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
     // skyStr is the per-stock sky-suppression strength from FilmLookLibrary
     // (HIE: denser skies; SFX/Fine-Grain: milder).
     // positional: zenith sky suppresses fully; low-in-frame blue (pools,
@@ -543,7 +560,20 @@ vec3 standardFilm(vec3 src, float smoothLuma) {
     d.b *= uStdTone2.w;
     c = clamp(vec3(il) + d * uStdTone.z, 0.0, 1.0);
     // halation in the stock's own dye colour - CineStill's is RED (no remjet)
-    float edgeGate = smoothstep(0.015, 0.09, lumaOf(src) - smoothLuma);
+    // edgeGate was one-sided (2026-07-24, second finding from device re-shoot):
+    // smoothstep(src - smoothLuma) only fires where THIS pixel is itself
+    // brighter than its blurred surround - i.e. only the bright source's own
+    // rim, which is usually already near-clipped, so the additive red tint
+    // was invisible exactly where it mattered. A real CineStill night-lamp
+    // photo showed zero red skew (measured R-B ~ -0.10, if anything blue)
+    // in the dark ring immediately around a bright light - the halo never
+    // reached the dark surround it's supposed to bleed into. abs() lets the
+    // DARK side of the same edge qualify too, without opening the gate on
+    // flat midtones (abs stays ~0 there) or flooding deep inside a large
+    // bright source (abs stays ~0 there too, since interior pixels don't
+    // differ from their own blurred neighbourhood). hal.x/hal.y still gate
+    // the actual energy on the per-stock brightness threshold, unchanged.
+    float edgeGate = smoothstep(0.015, 0.09, abs(lumaOf(src) - smoothLuma));
     vec2 hal = halationEnergy(vTexCoord, uHaloGrain.x);
     c += uHaloTint * (hal.x * uHaloGrain.y + hal.y * uHaloGrain.z) * edgeGate;
     return clamp(c, 0.0, 1.0);
