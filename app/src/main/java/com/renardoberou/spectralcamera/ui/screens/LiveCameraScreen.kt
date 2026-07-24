@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -84,7 +85,6 @@ fun LiveCameraScreen(
     onCapture: suspend () -> CaptureActionResult,
     onImport: suspend (android.net.Uri) -> Unit,
     onOpenGallery: () -> Unit,
-    onOpenHardware: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val doubleExposureState by viewModel.doubleExposureState.collectAsStateWithLifecycle()
@@ -372,6 +372,18 @@ fun LiveCameraScreen(
                         )
                     }
                     FilterChip(
+                        selected = settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED,
+                        onClick = {
+                            val next = if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
+                                DoubleExposureMode.OFF
+                            } else {
+                                DoubleExposureMode.FILM_BALANCED
+                            }
+                            viewModel.setDoubleExposureMode(next)
+                        },
+                        label = { Text("2x Exp.") },
+                    )
+                    FilterChip(
                         selected = false,
                         onClick = { showPresets = true },
                         label = { Text("Presets") },
@@ -571,12 +583,14 @@ fun LiveCameraScreen(
                 }
 
                 Surface(
+                    modifier = Modifier.wrapContentHeight(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     shape = MaterialTheme.shapes.extraLarge,
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .wrapContentHeight()
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {

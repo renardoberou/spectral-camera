@@ -52,7 +52,6 @@ import com.renardoberou.spectralcamera.core.camera.CameraController
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
-import com.renardoberou.spectralcamera.ui.screens.HardwareTestScreen
 import com.renardoberou.spectralcamera.ui.screens.ImportPreviewScreen
 import com.renardoberou.spectralcamera.ui.screens.LiveCameraScreen
 import com.renardoberou.spectralcamera.ui.screens.ProOutputScreen
@@ -191,13 +190,15 @@ private fun AppShell(
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route ?: Route.Live.route
 
     LaunchedEffect(currentRoute) {
-        cameraController.setAnalysisEnabled(currentRoute == Route.Hardware.route)
+        // Frame analysis was only ever consumed by the removed Hardware Test
+        // screen - no route needs it now.
+        cameraController.setAnalysisEnabled(false)
     }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                listOf(Route.Live, Route.Output, Route.Gallery, Route.Hardware).forEach { route ->
+                listOf(Route.Live, Route.Output, Route.Gallery).forEach { route ->
                     NavigationBarItem(
                         selected = currentRoute == route.route,
                         onClick = {
@@ -256,7 +257,6 @@ private fun AppShell(
                             navController.navigate(Route.ImportPreview.route)
                         },
                         onOpenGallery = { navController.navigate(Route.Gallery.route) },
-                        onOpenHardware = { navController.navigate(Route.Hardware.route) },
                     )
                 }
                 composable(Route.Output.route) {
@@ -273,12 +273,6 @@ private fun AppShell(
                             viewModel.beginImportPreview(uri) { raw, s2 -> glView.process(raw, s2) }
                             navController.navigate(Route.ImportPreview.route)
                         },
-                    )
-                }
-                composable(Route.Hardware.route) {
-                    HardwareTestScreen(
-                        viewModel = viewModel,
-                        cameraController = cameraController,
                     )
                 }
                 composable(Route.ImportPreview.route) {
