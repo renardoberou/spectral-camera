@@ -14,6 +14,7 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
+import android.os.Build
 import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
@@ -46,6 +47,7 @@ import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.FocusTapResult
 import com.renardoberou.spectralcamera.core.HdrCaptureMode
 import com.renardoberou.spectralcamera.core.OutputMode
+import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.hdr.BayerArrangement
@@ -114,6 +116,7 @@ class CameraController(context: Context) {
     private var activeExposureTimeRange: LongRange? = null
     private var activeManualExposureSupported: Boolean = false
     private var activeAwbLockSupported: Boolean = false
+    private var activeWhiteBalanceSupport: WhiteBalanceSupport = WhiteBalanceSupport()
 
     private var focusCapabilitiesKnown: Boolean = false
     private var activeFocusMode: FocusMode = FocusMode.CONTINUOUS
@@ -390,6 +393,7 @@ class CameraController(context: Context) {
                     applyManualExposureAndAwait(
                         iso = iso,
                         shutterNs = shutter,
+                        whiteBalancePreset = settings.whiteBalancePreset,
                         lockAwb = true,
                         heldFocusDistance = heldFocusDistance,
                     )
@@ -397,7 +401,11 @@ class CameraController(context: Context) {
                 }
             } else {
                 if (heldFocusDistance != null) {
-                    applyAutoExposureFocusHoldAndAwait(heldFocusDistance, lockAwb = true)
+                    applyAutoExposureFocusHoldAndAwait(
+                        focusDistance = heldFocusDistance,
+                        whiteBalancePreset = settings.whiteBalancePreset,
+                        lockAwb = true,
+                    )
                 }
                 val baseIndex = activeCamera.cameraInfo.exposureState.exposureCompensationIndex
                     .coerceIn(activeExposureRange.first, activeExposureRange.last)
@@ -451,6 +459,7 @@ class CameraController(context: Context) {
                 applyManualExposureAndAwait(
                     iso = safeIso,
                     shutterNs = shutter,
+                    whiteBalancePreset = settings.whiteBalancePreset,
                     lockAwb = true,
                     heldFocusDistance = heldFocusDistance,
                 )
@@ -502,6 +511,7 @@ class CameraController(context: Context) {
     private suspend fun applyManualExposureAndAwait(
         iso: Int,
         shutterNs: Long,
+        whiteBalancePreset: WhiteBalancePreset,
         lockAwb: Boolean,
         heldFocusDistance: Float? = null,
     ) {
@@ -513,6 +523,7 @@ class CameraController(context: Context) {
                 manualExposureOptions(
                     iso = safeIso,
                     shutterNs = safeShutter,
+                    whiteBalancePreset = whiteBalancePreset,
                     lockAwb = lockAwb,
                     heldFocusDistance = heldFocusDistance,
                 ),
@@ -523,6 +534,7 @@ class CameraController(context: Context) {
     private fun manualExposureOptions(
         iso: Int,
         shutterNs: Long,
+        whiteBalancePreset: WhiteBalancePreset,
         lockAwb: Boolean,
         heldFocusDistance: Float? = null,
     ): CaptureRequestOptions {
@@ -537,9 +549,7 @@ class CameraController(context: Context) {
         } else {
             appendFocusOptions(builder, activeFocusMode, activeManualFocusPosition)
         }
-        if (activeAwbLockSupported) {
-            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
-        }
+        appendWhiteBalanceOptions(builder, whiteBalancePreset, lockAutoAwb = lockAwb)
         return builder.build()
     }
 
@@ -561,10 +571,77 @@ class CameraController(context: Context) {
                 .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, safeShutter)
         }
         appendFocusOptions(builder, effectiveFocusMode(settings.focusMode), settings.manualFocusPosition)
-        if (activeAwbLockSupported && lockAwb) {
-            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
-        }
+        appendWhiteBalanceOptions(builder, settings.whiteBalancePreset, lockAutoAwb = lockAwb)
         return builder.build()
+    }
+
+    private fun appendWhiteBalanceOptions(
+        builder: CaptureRequestOptions.Builder,
+        preset: WhiteBalancePreset,
+        lockAutoAwb: Boolean,
+    ) {
+        when (val request = WhiteBalanceRequestPlanner.plan(preset, activeWhiteBalanceSupport)) {
+            WhiteBalanceRequest.Auto -> appendAutoWhiteBalanceOptions(builder, lockAutoAwb)
+            is WhiteBalanceRequest.Fixed -> {
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AWB_MODE,
+                    cameraAwbMode(request.mode),
+                )
+                if (activeAwbLockSupported) {
+                    builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, false)
+                }
+            }
+            is WhiteBalanceRequest.Cct -> {
+                if (Build.VERSION.SDK_INT >= 36) {
+                    appendCctWhiteBalanceOptions(builder, request.kelvin)
+                } else {
+                    appendAutoWhiteBalanceOptions(builder, lockAutoAwb)
+                }
+            }
+        }
+    }
+
+    private fun appendAutoWhiteBalanceOptions(
+        builder: CaptureRequestOptions.Builder,
+        lockAutoAwb: Boolean,
+    ) {
+        builder.setCaptureRequestOption(
+            CaptureRequest.CONTROL_AWB_MODE,
+            CameraMetadata.CONTROL_AWB_MODE_AUTO,
+        )
+        if (activeAwbLockSupported) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAutoAwb)
+        }
+    }
+
+    @androidx.annotation.RequiresApi(36)
+    private fun appendCctWhiteBalanceOptions(
+        builder: CaptureRequestOptions.Builder,
+        kelvin: Int,
+    ) {
+        builder
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CameraMetadata.CONTROL_AWB_MODE_OFF,
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_MODE,
+                CameraMetadata.COLOR_CORRECTION_MODE_CCT,
+            )
+            .setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_COLOR_TEMPERATURE, kelvin)
+        if (activeAwbLockSupported) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, false)
+        }
+    }
+
+    private fun cameraAwbMode(mode: FixedWhiteBalanceMode): Int = when (mode) {
+        FixedWhiteBalanceMode.INCANDESCENT -> CameraMetadata.CONTROL_AWB_MODE_INCANDESCENT
+        FixedWhiteBalanceMode.FLUORESCENT -> CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT
+        FixedWhiteBalanceMode.WARM_FLUORESCENT -> CameraMetadata.CONTROL_AWB_MODE_WARM_FLUORESCENT
+        FixedWhiteBalanceMode.DAYLIGHT -> CameraMetadata.CONTROL_AWB_MODE_DAYLIGHT
+        FixedWhiteBalanceMode.CLOUDY_DAYLIGHT -> CameraMetadata.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+        FixedWhiteBalanceMode.TWILIGHT -> CameraMetadata.CONTROL_AWB_MODE_TWILIGHT
+        FixedWhiteBalanceMode.SHADE -> CameraMetadata.CONTROL_AWB_MODE_SHADE
     }
 
     private fun appendFocusOptions(
@@ -649,6 +726,7 @@ class CameraController(context: Context) {
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private suspend fun applyAutoExposureFocusHoldAndAwait(
         focusDistance: Float,
+        whiteBalancePreset: WhiteBalancePreset,
         lockAwb: Boolean,
     ) {
         val activeCamera = camera ?: throw IllegalStateException("Camera closed during HDR focus hold")
@@ -658,9 +736,7 @@ class CameraController(context: Context) {
                 CaptureRequest.LENS_FOCUS_DISTANCE,
                 focusDistance.coerceIn(0f, activeMinimumFocusDistance),
             )
-        if (activeAwbLockSupported) {
-            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, lockAwb)
-        }
+        appendWhiteBalanceOptions(builder, whiteBalancePreset, lockAutoAwb = lockAwb)
         Camera2CameraControl.from(activeCamera.cameraControl)
             .setCaptureRequestOptions(builder.build())
             .await()
@@ -1135,7 +1211,9 @@ class CameraController(context: Context) {
         var manualExposureSupported = false
         var minimumFocusDistance = 0f
         var availableAfModes: Set<Int> = emptySet()
+        var whiteBalanceSupport = WhiteBalanceSupport()
         var focusCalibration = FocusDistanceCalibration.UNCALIBRATED
+        activeAwbLockSupported = false
         try {
             val camera2Info = Camera2CameraInfo.from(info)
             aperture = camera2Info.getCameraCharacteristic(
@@ -1158,6 +1236,22 @@ class CameraController(context: Context) {
             activeAwbLockSupported = camera2Info.getCameraCharacteristic(
                 CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE,
             ) == true
+            val availableAwbModes = camera2Info.getCameraCharacteristic(
+                CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES,
+            )?.toSet().orEmpty()
+            val fixedWhiteBalanceModes = availableAwbModes.mapNotNull(::fixedWhiteBalanceMode).toSet()
+            val cctSupport = if (
+                Build.VERSION.SDK_INT >= 36 &&
+                CameraMetadata.CONTROL_AWB_MODE_OFF in availableAwbModes
+            ) {
+                readCctSupport(camera2Info)
+            } else {
+                CctSupport()
+            }
+            whiteBalanceSupport = WhiteBalanceSupport(
+                cctRange = cctSupport.range,
+                fixedModes = fixedWhiteBalanceModes,
+            )
             minimumFocusDistance = camera2Info.getCameraCharacteristic(
                 CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE,
             ) ?: 0f
@@ -1184,6 +1278,7 @@ class CameraController(context: Context) {
         activeIsoRange = isoRange
         activeExposureTimeRange = exposureTimeRange
         activeManualExposureSupported = manualExposureSupported
+        activeWhiteBalanceSupport = whiteBalanceSupport
         activeMinimumFocusDistance = minimumFocusDistance.coerceAtLeast(0f)
         activeAfModes = availableAfModes
         activeContinuousFocusSupported =
@@ -1230,6 +1325,12 @@ class CameraController(context: Context) {
                 rawJpegCaptureSupported = rawJpegUsable,
                 hdrBracketSupported = autoBracketSupported || manualBracketSupported,
                 trueRawHdrSupported = trueRawSupported,
+                supportedWhiteBalancePresets = WhiteBalanceRequestPlanner.supportedPresets(
+                    activeWhiteBalanceSupport,
+                ),
+                directKelvinWhiteBalancePresets = WhiteBalanceRequestPlanner.directCctPresets(
+                    activeWhiteBalanceSupport,
+                ),
                 continuousFocusSupported = activeContinuousFocusSupported,
                 tapFocusSupported = activeTapFocusSupported,
                 macroFocusSupported = activeMacroFocusSupported,
@@ -1239,6 +1340,37 @@ class CameraController(context: Context) {
                 focusDistanceCalibration = focusCalibration,
             ),
         )
+    }
+
+    private data class CctSupport(
+        val range: IntRange? = null,
+    )
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    @androidx.annotation.RequiresApi(36)
+    private fun readCctSupport(camera2Info: Camera2CameraInfo): CctSupport {
+        val modes = camera2Info.getCameraCharacteristic(
+            CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_MODES,
+        )?.toSet().orEmpty()
+        val temperatureRange = camera2Info.getCameraCharacteristic(
+            CameraCharacteristics.COLOR_CORRECTION_COLOR_TEMPERATURE_RANGE,
+        )
+        val cctSupported = CameraMetadata.COLOR_CORRECTION_MODE_CCT in modes &&
+            temperatureRange != null
+        return CctSupport(
+            range = if (cctSupported) temperatureRange!!.lower..temperatureRange.upper else null,
+        )
+    }
+
+    private fun fixedWhiteBalanceMode(cameraMode: Int): FixedWhiteBalanceMode? = when (cameraMode) {
+        CameraMetadata.CONTROL_AWB_MODE_INCANDESCENT -> FixedWhiteBalanceMode.INCANDESCENT
+        CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT -> FixedWhiteBalanceMode.FLUORESCENT
+        CameraMetadata.CONTROL_AWB_MODE_WARM_FLUORESCENT -> FixedWhiteBalanceMode.WARM_FLUORESCENT
+        CameraMetadata.CONTROL_AWB_MODE_DAYLIGHT -> FixedWhiteBalanceMode.DAYLIGHT
+        CameraMetadata.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT -> FixedWhiteBalanceMode.CLOUDY_DAYLIGHT
+        CameraMetadata.CONTROL_AWB_MODE_TWILIGHT -> FixedWhiteBalanceMode.TWILIGHT
+        CameraMetadata.CONTROL_AWB_MODE_SHADE -> FixedWhiteBalanceMode.SHADE
+        else -> null
     }
 
     private fun characteristicsManualSensorSupported(characteristics: CameraCharacteristics?): Boolean =

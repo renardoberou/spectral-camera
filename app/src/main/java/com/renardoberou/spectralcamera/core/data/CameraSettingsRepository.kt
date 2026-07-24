@@ -18,6 +18,7 @@ import com.renardoberou.spectralcamera.core.ManualAdjustments
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -72,6 +73,9 @@ class CameraSettingsRepository(context: Context) {
             manualMode = false,
             manualIso = prefs[MANUAL_ISO] ?: 400,
             manualShutterNs = prefs[MANUAL_SHUTTER_NS] ?: 8_000_000L,
+            whiteBalancePreset = prefs[WHITE_BALANCE_PRESET]?.let { name ->
+                runCatching { WhiteBalancePreset.valueOf(name) }.getOrNull()
+            } ?: WhiteBalancePreset.AUTO,
             focusMode = prefs[FOCUS_MODE]?.let { name ->
                 runCatching { FocusMode.valueOf(name) }.getOrNull()
             } ?: FocusMode.CONTINUOUS,
@@ -109,6 +113,7 @@ class CameraSettingsRepository(context: Context) {
             prefs[HARDWARE_EV] = settings.hardwareEv
             prefs[MANUAL_ISO] = settings.manualIso
             prefs[MANUAL_SHUTTER_NS] = settings.manualShutterNs
+            prefs[WHITE_BALANCE_PRESET] = settings.whiteBalancePreset.name
             prefs[FOCUS_MODE] = settings.focusMode.name
             prefs[MANUAL_FOCUS_POSITION] = settings.manualFocusPosition.coerceIn(0f, 1f)
             prefs[INTENSITY] = settings.intensity
@@ -143,6 +148,7 @@ class CameraSettingsRepository(context: Context) {
         val HARDWARE_EV = floatPreferencesKey("hardware_ev")
         val MANUAL_ISO = intPreferencesKey("manual_iso")
         val MANUAL_SHUTTER_NS = longPreferencesKey("manual_shutter_ns")
+        val WHITE_BALANCE_PRESET = stringPreferencesKey("white_balance_preset")
         val FOCUS_MODE = stringPreferencesKey("focus_mode")
         val MANUAL_FOCUS_POSITION = floatPreferencesKey("manual_focus_position")
         val INTENSITY = floatPreferencesKey("look_intensity")
