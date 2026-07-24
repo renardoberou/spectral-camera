@@ -694,6 +694,13 @@ fun LiveCameraScreen(
                                 onClick = { viewModel.setZebra(!settings.zebraEnabled) },
                                 label = { Text("Zebra") },
                             )
+                            // Temporary diagnostic toggle - see classifierDebugView on
+                            // CameraSettings. Not a shipped feature.
+                            FilterChip(
+                                selected = settings.classifierDebugView,
+                                onClick = { viewModel.setClassifierDebugView(!settings.classifierDebugView) },
+                                label = { Text("Debug: classifiers") },
+                            )
                         }
                     }
                 }

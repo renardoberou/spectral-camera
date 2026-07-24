@@ -293,6 +293,10 @@ data class CameraSettings(
     val manualFocusPosition: Float = 0.15f,
     val intensity: Float = 1f,
     val zebraEnabled: Boolean = false,
+    // Temporary diagnostic toggle (2026-07-24) - see uDebugClassifier in
+    // SpectralGlPipeline. Not a shipped feature; remove once the dark-
+    // surface/reflective-point artifact is root-caused.
+    val classifierDebugView: Boolean = false,
 ) {
     val requestedCaptureLabel: String
         get() = when {
