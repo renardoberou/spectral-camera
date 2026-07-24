@@ -258,6 +258,23 @@ object FilmLookLibrary {
             haloThreshold = 0.90f, haloTight = 0.15f, haloWide = 0.06f,
             grainClump = 1.2f, grainBias = 1.05f, grainBase = 0.14f, acutanceBias = -0.08f,
         ),
+        // Aerochrome Vivid (2026-07-24): added alongside the shared magenta-
+        // ceiling fix (see aerochrome() in SpectralGlPipeline.kt) - the fix
+        // benefits all six variants, but none of the original five were
+        // designed to chase maximum foliage hue as their defining trait
+        // (Dense is an overall density/contrast dial, not a hue target).
+        // magentaBoost=1.6 is deliberately past Dense's 1.25, chosen so
+        // typical mid-green foliage reaches ~0.91 on the new ceiling
+        // (verified in numpy) - i.e. actually reaches the characteristic
+        // hot pink/magenta on ordinary foliage, not just best-case deep
+        // green. curveMix/satCap held near Classic's neutral density
+        // rather than Dense's, so the distinguishing trait is foliage hue,
+        // not an overall darker/punchier image.
+        SpectralPreset.AEROCHROME_VIVID to AerochromeLook(
+            gold = 0f, curveMix = 0.58f, satCap = 1.20f, magentaBoost = 1.6f, skyDepthBoost = 1.05f, fade = 0f,
+            haloThreshold = 0.86f, haloTight = 0.28f, haloWide = 0.14f,
+            grainClump = 1.0f, grainBias = 1.0f, grainBase = 0.10f, acutanceBias = 0f,
+        ),
     )
 
     fun monoLookFor(preset: SpectralPreset): MonoIRLook =
