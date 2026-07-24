@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - agent/manual-white-balance-presets
-  pull_request:
-    branches:
-      - main
+    paths:
+      - tools/agent_patch_ready
 
 permissions:
   contents: write
@@ -19,7 +18,6 @@ jobs:
       - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Set up JDK 17
@@ -32,9 +30,13 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Apply reviewed white-balance patch
+      - name: Assemble and apply reviewed white-balance patch
         run: |
-          base64 --decode tools/agent_apply_white_balance.py.gz.b64 | gzip --decompress > /tmp/agent_apply_white_balance.py
+          cat tools/agent_patch_chunks/*.part > /tmp/agent_payload.b64
+          expected="$(tr -d '[:space:]' < tools/agent_patch_ready)"
+          actual="$(sha256sum /tmp/agent_payload.b64 | awk '{print $1}')"
+          test "$actual" = "$expected"
+          base64 --decode /tmp/agent_payload.b64 | gzip --decompress > /tmp/agent_apply_white_balance.py
           set +e
           python3 /tmp/agent_apply_white_balance.py > /tmp/agent_patch.log 2>&1
           status=$?
@@ -48,10 +50,13 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add tools/agent_patch_error.txt
             git commit -m 'chore(agent): record white-balance patch failure'
-            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            git push origin HEAD:${GITHUB_REF_NAME}
             exit "$status"
           fi
-          rm -f tools/agent_patch_error.txt tools/agent_apply_white_balance.py.gz.b64
+          rm -rf tools/agent_patch_chunks
+          rm -f tools/agent_patch_ready tools/agent_apply_white_balance.py.gz.b64
+          rm -f tools/agent_patch_error.txt tools/agent_build_error.txt
+          rm -f .github/workflows/agent-white-balance.yml
 
       - name: Test and build debug plus unsigned release APKs
         run: |
@@ -64,16 +69,14 @@ jobs:
           if [ "$status" -ne 0 ]; then
             git reset --hard HEAD
             git clean -fd
-            rm -f tools/agent_patch_error.txt
             cp /tmp/agent_build.log tools/agent_build_error.txt
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -A tools/agent_patch_error.txt tools/agent_build_error.txt
+            git add tools/agent_build_error.txt
             git commit -m 'chore(agent): record white-balance build failure'
-            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            git push origin HEAD:${GITHUB_REF_NAME}
             exit "$status"
           fi
-          rm -f tools/agent_build_error.txt
 
       - name: Commit verified implementation
         run: |
@@ -82,4 +85,4 @@ jobs:
           git add -A
           git diff --cached --check
           git commit -m 'feat(camera): add manual white-balance presets'
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          git push origin HEAD:${GITHUB_REF_NAME}
