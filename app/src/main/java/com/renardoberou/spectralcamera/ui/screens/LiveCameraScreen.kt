@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -583,14 +582,12 @@ fun LiveCameraScreen(
                 }
 
                 Surface(
-                    modifier = Modifier.wrapContentHeight(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
                     shape = MaterialTheme.shapes.extraLarge,
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .wrapContentHeight()
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -669,6 +666,9 @@ fun LiveCameraScreen(
                         }
 
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
