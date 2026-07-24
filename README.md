@@ -223,3 +223,11 @@ Every stock carries an always-on baseline grain (`grainBase`, per FilmLookLibrar
 **Clump irregularity (2026-07-23f)** — grain strength clusters into irregular patches rather than reading as a uniform texture everywhere, closer to the Boolean/Poisson-disk crystal-cluster model real film follows.
 
 See `docs/PLAN_2026-07-23d_grain-quality-upgrade.md` and `docs/VALIDATION.md` for technical implementation detail and verification methodology.
+
+---
+
+## Project site
+
+The editorial field journal, origin story, engine explanation, and Minas Gerais results gallery live in [`site/`](site/).
+
+Published site: <https://renardoberou.github.io/spectral-camera/>

@@ -3,8 +3,14 @@ name: Android CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site-pages.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site-pages.yml'
 
 permissions:
   contents: read
