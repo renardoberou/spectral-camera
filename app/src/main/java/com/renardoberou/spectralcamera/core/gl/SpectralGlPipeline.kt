@@ -76,6 +76,19 @@ uniform float uAutoLo;
 uniform float uAutoHi;
 uniform float uIntensity;
 uniform float uZebra;
+// Temporary diagnostic view (2026-07-24): visualizes the material classifier
+// signals as false colour instead of the finished look, to investigate a
+// device-observed blocky/patchy artifact on dark surfaces with small
+// reflective points. R = sky-suppression signal (skyDown), G = foliage/veg
+// classification, B = the deep-shadow classifier confidence gate (conf) -
+// exactly the "chromaticity is numerically unstable near black" zone the
+// comment below already calls out. Written as a side effect from inside
+// irLuminance()/presetColor() so no function signature needs to change;
+// read once at the very end of main(), same override pattern as uZebra.
+// Intended to be removed once the artifact is root-caused - not a shipped
+// feature.
+uniform float uDebugClassifier;
+vec3 gClassifierDebug = vec3(0.0);
 uniform float uSharpness;
 uniform float uRedWeight;
 uniform float uFoliageLift;
@@ -426,6 +439,7 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
     // blocky classifier patchwork. Below the floor everything falls back to
     // the plain film response.
     float conf = smoothstep(0.035, 0.12, smoothLuma);
+    gClassifierDebug.b = conf;
     veg = veg * conf;
     // P1.1 (mono): tone-modulated lift - darker canopy clumps lift less than
     // sunlit ones, so the Wood effect keeps intra-canopy structure instead of
@@ -473,6 +487,7 @@ float irLuminance(vec3 c, vec3 cc, float veg, float smoothLuma, float skyT, floa
         * (1.0 - smoothstep(0.03, 0.12, ccSat))
         * smoothstep(0.35, 0.75, skyT);
     float skyDown = clamp(skyChroma * 0.9 + skyHazy * 0.35 + skyOvercast * 0.30, 0.0, 1.0) * (1.0 - veg * 0.7) * conf;
+    gClassifierDebug.r = skyDown;
     // skyStr is the per-stock sky-suppression strength from FilmLookLibrary
     // (HIE: denser skies; SFX/Fine-Grain: milder).
     // positional: zenith sky suppresses fully; low-in-frame blue (pools,
@@ -618,6 +633,7 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         * (1.0 - smoothstep(0.03, 0.09, nbM - ngM))
         * (1.0 - smoothstep(0.28, 0.50, smoothLuma));
     foliage = max(foliage, shadowVegM * 0.75);
+    gClassifierDebug.g = foliage;
 
     // Halation is a POINT-SOURCE effect: light punching through the emulsion
     // around genuinely bright spots. Keyed on local contrast (luma above the
@@ -1044,6 +1060,11 @@ void main() {
         }
     }
 
+    // Temporary classifier debug view - see uDebugClassifier declaration above.
+    if (uDebugClassifier > 0.5) {
+        c = gClassifierDebug;
+    }
+
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """
@@ -1231,6 +1252,7 @@ class SpectralRenderer(
             skyUpX = skyUpX,
             skyUpY = skyUpY,
             zebraOverlay = settings.zebraEnabled,
+            classifierDebugView = settings.classifierDebugView,
         )
     }
 
@@ -1332,6 +1354,11 @@ class SpectralRenderer(
                 skyUpY = -1f,
                 autoLo = autoLo,
                 autoHi = autoHi,
+                // Unlike zebra (preview-only aid), the debug classifier view
+                // needs to land in the actual saved file so it can be sent
+                // for inspection - explicitly threaded through here rather
+                // than left at the false default.
+                classifierDebugView = captureSettings.classifierDebugView,
             )
 
             val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -1392,6 +1419,7 @@ class SpectralRenderer(
         autoLo: Float = 0f,
         autoHi: Float = 1f,
         zebraOverlay: Boolean = false,
+        classifierDebugView: Boolean = false,
     ) {
         val adj = currentSettings.adjustments
         GLES20.glUseProgram(program.id)
@@ -1420,6 +1448,7 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uAutoHi, autoHi)
         GLES20.glUniform1f(program.uIntensity, currentSettings.intensity)
         GLES20.glUniform1f(program.uZebra, if (zebraOverlay) 1f else 0f)
+        GLES20.glUniform1f(program.uDebugClassifier, if (classifierDebugView) 1f else 0f)
         GLES20.glUniform2f(program.uSkyUp, skyUpX, skyUpY)
         GLES20.glUniform1f(program.uSharpness, adj.sharpness)
         GLES20.glUniform1f(program.uRedWeight, adj.redChannelWeight)
@@ -1531,6 +1560,7 @@ class SpectralRenderer(
         val uAutoHi = GLES20.glGetUniformLocation(id, "uAutoHi")
         val uIntensity = GLES20.glGetUniformLocation(id, "uIntensity")
         val uZebra = GLES20.glGetUniformLocation(id, "uZebra")
+        val uDebugClassifier = GLES20.glGetUniformLocation(id, "uDebugClassifier")
         val uSkyUp = GLES20.glGetUniformLocation(id, "uSkyUp")
         val uSharpness = GLES20.glGetUniformLocation(id, "uSharpness")
         val uRedWeight = GLES20.glGetUniformLocation(id, "uRedWeight")

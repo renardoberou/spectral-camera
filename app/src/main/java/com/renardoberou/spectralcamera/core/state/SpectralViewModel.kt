@@ -203,6 +203,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
         updateSettings { it.copy(manualFocusPosition = position.coerceIn(0f, 1f)) }
     fun setIntensity(value: Float) = updateSettings { it.copy(intensity = value) }
     fun setZebra(enabled: Boolean) = updateSettings { it.copy(zebraEnabled = enabled) }
+    fun setClassifierDebugView(enabled: Boolean) = updateSettings { it.copy(classifierDebugView = enabled) }
 
     fun setSensorMode(mode: com.renardoberou.spectralcamera.core.SensorMode) {
         if (mode != settings.value.sensorMode) cancelDoubleExposure()
