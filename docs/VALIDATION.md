@@ -166,3 +166,13 @@ renders) for full detail. Steps 2-4 (universal density curve, per-channel color 
 clump irregularity) are planned but not started; each requires its own numpy
 verification pass before touching `SpectralGlPipeline.kt`, and all require on-device
 confirmation before shipping.
+
+**Step 2 shipped (2026-07-23e):** the mono-only gate is removed; every preset now
+uses the same validated Gaussian density curve. Mono presets verified byte-identical
+before/after (numpy pre-check). Color/classic presets go from flat amplitude to the
+same peaked/tapered curve — note this makes near-black amplitude *lower*, not higher
+(the curve tapers at both ends by design, matching real print-grain visibility and
+mono's existing behavior); if shadow grain still reads as too subtle after an
+on-device check, that's a separate amplitude-scale question, not something this step
+claims to fix. See `docs/PLAN_2026-07-23d_grain-quality-upgrade.md` §2 step 2 and
+`docs/assets/grain-baseline-2026-07-23/step2/`. Needs on-device confirmation.
