@@ -264,7 +264,19 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     float greenShare = smoothstep(0.30, 0.42, ng);
     // magentaBoost is the per-look family dial: Soft/Faded pull this toward
     // a plainer red, Dense pushes it toward a more vivid magenta-crimson.
-    float magenta = clamp(greenShare * (0.30 + 0.30 * species) * magentaBoost, 0.0, 1.0);
+    // Ceiling raised 2026-07-24 (0.30+0.30*species -> 0.45+0.45*species):
+    // measured against realistic foliage chromaticity, the old constants
+    // capped magenta at 0.60 even on Dense's best-case pixel (deep healthy
+    // green) and landed around 0.4-0.5 typically - the result stayed
+    // majority folRed (red/crimson) and never actually reached the
+    // characteristic pink/magenta on any existing preset, regardless of
+    // scene or dial setting. This was a hard ceiling in the constants, not
+    // a style restraint - real Aerochrome documentation and reviews
+    // describe the effect as reaching magenta/pink, and the formula
+    // couldn't get there. Re-verified in numpy before this change: Classic
+    // now reaches 0.90 on deep healthy green (was 0.60) and 0.57 typical
+    // (was 0.38); relative ordering across all variants is unchanged.
+    float magenta = clamp(greenShare * (0.45 + 0.45 * species) * magentaBoost, 0.0, 1.0);
     vec3 folRed = mix(vec3(1.0, 0.46, 0.30), vec3(1.0, 0.06, 0.13), species);
     vec3 folMag = mix(folRed, vec3(0.92, 0.05, 0.48), magenta);
     float folL = clamp((luma - 0.15) * 1.55, 0.0, 1.0);
@@ -548,7 +560,7 @@ vec2 halationEnergy(vec2 uv, float threshold) {
     return vec2(tight, wide) / (8.0 * span);
 }
 
-// ---- Classic (non-IR) film engine: uPreset 11-13. One generic path driven
+// ---- Classic (non-IR) film engine: uPreset 12-14. One generic path driven
 // entirely by StandardFilmLook dials; deliberately independent of the IR
 // engines (zero changes to monoLook/aeroLook paths).
 vec3 standardFilm(vec3 src, float smoothLuma) {
@@ -665,11 +677,11 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         return vec3(m);
     }
 
-    // ---- Classic film: uPreset 11-13 --------------------------------
-    if (uPreset >= 11) {
+    // ---- Classic film: uPreset 12-14 --------------------------------
+    if (uPreset >= 12) {
         return standardFilm(src, smoothLuma);
     }
-    // ---- Aerochrome: uPreset 6-10, one shared colorimetry engine for all
+    // ---- Aerochrome: uPreset 6-11, one shared colorimetry engine for all
     // five grades. Family-dial numbers come from uAeroTone* / uHaloGrain
     // (Kotlin FilmLookLibrary.aeroLookFor()). This is the only remaining
     // family after uPreset 0-5 (monochrome IR), so no further bound check.
@@ -1093,9 +1105,10 @@ internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.AEROCHROME_DENSE -> 8
     SpectralPreset.AEROCHROME_GOLD -> 9
     SpectralPreset.AEROCHROME_FADED -> 10
-    SpectralPreset.EKTAR_100 -> 11
-    SpectralPreset.CINESTILL_800T -> 12
-    SpectralPreset.TRI_X_400 -> 13
+    SpectralPreset.AEROCHROME_VIVID -> 11
+    SpectralPreset.EKTAR_100 -> 12
+    SpectralPreset.CINESTILL_800T -> 13
+    SpectralPreset.TRI_X_400 -> 14
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {

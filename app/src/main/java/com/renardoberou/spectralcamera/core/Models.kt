@@ -69,6 +69,11 @@ enum class SpectralPreset(
         description = "Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character.",
         family = LookFamily.AEROCHROME,
     ),
+    AEROCHROME_VIVID(
+        label = "Aerochrome Vivid",
+        description = "Maximum foliage hue: pushes past Dense's density-focused character to chase the iconic hot pink/magenta canopy directly, at Classic's more neutral overall density.",
+        family = LookFamily.AEROCHROME,
+    ),
     EKTAR_100(
         label = "Kodak Ektar 100",
         description = "World's finest-grain colour negative: vivid but faithful saturation with the famous red/blue pop, punchy clean contrast, nearly invisible grain.",

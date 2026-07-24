@@ -191,7 +191,7 @@ Fully camera-aware. No fake controls.
 - **Fine-Grain Infrared** — neutral, print-friendly. Minimal drama. The cleanest IR stock. Finest grain.
 - **Soft Vintage IR** — print-oriented, romantic. Soft toe, low ceiling, milky highlights, wide halation. Lifted blacks. Coarser grain.
 
-### Aerochrome (5 looks)
+### Aerochrome (6 looks)
 
 False-color rendering of the classic Kodak Aerochrome IR film:
 
@@ -200,6 +200,7 @@ False-color rendering of the classic Kodak Aerochrome IR film:
 - **Dense** — punchier contrast, deeper cyan sky, dramatic halation. The hero-shot grade.
 - **Gold** — orange-filter EIR. Warmer foliage, teal sky.
 - **Faded** — desaturated, lifted blacks, warm cast, hazy pale sky. Aged-print character.
+- **Vivid** (2026-07-24) — chases the maximum iconic hot pink/magenta canopy directly, at Classic's neutral overall density rather than Dense's darker/punchier read. Added alongside a ceiling fix to the shared foliage-hue formula: the old constants capped magenta at 0.60 even on Dense's best-case pixel and never actually reached the characteristic pink on any variant, regardless of scene — this was a formula ceiling, not a style restraint, and the fix benefits all six grades' foliage hue, not just Vivid's.
 
 ### Classic Film (3 stocks)
 
