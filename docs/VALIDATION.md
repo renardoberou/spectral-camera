@@ -144,3 +144,25 @@ This file intentionally has no automated image assertions: the rendering
 pipeline is a live OpenGL shader driven by camera/gallery input, and this
 repo has no camera-capable CI. Physical-device verification remains
 mandatory, consistent with the "Test status" section of the README.
+
+---
+
+## Grain quality upgrade (2026-07-23d, in progress)
+
+**Baseline verification (step 1 of 4, done):** numpy port of `grainHash`/`valueNoise`/
+`filmGrain` + the grain-application block, validated against a real captured photo
+(wide luma range: near-black shadow tile through saturated mid-blue water to bright
+sky reflection). **Confirmed numerically on real pixels:** mono-IR presets
+(`uPreset<=5`) show a peaked, luma-dependent grain amplitude (tapers in both shadow
+and highlight); every color/classic preset (Aerochrome ×5, Classic Film ×3, including
+Tri-X routed through the classic branch) shows **perfectly flat** amplitude across
+every luma bucket including the deepest shadow and brightest highlight — grain does
+not respond to exposure at all outside the six original mono-IR stocks. This directly
+explains the "dead-flat pool blacks" and "no highlight rolloff" observations from the
+2026-07-23 capture batch review. See
+`docs/PLAN_2026-07-23d_grain-quality-upgrade.md` and
+`docs/assets/grain-baseline-2026-07-23/` (script, report, reference photo, per-look
+renders) for full detail. Steps 2-4 (universal density curve, per-channel color grain,
+clump irregularity) are planned but not started; each requires its own numpy
+verification pass before touching `SpectralGlPipeline.kt`, and all require on-device
+confirmation before shipping.
