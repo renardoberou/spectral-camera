@@ -1,0 +1,39 @@
+====================================================================================
+Q1  chroma grain: film speckle, or chromatic aberration?
+====================================================================================
+  Test: on a flat neutral mid-grey patch, measure (a) luma noise injected by
+  the chroma term, (b) chroma feature size vs luma feature size.
+  Rollei     chroma_energy=0.000000  luma_leak=0.00e+00  chroma/luma_size= 1.13  mono (no chroma)
+  HIE        chroma_energy=0.000000  luma_leak=0.00e+00  chroma/luma_size= 1.23  mono (no chroma)
+  FineGrain  chroma_energy=0.000000  luma_leak=0.00e+00  chroma/luma_size= 1.03  mono (no chroma)
+  Ektar      chroma_energy=0.000129  luma_leak=2.72e-09  chroma/luma_size= 0.94  OK film speckle
+  CineStill  chroma_energy=0.000605  luma_leak=1.27e-08  chroma/luma_size= 0.72  OK film speckle
+  TriX       chroma_energy=0.000000  luma_leak=0.00e+00  chroma/luma_size= 1.27  mono (no chroma)
+  AeroDense  chroma_energy=0.000476  luma_leak=1.00e-08  chroma/luma_size= 0.70  OK film speckle
+
+====================================================================================
+Q2  clump irregularity: does it overshoot into blotching on mono?
+====================================================================================
+  Test: flat mid-grey patch, compare LOW-FREQUENCY energy with clump on vs off.
+  Blotching = the clump mask leaking visible large-scale brightness variation.
+  Rollei     lowfreq_LSB off=0.0863 on=0.0877 (delta +0.0013)  total_LSB 0.762->0.775  OK
+  HIE        lowfreq_LSB off=0.1575 on=0.1608 (delta +0.0033)  total_LSB 1.083->1.104  OK
+  FineGrain  lowfreq_LSB off=0.0168 on=0.0169 (delta +0.0001)  total_LSB 0.523->0.524  OK
+  (blotch threshold 0.30 LSB of 16x16-block brightness variation; below that
+   the clumping modulates grain visibility without reading as patches)
+
+====================================================================================
+Q3  shadow readability: is grain actually visible in deep shadow now?
+====================================================================================
+  Test: flat patches at real shadow tones, texture surviving 8-bit quantisation.
+  'grain_share' = fraction of visible texture that is film grain (rest is dither).
+  Rollei     t=0.03 tex=0.572LSB share=1.05  t=0.08 tex=0.555LSB share=1.03  t=0.15 tex=0.516LSB share=0.98
+  HIE        t=0.03 tex=0.735LSB share=1.07  t=0.08 tex=0.684LSB share=1.08  t=0.15 tex=0.591LSB share=1.08
+  FineGrain  t=0.03 tex=0.489LSB share=0.32  t=0.08 tex=0.495LSB share=0.30  t=0.15 tex=0.480LSB share=0.34
+  Ektar      t=0.03 tex=0.484LSB share=0.38  t=0.08 tex=0.490LSB share=0.36  t=0.15 tex=0.476LSB share=0.39
+  CineStill  t=0.03 tex=0.482LSB share=0.51  t=0.08 tex=0.485LSB share=0.58  t=0.15 tex=0.475LSB share=0.85
+  TriX       t=0.03 tex=0.758LSB share=1.06  t=0.08 tex=0.704LSB share=1.07  t=0.15 tex=0.603LSB share=1.09
+  AeroDense  t=0.03 tex=0.484LSB share=0.84  t=0.08 tex=0.485LSB share=0.78  t=0.15 tex=0.471LSB share=0.75
+
+  wrote grain_proof_strip_2026-07-24.png (1050x1050, rows=stocks, cols=tones [0.03, 0.06, 0.12, 0.22, 0.42, 0.65, 0.85])
+  wrote grain_proof_strip_2026-07-24_amplified8x.png (deviation x8, diagnostic)

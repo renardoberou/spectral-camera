@@ -1,0 +1,62 @@
+==============================================================================
+ROLLEI IR 400 - same-scale RMS granularity anchor
+==============================================================================
+  real RMS      Rollei=11  TriX=17  HIE=18
+  current app   Rollei base*bias = 0.1000   TriX = 0.2990   HIE = 0.2880
+  current ratio Rollei/TriX = 0.334  (real: 0.647)
+  current ratio Rollei/HIE  = 0.347  (real: 0.611)
+  target base*bias via TriX anchor = 0.1935
+  target base*bias via HIE  anchor = 0.1760
+  mean target = 0.1847  -> choose grainBase = 0.19 (bias stays 1.00)
+  verify: 0.19/TriX = 0.635  (real 0.647)   0.19/HIE = 0.660  (real 0.611)
+  both within a few percent of the real ratio. ACCEPT 0.19.
+
+==============================================================================
+EKTAR 100 - PGI threshold-crossing check (judgment call, not a
+            precise unit conversion - PGI and shader-LSB are not
+            on convertible scales; this is reasoned, not derived)
+==============================================================================
+  real: Ektar crosses PGI=25 threshold at 8x10 (PGI 38) and is
+  clearly above it at 16x20 (PGI 66), from 135 format - i.e. real
+  Ektar IS subtly but genuinely visible at normal print sizes.
+  Ektar sits ~25-30% below Portra160NC/Supra100 (same conditions)
+  in log-perceptual PGI units - clearly the quietest, but not by
+  an overwhelming margin.
+
+  current app: grainBase=0.02, bias=0.6 -> base*bias=0.012
+  measured consequence: peak amplitude never exceeds 0.27 LSB at
+  ANY tone - always at or under the dither floor. Functionally
+  zero, not 'barely above threshold'. That contradicts the
+  sourced PGI data above.
+
+  grainBase=0.02  peak_amp=0.269 LSB   ratio to (corrected) Rollei = 0.063  <- still sub-LSB, effectively zero
+  grainBase=0.03  peak_amp=0.404 LSB   ratio to (corrected) Rollei = 0.095  <- still sub-LSB, effectively zero
+  grainBase=0.04  peak_amp=0.539 LSB   ratio to (corrected) Rollei = 0.126
+  grainBase=0.05  peak_amp=0.673 LSB   ratio to (corrected) Rollei = 0.158
+  grainBase=0.06  peak_amp=0.808 LSB   ratio to (corrected) Rollei = 0.189
+
+  choose grainBase=0.05: peak amp clears the dither floor by a
+  real margin for the first time, while staying the clear
+  minimum of all six real stocks (well under half of corrected
+  Rollei, which is itself the next-quietest) - consistent with
+  'clearly quietest, not literally undetectable'.
+
+==============================================================================
+CINESTILL 800T - shadow floor reduction (qualitative, sourced)
+==============================================================================
+  Real Vision3 500T (CineStill's base stock) uses Dye Layering
+  Technology specifically to REDUCE shadow-region grain, for
+  better shadow signal-to-noise - the opposite direction from the
+  universal 0.62 floor shipped in the prior fix.
+
+  No source gives a precise number for how much less - this is a
+  qualitative, sourced direction, not a precise magnitude. Chose
+  shadowFloorScale=0.35 (clearly, substantially reduced, but not
+  zeroed - CineStill still has SOME shadow grain, just less of
+  the boost than a conventional stock gets).
+  Tri-X / Ektar (unchanged)    luma=0.02  densityWeight=0.6200
+  Tri-X / Ektar (unchanged)    luma=0.05  densityWeight=0.6047
+  Tri-X / Ektar (unchanged)    luma=0.10  densityWeight=0.5231
+  CineStill (new)              luma=0.02  densityWeight=0.2170
+  CineStill (new)              luma=0.05  densityWeight=0.2185
+  CineStill (new)              luma=0.10  densityWeight=0.3205

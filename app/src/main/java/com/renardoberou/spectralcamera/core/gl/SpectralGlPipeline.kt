@@ -885,8 +885,15 @@ void main() {
         // "less grain" must not become "no grain". The floor lifts ONLY the
         // deep end: for luma >= 0.34 this expression is bit-identical to the
         // bare Gaussian, so highlight protection is exactly preserved.
+        //
+        // uStdTone3.z is a per-look shadow-floor SCALE (2026-07-24, second
+        // pass), 1.0 by default for every family/stock. CineStill 800T's
+        // real base stock (KODAK VISION3 500T) uses "Dye Layering
+        // Technology" specifically engineered to REDUCE shadow grain for
+        // better shadow signal-to-noise - the opposite direction from a
+        // uniform floor - so its look entry overrides this down to 0.35.
         float shadowLift = smoothstep(0.34, 0.02, gLuma);
-        densityWeight = max(densityWeight, 0.62 * shadowLift);
+        densityWeight = max(densityWeight, 0.62 * uStdTone3.z * shadowLift);
 
         float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
@@ -1416,13 +1423,16 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
-                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 0f, 0f)
+                // .z = shadow-floor scale (2026-07-24, second pass); 1.0 =
+                // unchanged universal floor. No sourced evidence any mono-IR
+                // stock needs a different value from the universal fix.
+                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 1.0f, 0f)
             }
             LookFamily.STANDARD_FILM -> {
                 val look = FilmLookLibrary.standardLookFor(currentSettings.preset)
                 GLES20.glUniform4f(program.uStdTone, look.warmth, look.tealShadows, look.saturation, look.contrast)
                 GLES20.glUniform4f(program.uStdTone2, look.toeLift, look.ceiling, look.redBias, look.blueBias)
-                GLES20.glUniform4f(program.uStdTone3, look.monoMix, look.panRed, 0f, 0f)
+                GLES20.glUniform4f(program.uStdTone3, look.monoMix, look.panRed, look.shadowFloorScale, 0f)
                 GLES20.glUniform3f(program.uHaloTint, look.haloR, look.haloG, look.haloB)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
@@ -1439,7 +1449,10 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
                 GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
-                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 0f, 0f)
+                // .z = shadow-floor scale (2026-07-24, second pass); 1.0 =
+                // unchanged universal floor. No sourced evidence any
+                // Aerochrome look needs a different value.
+                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 1.0f, 0f)
             }
         }
 

@@ -223,3 +223,39 @@ silently changed. Proof strips and full reports in
 **Still requires the device:** the aesthetic judgement these measurements cannot make —
 whether the corrected grain looks right on real scenes at real viewing sizes, and
 whether the fine-stock (Ektar/Fine-Grain) amplitude wants a product decision.
+
+**Real-emulsion amplitude calibration (2026-07-24, second pass):** the "product taste"
+framing for Ektar/Fine-Grain/Rollei amplitude was wrong — fidelity to the real emulsion
+is measurable, not a matter of taste. Researched official Kodak/Ilford/Rollei technical
+data sheets (`docs/PLAN_2026-07-24b_real-emulsion-grain-calibration.md`):
+
+- **Rollei IR 400** was ~3x too quiet vs Tri-X/HIE. Real diffuse RMS granularity (same
+  convention, directly comparable): Rollei=11, Tri-X=17, HIE=18 — Rollei should be
+  moderately finer, not dramatically so. `grainBase` 0.10 → 0.19, landing within a few
+  percent of both real ratios.
+- **Ektar 100** was rendering as functionally zero grain (peak 0.27 LSB, always under
+  the dither) which contradicts Kodak's own Print Grain Index data: real Ektar crosses
+  the PGI=25 visibility threshold at 8x10 print (PGI 38) and is clearly above it at
+  16x20 (PGI 66) — subtly but genuinely visible, not literally grainless. `grainBase`
+  0.02 → 0.05 (peak 0.27 → 0.67 LSB) — clears the dither for the first time while
+  staying under half of corrected Rollei, the next-quietest stock. PGI and shader LSB
+  aren't on a convertible scale, so this is a reasoned judgment call, not a derived
+  number, unlike Rollei's precise ratio calculation.
+- **CineStill 800T's** shadow floor was pointed the wrong direction for that specific
+  stock: real Vision3 500T uses Dye Layering Technology specifically engineered to
+  *suppress* shadow grain, opposite to the universal floor added in the prior fix. Added
+  a per-look `shadowFloorScale` (repurposing the previously-unused `uStdTone3.z`),
+  default 1.0 (bit-identical for every other stock), set to 0.35 for CineStill only.
+  Sourced on direction, not magnitude.
+- **Ilford SFX 200** left unchanged — confirmed no RMS granularity published in Ilford's
+  own technical data sheet after a full fetch, a real absence rather than a research gap.
+- **Fine-Grain IR / Moderate IR / Soft Vintage IR** left unchanged — generic composites
+  with no single real emulsion to check fidelity against.
+
+Full acceptance suite re-verified against corrected values: chroma/luma-neutrality and
+clump-blotching checks unchanged-pass even at Rollei's near-doubled amplitude; shadow
+grain share rose to 0.98-1.05 (Rollei) and 0.36-0.39 (Ektar); CineStill's deepest-shadow
+grain share fell from 0.95/0.90 to 0.51/0.58, confirming the reduced floor takes effect
+as sourced. Highlight protection re-confirmed bit-identical by construction (shadowLift
+itself is exactly 0 above luma 0.34, independent of the scale multiplier). Reports and
+recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
