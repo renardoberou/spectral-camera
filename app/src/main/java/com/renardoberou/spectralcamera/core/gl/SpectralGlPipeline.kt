@@ -860,30 +860,63 @@ void main() {
     // Film is never grainless: every stock carries a small always-on
     // baseline (uGrainBase, per-look from FilmLookLibrary) so the per-stock
     // grain personality is visible at default settings; the user's Grain
-    // slider adds on top of it. Structured value-noise clumps replace
-    // per-pixel white noise: film grain has spatial correlation; sensor
-    // noise does not. grainBias/grainClump are the per-stock amplitude and
-    // clump-scale dials - HIE and Soft Vintage read coarser, Fine-Grain
-    // reads tighter, independent of the user's Grain slider.
+    // slider adds on top of it. grainBias/grainClump are the per-stock
+    // amplitude and clump-scale dials - HIE and Soft Vintage read coarser,
+    // Fine-Grain reads tighter, independent of the user's Grain slider.
     //
     // Exposure-dependent density (Poisson-like: strongest in midtones,
     // tapering toward both deep shadow and bright highlight - the same
-    // curve real grain visibility follows in a print, and the mechanism
-    // behind "highlight protection" in reference grain tools) is now
-    // UNIVERSAL across every preset family. It previously only applied to
-    // the six mono-IR stocks (uPreset<=5); every Aerochrome and Classic
-    // Film preset had a flat amplitude with zero response to exposure -
-    // verified numerically against a real capture
-    // (docs/PLAN_2026-07-23d_grain-quality-upgrade.md, step 2). Mono
-    // presets take the exact formula they always have, so they are
-    // provably unchanged; color/classic presets now get the same curve.
+    // curve real grain visibility follows in a print) is universal across
+    // every preset family (2026-07-23e).
     float effGrain = uGrain + uGrainBase;
     if (effGrain > 0.001) {
         float d = (lumaOf(c) - 0.42) / 0.30;
         float densityWeight = exp(-d * d);
         float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
-        c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
+
+        // Shared structural (luma) noise: every channel's base component,
+        // giving the grain its spatial "clump" shape.
+        float nLuma = filmGrain(gUv, uGrainSeed);
+        vec3 grainDelta = vec3(nLuma);
+
+        // Per-channel ("chroma") grain (2026-07-23f): real color-negative
+        // dye clouds carry independent per-channel variation on top of the
+        // shared silver/structural noise, not one scalar broadcast to
+        // R=G=B - a scalar-only signal is the single biggest gap against
+        // reference grain tools on color stock. Decomposed on an
+        // opponent-color axis (R vs. B, G holding the balancing term) so
+        // the noise reads as chroma speckle rather than RGB misregistration,
+        // and stays zero-mean so it introduces no systematic color cast.
+        // Gated by chromaAmt, not a preset-family switch: mono-IR is always
+        // fully achromatic (uPreset<=5 forces 0 - chroma noise on a B&W
+        // stock would be a real regression). Classic Film blends this out
+        // through its own monoMix uniform, so Tri-X (monoMix=1) falls back
+        // to scalar-only automatically, with no special case needed.
+        // Aerochrome has no monoMix of its own and is always false-color,
+        // so it always gets full chroma grain. Verified in
+        // docs/assets/grain-baseline-2026-07-23/step3-4/.
+        float chromaAmt = (uPreset <= 5) ? 0.0 : (1.0 - uStdTone3.x);
+        if (chromaAmt > 0.001) {
+            vec2 cUv = gUv * 1.7;
+            float nCr = filmGrain(cUv + vec2(31.7, 11.3), uGrainSeed + 7.0);
+            float nCb = filmGrain(cUv + vec2(-19.1, 47.7), uGrainSeed + 13.0);
+            grainDelta += chromaAmt * 0.35 * vec3(nCr, -0.5 * (nCr + nCb), nCb);
+        }
+
+        // Clump irregularity (2026-07-23f): a coarser, independent
+        // value-noise field multiplies grain AMPLITUDE (not the noise
+        // value itself), so visible grain strength clusters into irregular
+        // patches instead of reading as a uniform texture everywhere -
+        // closer to the Boolean/Poisson-disk crystal-cluster model real
+        // grain follows. Derived from the same per-look gUv, so a coarser
+        // stock's clumps are proportionally coarser too. Range [0.5, 1.5],
+        // mean ~1.0 (verified numerically) - shifts WHERE grain is visible,
+        // not the calibrated overall amount.
+        vec2 mUv = gUv / 4.0;
+        float clumpMask = 0.5 + valueNoise(mUv + vec2(uGrainSeed * 5.11, uGrainSeed * 8.87));
+
+        c += grainDelta * grainAmp * 2.2 * clumpMask;
     }
 
     // channel swap
@@ -1307,7 +1340,15 @@ class SpectralRenderer(
 
         // Structured film-look parameters (FilmLookLibrary, core/FilmLook.kt).
         // Only the active preset's family is actually read by the shader, so
-        // it is harmless to always populate both tables from a default.
+        // it is harmless to always populate both tables from a default -
+        // uStdTone3 (monoMix/panRed) was missing from this cross-family
+        // reset until 2026-07-23f: it is only ever WRITTEN by the
+        // STANDARD_FILM branch, so a stale monoMix left over from a
+        // previous Tri-X frame could silently leak into the next
+        // Aerochrome/mono-IR draw on the same shared GL program. This
+        // mattered only cosmetically before (nothing downstream read it
+        // outside STANDARD_FILM); it matters functionally now that the
+        // grain stage's chroma gate reads uStdTone3.x for every family.
         when (currentSettings.preset.family) {
             LookFamily.MONOCHROME_IR -> {
                 val look = FilmLookLibrary.monoLookFor(currentSettings.preset)
@@ -1319,6 +1360,7 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
+                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 0f, 0f)
             }
             LookFamily.STANDARD_FILM -> {
                 val look = FilmLookLibrary.standardLookFor(currentSettings.preset)
@@ -1341,6 +1383,7 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
                 GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
+                GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 0f, 0f)
             }
         }
 
