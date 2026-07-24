@@ -1,0 +1,55 @@
+
+--- mono IR pool capture: grain on FLAT patches only (n_patches=389) ---
+  deep<0.10          n= 389  luma_grain_std=0.00308   chroma_grain_std=0.00000
+
+--- Aerochrome foliage capture: grain on FLAT patches only (n_patches=389) ---
+  deep<0.10          n=  95  luma_grain_std=0.02920   chroma_grain_std=0.01031
+  shadow0.10-0.25    n= 139  luma_grain_std=0.04205   chroma_grain_std=0.01176
+  mid0.25-0.60       n=  76  luma_grain_std=0.04333   chroma_grain_std=0.00304
+  high>0.60          n=  79  luma_grain_std=0.03646   chroma_grain_std=0.00414
+  >> deep-shadow grain is 0.67x midtone grain (ok)
+
+=== DEFECT AUDIT 1: is the chroma axis luma-neutral? ===
+  shipped  vec3(nCr, -0.5*(nCr+nCb), nCb):
+    luma leak per unit nCr = +0.0055
+    luma leak per unit nCb = -0.1795   <-- should be ~0
+  corrected vec3(nCr, -0.5094*nCr + -0.1942*nCb, nCb):
+    luma leak per unit nCr = -0.0000
+    luma leak per unit nCb = +0.0000
+  Monte-Carlo luma-noise injected by the chroma term:
+    shipped   std = 0.1799  (of unit chroma noise)
+    corrected std = 0.0000
+  >> shipped chroma term leaks 0.180 units of LUMA noise per unit chroma noise - it is not a pure chroma axis.
+
+=== DEFECT AUDIT 2: chroma grain feature size vs luma ===
+  spectral centroid (0=coarse, 1=fine):
+    luma grain            = 0.2310
+    chroma SHIPPED (x1.7) = 0.3570  ratio vs luma = 1.54x
+    chroma FIXED   (/1.7) = 0.1288  ratio vs luma = 0.56x
+  >> shipped chroma noise is FINER than luma noise. Real colour film dye clouds are
+     COARSER than silver grains, and human chroma acuity is ~3x lower than luma.
+     Fine high-frequency chroma noise is exactly what reads as colour fringing /
+     chromatic aberration rather than film speckle.
+
+=== DEFECT AUDIT 3: grain survival at the black point ===
+  real capture: fraction exactly 0 = 0.0197
+  real capture: fraction   <=2/255 = 0.3178
+  real capture: fraction   <=8/255 = 0.5070
+  luma=0.000: grain amp=0.00124 (0.32 LSB)  surviving fraction after clamp = 0.559   <-- grain destroyed
+  luma=0.004: grain amp=0.00129 (0.33 LSB)  surviving fraction after clamp = 1.000
+  luma=0.012: grain amp=0.00138 (0.35 LSB)  surviving fraction after clamp = 1.000
+  luma=0.030: grain amp=0.00162 (0.41 LSB)  surviving fraction after clamp = 1.000
+  luma=0.420: grain amp=0.00880 (2.24 LSB)  surviving fraction after clamp = 1.000
+  >> below ~1.5x the grain amplitude the black clamp half-wave rectifies grain.
+     A film base-fog pedestal (real film has no true zero) both fixes this and is
+     physically correct.
+
+=== DEFECT AUDIT 4: density curve value in deep shadow ===
+  luma=0.00  densityWeight=0.1409
+  luma=0.02  densityWeight=0.1690
+  luma=0.05  densityWeight=0.2185
+  luma=0.10  densityWeight=0.3205
+  luma=0.20  densityWeight=0.5840
+  luma=0.42  densityWeight=1.0000
+  >> pool/shadow tones sit at 0.17-0.30 of peak grain BEFORE the black clamp
+     removes most of what is left. Together these are why shadows read as dead flat.
