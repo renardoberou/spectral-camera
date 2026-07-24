@@ -72,6 +72,16 @@ data class StandardFilmLook(
     val haloThreshold: Float, val haloTight: Float, val haloWide: Float,
     val grainClump: Float, val grainBias: Float, val grainBase: Float,
     val acutanceBias: Float,
+    // Shadow-floor scale for the deep-shadow density-floor fix (2026-07-24,
+    // second pass). Default 1.0 = unchanged from the universal floor. Real
+    // KODAK VISION3 500T (CineStill 800T's base stock) uses "Dye Layering
+    // Technology" specifically engineered to REDUCE shadow-region grain for
+    // better shadow signal-to-noise - the opposite direction from a uniform
+    // floor - so CineStill overrides this down. No source gives a precise
+    // magnitude; 0.35 is a reasoned, clearly-reduced-but-not-zero judgment
+    // call, not a derived number. Ektar and Tri-X have no such documented
+    // engineering and keep the default.
+    val shadowFloorScale: Float = 1.0f,
 )
 
 data class AerochromeLook(
@@ -99,11 +109,18 @@ object FilmLookLibrary {
     private val monoLooks: Map<SpectralPreset, MonoIRLook> = mapOf(
         // Rollei Infrared 400: fine-grained, sharp, controlled halation,
         // elegant negative-film contrast - the reference restrained IR look.
+        // grainBase=0.19 (2026-07-24, was 0.10): the real film's published
+        // diffuse RMS granularity is 11, against Tri-X 400's 17 and Kodak
+        // HIE's 18 (same measurement convention for all three - directly
+        // comparable). Real Rollei:TriX:HIE = 11:17:18 - Rollei is
+        // moderately finer, not dramatically so. The old 0.10 made it
+        // ~3x quieter than Tri-X/HIE in-app; the real ratio is ~1.5-1.6x.
+        // 0.19 restores that ratio to within a few percent on both anchors.
         SpectralPreset.B_W_INFRARED to MonoIRLook(
             toeLo = 4.8f, toeSpan = 5.5f, toePow = 2.30f, toeK = 0.36f, ceiling = 0.948f,
             woodLift = 0.52f, skyStrength = 0.88f,
             haloThreshold = 0.86f, haloTight = 0.28f, haloWide = 0.14f,
-            grainClump = 1.0f, grainBias = 1.0f, grainBase = 0.10f,
+            grainClump = 1.0f, grainBias = 1.0f, grainBase = 0.19f,
             waterFloor = 0.055f, acutanceBias = 0.15f,
         ),
         // Kodak HIE: no anti-halation backing, deep toe, hardest drama,
@@ -158,13 +175,27 @@ object FilmLookLibrary {
     private val standardLooks: Map<SpectralPreset, StandardFilmLook> = mapOf(
         // Kodak Ektar 100: the world's finest-grain colour negative. Vivid
         // (esp. reds/blues) yet faithful; punchy clean contrast; whisper grain.
+        // grainBase=0.05 (2026-07-24, was 0.02): Kodak's own Print Grain
+        // Index data (135 format) shows Ektar crossing the PGI=25 visibility
+        // threshold at 8x10 print (PGI 38) and clearly above it at 16x20
+        // (PGI 66) - real Ektar is subtly but genuinely visible at normal
+        // print sizes, not literally grainless. The old 0.02 never exceeded
+        // 0.27 LSB at ANY tone - always at or under the anti-banding dither,
+        // i.e. functionally zero. PGI and this shader's LSB units are not on
+        // a convertible scale (Kodak's own disclaimer), so 0.05 is a
+        // reasoned judgment call, not a derived number: it clears the dither
+        // floor by a real margin for the first time while staying under
+        // half of (corrected) Rollei - the next-quietest stock - preserving
+        // Ektar as clearly, unambiguously the subtlest of the six real
+        // stocks, matching its ~25-30% PGI gap under same-class Kodak
+        // colour negative film even at identical print size/format.
         SpectralPreset.EKTAR_100 to StandardFilmLook(
             warmth = 0.045f, tealShadows = 0f, saturation = 1.30f, contrast = 0.60f,
             toeLift = 0.004f, ceiling = 0.985f, redBias = 1.15f, blueBias = 1.10f,
             monoMix = 0f, panRed = 0.30f,
             haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
             haloThreshold = 0.965f, haloTight = 0.06f, haloWide = 0.02f,
-            grainClump = 0.45f, grainBias = 0.6f, grainBase = 0.02f,
+            grainClump = 0.45f, grainBias = 0.6f, grainBase = 0.05f,
             acutanceBias = 0.18f,
         ),
         // CineStill 800T: Vision3 500T with the remjet anti-halation layer
@@ -178,6 +209,7 @@ object FilmLookLibrary {
             haloThreshold = 0.80f, haloTight = 0.55f, haloWide = 0.42f,
             grainClump = 1.05f, grainBias = 1.0f, grainBase = 0.14f,
             acutanceBias = 0f,
+            shadowFloorScale = 0.35f,
         ),
         // Kodak Tri-X 400: the photojournalism classic - punchy panchromatic
         // curve, rich textured blacks, forgiving shoulder, honest gritty grain.
