@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/manual-white-balance-presets
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -16,6 +19,7 @@ jobs:
       - name: Check out feature branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Set up JDK 17
@@ -46,4 +50,4 @@ jobs:
           git add -A
           git diff --cached --check
           git commit -m 'feat(camera): add manual white-balance presets'
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
