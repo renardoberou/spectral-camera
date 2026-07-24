@@ -56,7 +56,24 @@ jobs:
       - name: Test and build debug plus unsigned release APKs
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assembleDebug assembleRelease --stacktrace
+          set +e
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease --stacktrace > /tmp/agent_build.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/agent_build.log
+          if [ "$status" -ne 0 ]; then
+            git reset --hard HEAD
+            git clean -fd
+            rm -f tools/agent_patch_error.txt
+            cp /tmp/agent_build.log tools/agent_build_error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A tools/agent_patch_error.txt tools/agent_build_error.txt
+            git commit -m 'chore(agent): record white-balance build failure'
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            exit "$status"
+          fi
+          rm -f tools/agent_build_error.txt
 
       - name: Commit verified implementation
         run: |
