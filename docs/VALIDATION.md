@@ -188,3 +188,38 @@ session-order-dependent (shoot Tri-X, switch to Aerochrome, chroma grain disable
 itself). Reproduced in the numpy pre-check before the fix shipped. See
 `docs/PLAN_2026-07-23d_grain-quality-upgrade.md` steps 3-4 and
 `docs/assets/grain-baseline-2026-07-23/step3-4/`. Needs on-device confirmation.
+
+**Step 5 — device questions resolved by measurement (2026-07-24):** the three parked
+"needs on-device confirmation" questions were turned into measurements against the real
+2026-07-23 capture batch and exact ports of the shipped math. This found **four real
+defects**, now fixed (`docs/PLAN_2026-07-24_grain-step5-defect-fixes.md`):
+
+1. **Chroma axis was not luma-neutral** — the green coefficient `-0.5*(nCr+nCb)`
+   cancelled red but leaked −0.180 of the blue term into luma, injecting extra luma
+   noise equal to 18% of the chroma amplitude. Fixed with the exact solved
+   coefficients; leak now ~1e-8.
+2. **Chroma grain was FINER than luma grain** (1.54x the frequency) — backwards
+   physically and perceptually, and precisely what reads as colour fringing rather than
+   film speckle. Now 0.52-0.94x (coarser).
+3. **Deep-shadow grain quantised away** — measured 0.38-0.49 LSB amplitude below luma
+   0.05, under the 8-bit step. Root cause was NOT black-point clamping (that hypothesis
+   was tested and rejected). Fixed with a deep-shadow density floor that is
+   bit-identical to the bare Gaussian for luma >= 0.34, so highlight protection is
+   provably preserved.
+4. **The post-grain IGN dither was louder than the grain** (grain/dither texture ratio
+   0.39-0.97 on Rollei — the dither never weaker). The visible texture on fine stocks
+   was substantially the dither's fixed screen-space pattern. Fixed with conservative
+   grain-aware dither displacement; sky dither assist untouched; ramp banding test
+   passes.
+
+Measured on the real capture batch: 52% of the mono pool frame sat in the deepest tone
+bucket with 3.8x weaker texture than midtone, and 31.8% of pixels at or below 2/255 —
+the numeric form of "dead flat pool blacks". After the fixes, film grain is the dominant
+shadow texture on every stock that has meaningful grain (share 0.73-1.09); Ektar and
+Fine-Grain remain dither-dominated by deliberate product value, flagged rather than
+silently changed. Proof strips and full reports in
+`docs/assets/grain-verification-2026-07-24/`.
+
+**Still requires the device:** the aesthetic judgement these measurements cannot make —
+whether the corrected grain looks right on real scenes at real viewing sizes, and
+whether the fine-stock (Ektar/Fine-Grain) amplitude wants a product decision.

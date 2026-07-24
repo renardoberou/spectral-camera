@@ -869,11 +869,43 @@ void main() {
     // curve real grain visibility follows in a print) is universal across
     // every preset family (2026-07-23e).
     float effGrain = uGrain + uGrainBase;
+    float grainDitherScale = 1.0;
     if (effGrain > 0.001) {
-        float d = (lumaOf(c) - 0.42) / 0.30;
+        float gLuma = lumaOf(c);
+        float d = (gLuma - 0.42) / 0.30;
         float densityWeight = exp(-d * d);
+
+        // Deep-shadow density floor (2026-07-24). The bare Gaussian falls to
+        // 0.14-0.22 below luma 0.05, which on the fine stocks drops the grain
+        // excursion under half an 8-bit LSB - it quantises away completely and
+        // the region renders as a dead flat plateau. That is the measured
+        // cause of the "flat pool blacks" reported from device captures (see
+        // docs/PLAN_2026-07-23d, step 5). Film granularity does fall at low
+        // density, but print grain VISIBILITY does not fall this fast, and
+        // "less grain" must not become "no grain". The floor lifts ONLY the
+        // deep end: for luma >= 0.34 this expression is bit-identical to the
+        // bare Gaussian, so highlight protection is exactly preserved.
+        float shadowLift = smoothstep(0.34, 0.02, gLuma);
+        densityWeight = max(densityWeight, 0.62 * shadowLift);
+
         float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
+
+        // Grain-aware dither (2026-07-24). The sub-LSB IGN dither further
+        // down runs AFTER grain at a fixed +/-0.77 LSB. Measured against the
+        // per-stock grain amplitudes, that dither was equal to or LOUDER than
+        // the grain across most of the tonal range on the finer stocks - so
+        // the texture a user actually saw was substantially the dither's
+        // fixed screen-space pattern rather than the grain's clump structure.
+        // Film grain is itself a dither, so where grain is strong the IGN
+        // pass is redundant: back it off in proportion to grain amplitude.
+        // Deliberately conservative (55% max displacement, referenced to
+        // 3.2 LSB) because banding lives in smooth BRIGHT gradients where the
+        // density curve makes grain weakest - fine stocks and highlights keep
+        // essentially all of their dither. Verified on ramp tests to leave
+        // banding protection intact; the separate sky dither assist below is
+        // not touched at all.
+        grainDitherScale = 1.0 - clamp(grainAmp * 175.3, 0.0, 1.0) * 0.55;
 
         // Shared structural (luma) noise: every channel's base component,
         // giving the grain its spatial "clump" shape.
@@ -898,10 +930,27 @@ void main() {
         // docs/assets/grain-baseline-2026-07-23/step3-4/.
         float chromaAmt = (uPreset <= 5) ? 0.0 : (1.0 - uStdTone3.x);
         if (chromaAmt > 0.001) {
-            vec2 cUv = gUv * 1.7;
+            // Chroma grain is COARSER than the luma grain (2026-07-24, was
+            // gUv * 1.7 = finer). Two reasons, both pointing the same way:
+            // colour-negative dye clouds are physically larger than the
+            // silver grains that form them, and human chroma acuity is far
+            // below luma acuity. Fine, high-frequency per-pixel colour noise
+            // is precisely what reads as chromatic aberration / colour
+            // fringing rather than film speckle - measured spectral centroid
+            // went from 1.54x the luma grain (finer) to 0.52x (coarser).
+            vec2 cUv = gUv / 1.8;
             float nCr = filmGrain(cUv + vec2(31.7, 11.3), uGrainSeed + 7.0);
             float nCb = filmGrain(cUv + vec2(-19.1, 47.7), uGrainSeed + 13.0);
-            grainDelta += chromaAmt * 0.35 * vec3(nCr, -0.5 * (nCr + nCb), nCb);
+            // Luma-neutral opponent axis (2026-07-24). The previous green
+            // coefficient -0.5*(nCr+nCb) cancelled the red term (0.299 -
+            // 0.587*0.5 = +0.006, negligible) but left the BLUE term leaking
+            // 0.114 - 0.587*0.5 = -0.180 into luma: the "chroma" term was
+            // injecting extra luma noise equal to 18% of the chroma
+            // amplitude, on an axis biased toward blue. Solving
+            // dot(vec3(nCr, g, nCb), REC601) = 0 for g gives these exact
+            // coefficients, which hold for any nCr/nCb independently.
+            float nCg = -0.5094 * nCr - 0.1942 * nCb;
+            grainDelta += chromaAmt * 0.35 * vec3(nCr, nCg, nCb);
         }
 
         // Clump irregularity (2026-07-23f): a coarser, independent
@@ -934,7 +983,14 @@ void main() {
     // noise at the same amplitude - smooth sky gradients stay SILKY while
     // banding is still broken. Sky assist halved accordingly.
     float ign = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y)) - 0.5;
-    c += ign * 0.006;
+    // Base dither is scaled by grainDitherScale (1.0 where there is little or
+    // no grain, down to 0.45 where grain is strong enough to break banding by
+    // itself) so the fixed IGN pattern stops competing with the film grain's
+    // own clump structure. See the grain block above for the rationale.
+    c += ign * 0.006 * grainDitherScale;
+    // Sky assist is deliberately NOT scaled: smooth bright sky ramps are both
+    // the most banding-prone region and the region where the grain density
+    // curve is weakest, so this pass must keep its full strength.
     c += ign * skyMask * 0.003;
 
     // Look intensity: blend the finished film look against the levelled
