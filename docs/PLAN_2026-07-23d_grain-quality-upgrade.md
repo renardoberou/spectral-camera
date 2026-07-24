@@ -68,17 +68,44 @@ becomes the "before" side of the diff for step 2.
 
 ## 2. Remaining implementation (next cycles, in priority order)
 
-### Step 2 — universal exposure-dependent density
-Extend the density-weighted branch to every preset family, not just `uPreset <= 5`.
-Needs a per-family curve center/width (Aerochrome skies/chrome must stay clean; classic
-color midtones/skin should get full grain) — new fields alongside `grainBias`/
-`grainBase`/`grainClump` in `MonoIRLook`/`AerochromeLook`/`StandardFilmLook`, defaulting
-to values that reproduce current mono behavior exactly (regression-safe: mono presets
-must be provably byte-identical before/after, verified the same way Classic/Gold were
-proven identical in the 2026-07-21b density-dial cycle).
-Verification: re-run `grain_port.py` with the new formula; the "flat across every
-bucket" rows above must become peaked/tapered like the mono rows, on the same
-reference photo.
+### Step 2 — universal exposure-dependent density (DONE 2026-07-23e)
+
+**Shipped:** the `if (uPreset <= 5)` gate around the density-weighted grain path was
+removed. Every preset now takes the formula previously reserved for the six mono-IR
+stocks: `densityWeight = exp(-((luma-0.42)/0.30)^2)`, `grainAmp = effGrain * 0.040 *
+densityWeight * uGrainBias`. No new per-family curve parameters were introduced this
+step — the single validated Gaussian is now shared by every family, which is the
+minimal, most conservative version of the change.
+
+**Pre-verified in numpy before the shader edit**
+(`docs/assets/grain-baseline-2026-07-23/step2/step2_preverify.py` /
+`STEP2_PREVERIFY.md`), against the same reference photo as step 1:
+- **Mono presets (Rollei, HIE): byte-identical** before/after — same formula, same
+  branch, nothing to regress.
+- **Color/classic presets (Ektar, CineStill, Tri-X)**: amplitude went from flat across
+  every luma bucket to the same peaked/tapered shape as mono, e.g. Tri-X:
+  shadow 0.01346 → 0.00292, midtone 0.01345 → 0.01066, highlight 0.01346 → 0.00125.
+
+**Honest correction to this doc's own step-1 framing:** the fix is *exposure
+responsiveness*, not a blanket increase in shadow grain. The Gaussian is centered at
+midtone and tapers toward **both** ends — deep shadow and bright highlight both get
+*less* grain than midtone, which is the physically-correct print-grain visibility
+curve (matches the "highlight protection" language in competitor apps) and is also
+exactly what the six mono-IR stocks already shipped. So on the reference photo, color
+presets' amplitude in the near-black bucket actually **dropped** (e.g. Ektar
+0.00054 → 0.00012) rather than rising — flat-amplitude was not "zero in the shadows,"
+it was "identical in every zone," and removing that bug moves shadow amplitude in the
+direction the curve dictates, which is down, not up. If the "dead flat pool blacks"
+observation from the capture review persists after this ships (i.e. the person still
+finds shadow grain too subtle to read, independent of exposure-shape correctness),
+that is a separate **amplitude-scale** tuning question — a candidate follow-up, not
+assumed to be solved by this step.
+
+**Not yet done:** per-family curve center/width differentiation (e.g. Aerochrome sky
+vs. Classic Film skin midtones may warrant different curve shape) was considered and
+deliberately deferred — no scene-specific evidence yet justifies diverging from the
+single validated curve. Revisit if a future capture review shows a specific family
+needs a different center/span.
 
 ### Step 3 — per-channel grain for color stocks
 Second/third `filmGrain()` sample per pixel, offset in hash-space per channel, only for
@@ -119,7 +146,10 @@ scope** for the grain cycle:
       `reference_photo.jpg`, `grain_port.py`, `BASELINE_REPORT.md`, per-look
       `out_*.png` renders.
 - [x] Full remaining plan (steps 2-4) written up above.
-- [ ] Steps 2-4 (universal density, per-channel grain, clump irregularity) — next
-      cycles, not started.
-- [ ] Device re-shoot / on-device confirmation — required before shipping any of steps
-      2-4, consistent with this repo's verification standard for shader changes.
+- [x] Step 2 (universal exposure-dependent density) — pre-verified in numpy, shipped
+      in `SpectralGlPipeline.kt`, mono presets provably byte-identical.
+- [ ] Steps 3-4 (per-channel color grain, clump irregularity) — not started.
+- [ ] Device re-shoot / on-device confirmation — required before this is considered
+      truly done, consistent with this repo's verification standard for shader
+      changes. CI (`assembleDebug`/`assembleRelease`) confirms the shader still
+      compiles and the app still builds; it cannot confirm the visual result.

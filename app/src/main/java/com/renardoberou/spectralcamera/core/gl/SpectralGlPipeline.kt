@@ -862,18 +862,26 @@ void main() {
     // grain personality is visible at default settings; the user's Grain
     // slider adds on top of it. Structured value-noise clumps replace
     // per-pixel white noise: film grain has spatial correlation; sensor
-    // noise does not. Density-dependent on the mono presets (Poisson-like:
-    // strongest in midtones). grainBias/grainClump are the per-stock
-    // amplitude and clump-scale dials - HIE and Soft Vintage read coarser,
-    // Fine-Grain reads tighter, independent of the user's Grain slider.
+    // noise does not. grainBias/grainClump are the per-stock amplitude and
+    // clump-scale dials - HIE and Soft Vintage read coarser, Fine-Grain
+    // reads tighter, independent of the user's Grain slider.
+    //
+    // Exposure-dependent density (Poisson-like: strongest in midtones,
+    // tapering toward both deep shadow and bright highlight - the same
+    // curve real grain visibility follows in a print, and the mechanism
+    // behind "highlight protection" in reference grain tools) is now
+    // UNIVERSAL across every preset family. It previously only applied to
+    // the six mono-IR stocks (uPreset<=5); every Aerochrome and Classic
+    // Film preset had a flat amplitude with zero response to exposure -
+    // verified numerically against a real capture
+    // (docs/PLAN_2026-07-23d_grain-quality-upgrade.md, step 2). Mono
+    // presets take the exact formula they always have, so they are
+    // provably unchanged; color/classic presets now get the same curve.
     float effGrain = uGrain + uGrainBase;
     if (effGrain > 0.001) {
-        float grainAmp = effGrain * 0.045 * uGrainBias;
-        if (uPreset <= 5) {
-            float d = (lumaOf(c) - 0.42) / 0.30;
-            float densityWeight = exp(-d * d);
-            grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
-        }
+        float d = (lumaOf(c) - 0.42) / 0.30;
+        float densityWeight = exp(-d * d);
+        float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
         c += filmGrain(gUv, uGrainSeed) * grainAmp * 2.2;
     }
