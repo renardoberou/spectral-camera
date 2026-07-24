@@ -62,7 +62,6 @@ jobs:
           rm -rf tools/agent_patch_chunks
           rm -f tools/agent_patch_ready tools/agent_apply_white_balance.py.gz.b64
           rm -f tools/agent_patch_error.txt tools/agent_build_error.txt
-          rm -f .github/workflows/agent-white-balance.yml
 
       - name: Test and build debug plus unsigned release APKs
         run: |
