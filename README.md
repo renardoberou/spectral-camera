@@ -202,13 +202,14 @@ False-color rendering of the classic Kodak Aerochrome IR film:
 - **Faded** — desaturated, lifted blacks, warm cast, hazy pale sky. Aged-print character.
 - **Vivid** (2026-07-24) — chases the maximum iconic hot pink/magenta canopy directly, at Classic's neutral overall density rather than Dense's darker/punchier read. Added alongside a ceiling fix to the shared foliage-hue formula: the old constants capped magenta at 0.60 even on Dense's best-case pixel and never actually reached the characteristic pink on any variant, regardless of scene — this was a formula ceiling, not a style restraint, and the fix benefits all six grades' foliage hue, not just Vivid's.
 
-### Classic Film (3 stocks)
+### Classic Film (4 stocks)
 
 Standard photographic stocks rendered with their real film response:
 
 - **Kodak Ektar 100** — finest-grain color negative. Vivid reds/blues. Faithful skin. Punchy clean contrast. Whisper grain.
 - **CineStill 800T** — tungsten-balanced vision film. Signature RED halation around lights. Cool/teal daylight. Lifted cinematic blacks.
 - **Kodak Tri-X 400** — the photojournalism classic. Punchy panchromatic curve. Rich textured blacks. Honest gritty grain.
+- **Kodak Portra 400** (2026-07-24) — the professional portrait standard. Natural, restrained skin tones — never oversaturated the way Ektar can be. Wide exposure latitude, gentle shadows, soft highlight rolloff. Genuinely grainier than Ektar 100 (Kodak's own current data sheet: PGI 59 vs Ektar's 38 at identical print conditions) — real, sourced, not a design choice.
 
 ### Grain
 

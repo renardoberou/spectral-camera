@@ -1109,6 +1109,7 @@ internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.EKTAR_100 -> 12
     SpectralPreset.CINESTILL_800T -> 13
     SpectralPreset.TRI_X_400 -> 14
+    SpectralPreset.PORTRA_400 -> 15
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
