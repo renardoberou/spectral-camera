@@ -89,6 +89,11 @@ enum class SpectralPreset(
         description = "The photojournalism classic: punchy panchromatic B&W, rich textured blacks, forgiving highlights, honest gritty grain.",
         family = LookFamily.STANDARD_FILM,
     ),
+    PORTRA_400(
+        label = "Kodak Portra 400",
+        description = "The professional portrait standard: natural, restrained skin tones (never oversaturated like Ektar), wide exposure latitude, gentle shadows and highlight rolloff. Genuinely grainier than Ektar 100 - real, published Kodak data confirms it, not a design choice.",
+        family = LookFamily.STANDARD_FILM,
+    ),
 }
 
 enum class SensorMode(val label: String) {

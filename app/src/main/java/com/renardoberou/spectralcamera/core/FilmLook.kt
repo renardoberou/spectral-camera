@@ -231,6 +231,59 @@ object FilmLookLibrary {
             grainClump = 1.35f, grainBias = 1.15f, grainBase = 0.26f,
             acutanceBias = 0.12f,
         ),
+        // Kodak Portra 400 (2026-07-24): the professional portrait standard.
+        // Researched against Kodak's current (Jan 2025, E-4050) technical
+        // data sheet plus consistent, independent photographer testimony.
+        //
+        // Colour: universally described as restrained/natural/"honest" -
+        // explicitly the opposite of Ektar's vivid punch, and specifically
+        // known for NOT over-reddening skin the way Ektar can. saturation
+        // (1.05) and redBias (1.04) sit well below Ektar's (1.30/1.15);
+        // blueBias (1.00, vs Ektar's 1.10) reflects Portra's more muted,
+        // less "deep blue" rendering. warmth (0.055) is slightly above
+        // Ektar's (0.045) - warm but gentle "creamy" skin tones are its
+        // signature - but the lower saturation keeps that warmth from
+        // reading as vivid the way Ektar's warmth does.
+        //
+        // Tonality: "wide exposure latitude" and "gentle shadows" are the
+        // most consistent, repeated descriptors found - toeLift (0.020) is
+        // well above Ektar's (0.004) for gentler shadow rendering, and
+        // contrast (0.46) sits below Ektar's (0.60) and Tri-X's (0.68) for
+        // the flatter, more forgiving response latitude implies. ceiling
+        // (0.975, vs Ektar's 0.985) gives a touch more highlight
+        // compression, matching the "soft highlight rolloff" reputation.
+        //
+        // Sharpness: Kodak's own spec sheet uses nearly identical language
+        // to Ektar's ("optimized sharpness... distinct edges, fine detail")
+        // - both are T-GRAIN emulsions from the same technology lineage, so
+        // acutanceBias (0.14) tracks close to Ektar's (0.18) rather than
+        // diverging the way saturation/contrast do.
+        //
+        // Grain: NOT a design choice - real, sourced, and larger than
+        // Ektar's. Kodak's current E-4050 data sheet gives Portra 400
+        // (135, 8x10 print, 8.8x mag) a Print Grain Index of 59, against
+        // Ektar 100's 38 at identical conditions (same scale, same format,
+        // same print size - directly comparable) - a real ratio of ~1.55x,
+        // independently confirmed by photographer testimony describing
+        // Portra as visibly grainier than Ektar, especially in shadow.
+        // grainBase=0.07, bias=0.65 gives a peak amplitude ratio of 1.52x
+        // Ektar's (verified in numpy before shipping) - within a couple of
+        // percent of the real PGI ratio, while keeping the absolute level
+        // modest (peak ~1.0 LSB) given the Rollei lesson from earlier this
+        // session: a correct ratio does not excuse skipping a sanity check
+        // on the resulting absolute magnitude. No halation signature is
+        // expected or added - unlike CineStill, Portra's anti-halation
+        // backing is intact, so haloThreshold is left even more restrained
+        // than Ektar's already-minimal value.
+        SpectralPreset.PORTRA_400 to StandardFilmLook(
+            warmth = 0.055f, tealShadows = 0f, saturation = 1.05f, contrast = 0.46f,
+            toeLift = 0.020f, ceiling = 0.975f, redBias = 1.04f, blueBias = 1.00f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
+            haloThreshold = 0.97f, haloTight = 0.05f, haloWide = 0.015f,
+            grainClump = 0.55f, grainBias = 0.65f, grainBase = 0.07f,
+            acutanceBias = 0.14f,
+        ),
     )
 
     private val aeroLooks: Map<SpectralPreset, AerochromeLook> = mapOf(
