@@ -27,7 +27,8 @@ This document reports implementation evidence only. It does not promote source o
 - Python bytecode compilation: PASS.
 - `git diff --check`: PASS at audit time.
 - Local Gradle/JVM tests: NOT RUN; Java is unavailable (`JAVA_HOME` unset and no `java` executable).
-- Android shader compile/build: NOT YET VERIFIED for this continuation; GitHub Actions is the build authority.
+- Android shader compile/build: PASS in GitHub Actions for exact head `08086cd1ae5300ca673c5bf4c7ad18e9c4468667`; Android CI run `32165625606` (`https://github.com/renardoberou/spectral-camera/actions/runs/32165625606`).
+- CI debug APK artifact: PASS; `/home/bernardo/.hermes/profiles/spectral-camera/artifacts/08086cd/spectral-camera-debug-ephemeral/app-debug.apk`, 27,533,570 bytes, SHA-256 `a4d11916dd6d816551e725323124269fb138db74574dbf497c84bbf5d864ccd5`. ZIP structure was inspected and contains Android dex/resources; this is an ephemeral debug artifact, not a signed release.
 - Physical Moto Edge 60 Fusion: NOT RUN; no device connection is available from this shell.
 
 ## Remaining gates
