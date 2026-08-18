@@ -149,6 +149,24 @@ mandatory, consistent with the "Test status" section of the README.
 
 ---
 
+## Fujifilm-inspired integration status (2026-08-18)
+
+| Gate | Status | Evidence / boundary |
+|---|---|---|
+| Baseline and fixture manifest | **PASS — source verified** | `docs/fujifilm-integration/baseline-2026-08-04.md` records the clean `7154f6b` baseline and hashes of preserved fixtures. |
+| Pure working-space and tone math | **PASS — tests added; execution pending** | `core/color/WorkingSpaceMath.kt` and `ToneMath.kt` have JVM tests for finite handling, round trips, monotonicity, shoulder slope, and bounds. Local Gradle execution is blocked because Java/JAVA_HOME is unavailable. |
+| Shared shader stage and family ordering | **PASS — source contract added; execution pending** | `SharedFilmShaderContractTest.kt` checks generic uniforms, post-front-end ordering, preset indices, and reset markers. Physical shader execution is not available in this shell. |
+| Visible-spectrum profiles | **PARTIAL — source implemented** | Archive Chrome, Cinematic Neutral, and Warm Negative are data-driven `STANDARD_FILM` profiles with original names and disclosure. Visual calibration is not complete. |
+| Calibration harness | **PASS — Python smoke tests** | `tools/fujifilm_calibration/` keeps tone, grain, colour, and chart metrics separate; six deterministic tests and package import smoke tests passed with the system Python. `pytest` is not installed in the Hermes venv. |
+| Aerochrome / mono-IR non-regression | **NOT RUN** | The shared stage is identity-configured for legacy looks and is placed after `presetColor`, but no Android/GL/device render was executed. Existing physical validation rows remain unchanged. |
+| Moto Edge 60 Fusion re-shoots | **NOT RUN** | No physical device connection was available from this shell. |
+
+The implementation status and exact source/build/CI evidence are tracked in
+`docs/fujifilm-integration/IMPLEMENTATION_STATUS.md`. A source or CI result
+must not be promoted to a device `PASS` without the named capture flows.
+
+---
+
 ## Grain quality upgrade (2026-07-23d, in progress)
 
 **Baseline verification (step 1 of 4, done):** numpy port of `grainHash`/`valueNoise`/

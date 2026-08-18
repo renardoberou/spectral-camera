@@ -1,0 +1,21 @@
+{
+  "schema": "fujifilm-calibration/manifest-v1",
+  "status": "template",
+  "description": "Template only; no device or reference captures are bundled.",
+  "synthetic_fixture_policy": "Synthetic fixtures may test determinism and algorithm behavior but must be labeled synthetic.",
+  "inputs": [],
+  "chart": {
+    "patches": [],
+    "coordinate_system": "normalized-left-top-right-bottom"
+  },
+  "metrics": ["tone", "grain", "colour"],
+  "thresholds": null,
+  "provenance": {
+    "capture_device": null,
+    "lens": null,
+    "lighting": null,
+    "exposure": null,
+    "white_balance": null,
+    "operator_notes": null
+  }
+}

@@ -15,6 +15,7 @@ import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.FilmLookLibrary
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import com.renardoberou.spectralcamera.core.SharedFilmProfile
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -61,7 +62,7 @@ precision mediump float;
 #endif
 """
 
-private const val FRAGMENT_BODY = """
+internal const val FRAGMENT_BODY = """
 varying vec2 vTexCoord;
 uniform vec2 uTexelSize;
 uniform int uPreset;
@@ -115,6 +116,11 @@ uniform vec3 uHaloTint;    // halation dye colour (CineStill = red)
 uniform float uGrainBias;      // per-stock grain amplitude multiplier
 uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
+// Shared Fuji-inspired stage. w in each vector is not used; the stage is
+// enabled by uSharedDensity.w and remains identity for legacy looks.
+uniform vec4 uSharedTone;       // toe, shoulder, highlight chroma compression, reserved
+uniform vec4 uSharedProtection; // skin, foliage, sky, neutral confidence weights
+uniform vec4 uSharedDensity;    // density, chroma compression, blue density, enabled
 
 float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
@@ -560,7 +566,35 @@ vec2 halationEnergy(vec2 uv, float threshold) {
     return vec2(tight, wide) / (8.0 * span);
 }
 
-// ---- Classic (non-IR) film engine: uPreset 12-14. One generic path driven
+// Shared visible-spectrum refinement. It runs after presetColor(), so the
+// synthetic-NIR and mono-IR classifiers always see the unmodified source.
+// There is deliberately no hue rotation here: density acts on chroma around
+// luminance and soft material confidence only limits the strength.
+vec3 sharedFujiStage(vec3 c) {
+    if (uSharedDensity.w < 0.5) return c;
+    float l = lumaOf(c);
+    float chroma = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+    float warm = smoothstep(0.0, 0.12, c.r - c.b) * smoothstep(-0.04, 0.10, c.g - c.b);
+    float foliage = smoothstep(0.02, 0.16, c.g - c.b) * smoothstep(-0.02, 0.12, c.g - c.r);
+    float sky = smoothstep(0.02, 0.14, c.b - max(c.r, c.g)) * smoothstep(0.22, 0.60, l);
+    float neutral = 1.0 - smoothstep(0.04, 0.18, chroma);
+    float protected = clamp(max(max(warm * uSharedProtection.x, foliage * uSharedProtection.y),
+        max(sky * uSharedProtection.z, neutral * uSharedProtection.w)), 0.0, 1.0);
+
+    float toe = uSharedTone.x * (1.0 - smoothstep(0.0, 0.34, l));
+    float shoulder = uSharedTone.y * smoothstep(0.62, 1.0, l);
+    c = mix(c, c + vec3(toe), 1.0 - protected);
+    c = mix(c, c - (c - vec3(0.72)) * shoulder, 1.0 - protected);
+
+    float density = uSharedDensity.x * (1.0 - protected);
+    float compression = clamp(uSharedDensity.y + uSharedTone.z * smoothstep(0.45, 1.0, l), 0.0, 1.0);
+    vec3 chromaVector = c - vec3(l);
+    chromaVector *= (1.0 + density) * (1.0 - compression * smoothstep(0.35, 1.0, chroma));
+    chromaVector.b *= 1.0 + uSharedDensity.z * sky;
+    return clamp(vec3(l) + chromaVector, 0.0, 1.0);
+}
+
+// ---- Classic (non-IR) film engine: uPreset 12-17. One generic path driven
 // entirely by StandardFilmLook dials; deliberately independent of the IR
 // engines (zero changes to monoLook/aeroLook paths).
 vec3 standardFilm(vec3 src, float smoothLuma) {
@@ -677,12 +711,12 @@ vec3 presetColor(vec3 src, vec3 srcC, float skyMask, float skyT, float smoothLum
         return vec3(m);
     }
 
-    // ---- Classic film: uPreset 12-14 --------------------------------
+    // ---- Classic film: uPreset 12-18 --------------------------------
     if (uPreset >= 12) {
         return standardFilm(src, smoothLuma);
     }
     // ---- Aerochrome: uPreset 6-11, one shared colorimetry engine for all
-    // five grades. Family-dial numbers come from uAeroTone* / uHaloGrain
+    // six grades. Family-dial numbers come from uAeroTone* / uHaloGrain
     // (Kotlin FilmLookLibrary.aeroLookFor()). This is the only remaining
     // family after uPreset 0-5 (monochrome IR), so no further bound check.
     vec3 col = aerochrome(src, srcC, uAeroTone2.x, skyMask, skyT, smoothLuma,
@@ -842,6 +876,7 @@ void main() {
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, srcC, skyMask, skyT, bLuma);
+    c = sharedFujiStage(c);
 
     // Monochrome IR film character (Rollei/HIE/SFX presets only): density-
     // dependent grain in the shared grain stage below; halation is applied
@@ -1091,8 +1126,7 @@ private const val FRAGMENT_2D = FRAGMENT_PRECISION +
     FRAGMENT_BODY
 
 // Index layout matches the shader's presetColor() dispatch: 0-5 monochrome
-// IR (generic monoLook engine), 6-10 Aerochrome (generic aeroLook engine).
-// Keep the two in sync when either changes.
+// IR, 6-11 Aerochrome, 12-18 Standard Film.
 internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.B_W_INFRARED -> 0
     SpectralPreset.HIGH_CONTRAST_IR -> 1
@@ -1110,6 +1144,9 @@ internal fun SpectralPreset.toShaderIndex(): Int = when (this) {
     SpectralPreset.CINESTILL_800T -> 13
     SpectralPreset.TRI_X_400 -> 14
     SpectralPreset.PORTRA_400 -> 15
+    SpectralPreset.ARCHIVE_CHROME -> 16
+    SpectralPreset.CINEMATIC_NEUTRAL -> 17
+    SpectralPreset.WARM_NEGATIVE -> 18
 }
 
 internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
@@ -1485,6 +1522,26 @@ class SpectralRenderer(
         // mattered only cosmetically before (nothing downstream read it
         // outside STANDARD_FILM); it matters functionally now that the
         // grain stage's chroma gate reads uStdTone3.x for every family.
+        // Reset every family block on every draw. Preview and capture share the
+        // program, so no inactive family's values may leak across presets.
+        GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
+        GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
+        GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
+        GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
+        GLES20.glUniform4f(program.uStdTone, 0f, 0f, 1.0f, 0f)
+        GLES20.glUniform4f(program.uStdTone2, 0f, 1.0f, 1.0f, 1.0f)
+        GLES20.glUniform4f(program.uStdTone3, 0f, 0f, 1.0f, 0f)
+        GLES20.glUniform3f(program.uHaloTint, 1.0f, 0.55f, 0.35f)
+        GLES20.glUniform4f(program.uHaloGrain, 0.90f, 0.10f, 0.05f, 1.0f)
+        GLES20.glUniform1f(program.uGrainBias, 1.0f)
+        GLES20.glUniform1f(program.uGrainBase, 0f)
+        GLES20.glUniform1f(program.uAcutanceBias, 0f)
+        // Identity defaults preserve all existing presets. Only the three new
+        // visible-spectrum stocks opt into the shared refinement stage.
+        GLES20.glUniform4f(program.uSharedTone, 0f, 0f, 0f, 0f)
+        GLES20.glUniform4f(program.uSharedProtection, 0f, 0f, 0f, 0f)
+        GLES20.glUniform4f(program.uSharedDensity, 0f, 0f, 0f, 0f)
+
         when (currentSettings.preset.family) {
             LookFamily.MONOCHROME_IR -> {
                 val look = FilmLookLibrary.monoLookFor(currentSettings.preset)
@@ -1511,6 +1568,28 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
                 GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+                val profile = look.sharedProfile
+                GLES20.glUniform4f(
+                    program.uSharedTone,
+                    profile.tone.toe,
+                    profile.tone.shoulder,
+                    profile.tone.highlightChromaCompression,
+                    0f,
+                )
+                GLES20.glUniform4f(
+                    program.uSharedProtection,
+                    profile.protection.skin,
+                    profile.protection.foliage,
+                    profile.protection.sky,
+                    profile.protection.neutral,
+                )
+                GLES20.glUniform4f(
+                    program.uSharedDensity,
+                    profile.density.density,
+                    profile.density.chromaCompression,
+                    profile.density.blueDensity,
+                    if (profile != SharedFilmProfile.IDENTITY) 1f else 0f,
+                )
             }
             LookFamily.AEROCHROME -> {
                 val look = FilmLookLibrary.aeroLookFor(currentSettings.preset)
@@ -1596,6 +1675,9 @@ class SpectralRenderer(
         val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
         val uGrainBase = GLES20.glGetUniformLocation(id, "uGrainBase")
         val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")
+        val uSharedTone = GLES20.glGetUniformLocation(id, "uSharedTone")
+        val uSharedProtection = GLES20.glGetUniformLocation(id, "uSharedProtection")
+        val uSharedDensity = GLES20.glGetUniformLocation(id, "uSharedDensity")
 
         fun release() {
             if (id != 0) GLES20.glDeleteProgram(id)

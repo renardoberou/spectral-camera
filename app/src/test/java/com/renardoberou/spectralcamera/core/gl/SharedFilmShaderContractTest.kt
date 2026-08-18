@@ -1,0 +1,37 @@
+package com.renardoberou.spectralcamera.core.gl
+
+import com.renardoberou.spectralcamera.core.SpectralPreset
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SharedFilmShaderContractTest {
+    @Test
+    fun sharedStageIsGenericAndRunsAfterTheSpectralFrontEnd() {
+        assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedTone"))
+        assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedProtection"))
+        assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedDensity"))
+        assertTrue(FRAGMENT_BODY.contains("vec3 sharedFujiStage"))
+        assertTrue(FRAGMENT_BODY.indexOf("vec3 c = presetColor") < FRAGMENT_BODY.indexOf("c = sharedFujiStage(c)"))
+    }
+
+    @Test
+    fun sharedStageUsesDefinedSmoothstepEdgesForTheToe() {
+        assertFalse(FRAGMENT_BODY.contains("smoothstep(0.34, 0.0, l)"))
+        assertTrue(FRAGMENT_BODY.contains("float toe = uSharedTone.x * (1.0 - smoothstep(0.0, 0.34, l));"))
+    }
+
+    @Test
+    fun newPresetsUseTheStandardFilmShaderRange() {
+        assertEquals(16, SpectralPreset.ARCHIVE_CHROME.toShaderIndex())
+        assertEquals(17, SpectralPreset.CINEMATIC_NEUTRAL.toShaderIndex())
+        assertEquals(18, SpectralPreset.WARM_NEGATIVE.toShaderIndex())
+    }
+
+    @Test
+    fun sharedStageDoesNotPrecedeSpectralClassification() {
+        assertTrue(FRAGMENT_BODY.indexOf("c = sharedFujiStage(c)") > FRAGMENT_BODY.indexOf("vec3 presetColor"))
+    }
+}

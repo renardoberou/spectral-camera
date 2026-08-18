@@ -94,6 +94,21 @@ enum class SpectralPreset(
         description = "The professional portrait standard: natural, restrained skin tones (never oversaturated like Ektar), wide exposure latitude, gentle shadows and highlight rolloff. Genuinely grainier than Ektar 100 - real, published Kodak data confirms it, not a design choice.",
         family = LookFamily.STANDARD_FILM,
     ),
+    ARCHIVE_CHROME(
+        label = "Archive Chrome",
+        description = "Original visible-spectrum chrome look: restrained density, protected highlights, and quiet archival colour.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    CINEMATIC_NEUTRAL(
+        label = "Cinematic Neutral",
+        description = "Original visible-spectrum negative look: controlled shoulder, neutral colour density, and gentle material protection.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    WARM_NEGATIVE(
+        label = "Warm Negative",
+        description = "Original visible-spectrum negative look: warm midtones, soft highlight density, and protected chroma.",
+        family = LookFamily.STANDARD_FILM,
+    ),
 }
 
 enum class SensorMode(val label: String) {

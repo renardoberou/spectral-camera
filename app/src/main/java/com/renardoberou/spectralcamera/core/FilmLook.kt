@@ -53,6 +53,36 @@ data class MonoIRLook(
  *  - skyDepthBoost: sky density multiplier (>1 = denser/deeper, <1 = paler).
  *  - fade: vintage lifted-black / desaturation amount applied post-grade.
  */
+/** Shared visible-spectrum rendering controls. Zero/one defaults are identity. */
+data class ToneProfile(
+    val toe: Float = 0f,
+    val shoulder: Float = 0f,
+    val highlightChromaCompression: Float = 0f,
+)
+
+data class ProtectionProfile(
+    val skin: Float = 0f,
+    val foliage: Float = 0f,
+    val sky: Float = 0f,
+    val neutral: Float = 0f,
+)
+
+data class DensityProfile(
+    val density: Float = 0f,
+    val chromaCompression: Float = 0f,
+    val blueDensity: Float = 0f,
+)
+
+data class SharedFilmProfile(
+    val tone: ToneProfile = ToneProfile(),
+    val protection: ProtectionProfile = ProtectionProfile(),
+    val density: DensityProfile = DensityProfile(),
+) {
+    companion object {
+        val IDENTITY = SharedFilmProfile()
+    }
+}
+
 /**
  * One standard (non-IR) film stock. Canonical characteristics per stock are
  * documented in docs/PLAN_2026-07-23c_classic-film-family.md.
@@ -82,6 +112,7 @@ data class StandardFilmLook(
     // call, not a derived number. Ektar and Tri-X have no such documented
     // engineering and keep the default.
     val shadowFloorScale: Float = 1.0f,
+    val sharedProfile: SharedFilmProfile = SharedFilmProfile.IDENTITY,
 )
 
 data class AerochromeLook(
@@ -283,6 +314,48 @@ object FilmLookLibrary {
             haloThreshold = 0.97f, haloTight = 0.05f, haloWide = 0.015f,
             grainClump = 0.55f, grainBias = 0.65f, grainBase = 0.07f,
             acutanceBias = 0.14f,
+        ),
+        SpectralPreset.ARCHIVE_CHROME to StandardFilmLook(
+            warmth = 0.02f, tealShadows = 0f, saturation = 1.04f, contrast = 0.40f,
+            toeLift = 0.012f, ceiling = 0.978f, redBias = 1.01f, blueBias = 1.01f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
+            haloThreshold = 0.96f, haloTight = 0.04f, haloWide = 0.012f,
+            grainClump = 0.65f, grainBias = 0.72f, grainBase = 0.06f,
+            acutanceBias = 0.10f,
+            sharedProfile = SharedFilmProfile(
+                tone = ToneProfile(toe = 0.10f, shoulder = 0.18f, highlightChromaCompression = 0.18f),
+                protection = ProtectionProfile(skin = 0.72f, foliage = 0.35f, sky = 0.55f, neutral = 0.80f),
+                density = DensityProfile(density = 0.22f, chromaCompression = 0.16f, blueDensity = 0.14f),
+            ),
+        ),
+        SpectralPreset.CINEMATIC_NEUTRAL to StandardFilmLook(
+            warmth = -0.02f, tealShadows = 0.12f, saturation = 0.98f, contrast = 0.32f,
+            toeLift = 0.028f, ceiling = 0.970f, redBias = 1.00f, blueBias = 1.02f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
+            haloThreshold = 0.90f, haloTight = 0.18f, haloWide = 0.08f,
+            grainClump = 0.90f, grainBias = 0.90f, grainBase = 0.10f,
+            acutanceBias = 0.02f,
+            sharedProfile = SharedFilmProfile(
+                tone = ToneProfile(toe = 0.16f, shoulder = 0.24f, highlightChromaCompression = 0.24f),
+                protection = ProtectionProfile(skin = 0.80f, foliage = 0.45f, sky = 0.62f, neutral = 0.88f),
+                density = DensityProfile(density = 0.12f, chromaCompression = 0.24f, blueDensity = 0.10f),
+            ),
+        ),
+        SpectralPreset.WARM_NEGATIVE to StandardFilmLook(
+            warmth = 0.075f, tealShadows = 0f, saturation = 1.02f, contrast = 0.38f,
+            toeLift = 0.025f, ceiling = 0.968f, redBias = 1.05f, blueBias = 0.97f,
+            monoMix = 0f, panRed = 0.30f,
+            haloR = 1.0f, haloG = 0.55f, haloB = 0.35f,
+            haloThreshold = 0.93f, haloTight = 0.10f, haloWide = 0.035f,
+            grainClump = 0.80f, grainBias = 0.82f, grainBase = 0.09f,
+            acutanceBias = 0.04f,
+            sharedProfile = SharedFilmProfile(
+                tone = ToneProfile(toe = 0.13f, shoulder = 0.20f, highlightChromaCompression = 0.22f),
+                protection = ProtectionProfile(skin = 0.90f, foliage = 0.30f, sky = 0.48f, neutral = 0.72f),
+                density = DensityProfile(density = 0.18f, chromaCompression = 0.20f, blueDensity = 0.06f),
+            ),
         ),
     )
 

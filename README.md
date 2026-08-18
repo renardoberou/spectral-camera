@@ -211,6 +211,20 @@ Standard photographic stocks rendered with their real film response:
 - **Kodak Tri-X 400** — the photojournalism classic. Punchy panchromatic curve. Rich textured blacks. Honest gritty grain.
 - **Kodak Portra 400** (2026-07-24) — the professional portrait standard. Natural, restrained skin tones — never oversaturated the way Ektar can be. Wide exposure latitude, gentle shadows, soft highlight rolloff. Genuinely grainier than Ektar 100 (Kodak's own current data sheet: PGI 59 vs Ektar's 38 at identical print conditions) — real, sourced, not a design choice.
 
+### Fuji-inspired visible-spectrum profiles (3 profiles)
+
+These are original, data-driven rendering profiles inspired by photographic
+tone and colour-density practices. They are not official Fujifilm software,
+firmware reproductions, or proprietary LUTs:
+
+- **Archive Chrome** — restrained documentary density with protected highlights.
+- **Cinematic Neutral** — lower-contrast negative character with gentle protection.
+- **Warm Negative** — warm midtones, soft highlight density, and controlled chroma.
+
+The shared refinement stage runs after the existing family transform. It does
+not replace Aerochrome's synthetic-NIR/EIR model or monochromatic IR's signal
+construction.
+
 ### Grain
 
 Every stock carries an always-on baseline grain (`grainBase`, per FilmLookLibrary) so stock personality is visible at default settings — real film is never grainless. The **Grain** slider (0–1, independent of which stock is selected) adds on top.
