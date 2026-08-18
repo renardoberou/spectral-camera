@@ -985,7 +985,7 @@ void main() {
         // Technology" specifically engineered to REDUCE shadow grain for
         // better shadow signal-to-noise - the opposite direction from a
         // uniform floor - so its look entry overrides this down to 0.35.
-        float shadowLift = smoothstep(0.34, 0.02, gLuma);
+        float shadowLift = 1.0 - smoothstep(0.02, 0.34, gLuma);
         densityWeight = max(densityWeight, 0.62 * uStdTone3.z * shadowLift);
 
         float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;

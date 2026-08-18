@@ -24,6 +24,12 @@ class SharedFilmShaderContractTest {
     }
 
     @Test
+    fun grainShadowLiftUsesDefinedSmoothstepEdges() {
+        assertFalse(FRAGMENT_BODY.contains("float shadowLift = smoothstep(0.34, 0.02, gLuma);"))
+        assertTrue(FRAGMENT_BODY.contains("float shadowLift = 1.0 - smoothstep(0.02, 0.34, gLuma);"))
+    }
+
+    @Test
     fun newPresetsUseTheStandardFilmShaderRange() {
         assertEquals(16, SpectralPreset.ARCHIVE_CHROME.toShaderIndex())
         assertEquals(17, SpectralPreset.CINEMATIC_NEUTRAL.toShaderIndex())
