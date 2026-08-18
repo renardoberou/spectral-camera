@@ -23,8 +23,10 @@ Branch: `feat/fujifilm-inspired-rendering`
 - Python bytecode compilation: PASS.
 - Calibration package import/chart smoke test: PASS.
 - Calibration worker's six deterministic tests: PASS using an explicit Python runner; `pytest` is unavailable in the Hermes venv.
-- `./gradlew testDebugUnitTest`: NOT RUN successfully; the environment has no `java` executable and `JAVA_HOME` is unset.
-- Android lint/build/APK: NOT RUN locally for the same toolchain blocker.
+- `./gradlew testDebugUnitTest`: NOT RUN locally; the environment has no `java` executable and `JAVA_HOME` is unset.
+- GitHub Actions Android CI: **PASS** for head `8648f9fc9ad3ad6eb83a96604eb222e407ae8665`; run `32163202346` at `https://github.com/renardoberou/spectral-camera/actions/runs/32163202346`.
+- CI debug APK artifact: **PASS**; `/home/bernardo/.hermes/profiles/spectral-camera/artifacts/8648f9f/app-debug.apk`, 27,517,186 bytes, SHA-256 `f18b783d6743c4231fd10fe66e2b6ae0e049fc9c0465a14df196eed72a17b41c`.
+- Android lint/build: **PASS in CI**; local Gradle execution remains unavailable.
 - Physical Moto Edge 60 Fusion: NOT RUN; no device connection was available.
 
 ## Interpretation
@@ -38,10 +40,10 @@ matches a Fujifilm camera.
 
 ## Remaining gates
 
-- Install Java 17/Android SDK or use GitHub Actions to execute JVM tests, lint,
-and APK builds.
-- Parent-side review must inspect the full diff and exact CI head SHA.
-- Build and checksum an APK from the verified commit.
-- Install and exercise the APK on the Moto Edge 60 Fusion.
+- Local Java 17/Android SDK installation is optional now that CI produced a
+verified artifact; local Gradle tests remain a reproducibility improvement.
+- Parent-side review inspected the full diff, corrected an undefined GLSL
+`smoothstep` edge, and verified the exact CI head SHA.
+- Install and exercise the CI APK on the Moto Edge 60 Fusion.
 - Record preview/capture/gallery/export and named failure-scene results in a
 dated validation report before calling the profiles device-verified.
