@@ -18,7 +18,7 @@ object HueSectorMath {
         val width = finite(widthDegrees)
         if (width <= 0f) return 0f
         if (width >= 360f) return 1f
-        val wrapped = (hue - center + 180f) % 360f
+        val wrapped = ((hue - center + 180f) % 360f + 360f) % 360f
         val distance = abs(wrapped - 180f)
         if (distance >= width * 0.5f) return 0f
         return (cos(PI * distance / width).toFloat()).coerceIn(0f, 1f)

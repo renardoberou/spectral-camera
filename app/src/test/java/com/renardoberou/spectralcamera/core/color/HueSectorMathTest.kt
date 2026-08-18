@@ -14,6 +14,15 @@ class HueSectorMathTest {
     }
 
     @Test
+    fun sectorWeight_normalizesNegativeModuloForWrappedInputs() {
+        assertEquals(
+            HueSectorMath.sectorWeight(0f, 0f, 60f),
+            HueSectorMath.sectorWeight(-180f, 300f, 60f),
+            0.0001f,
+        )
+    }
+
+    @Test
     fun sectorWeight_isZeroOutsideSectorAndOneAtCenter() {
         assertEquals(1f, HueSectorMath.sectorWeight(120f, 120f, 60f), 0.0001f)
         assertEquals(0f, HueSectorMath.sectorWeight(151f, 120f, 60f), 0.0001f)
