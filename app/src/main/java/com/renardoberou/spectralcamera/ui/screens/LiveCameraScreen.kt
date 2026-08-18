@@ -290,7 +290,7 @@ fun LiveCameraScreen(
                                     )
                                 }
                                 Text(
-                                    text = "${settings.sensorMode.label} • ${settings.preset.label}",
+                                    text = "${settings.preset.family.label} • ${settings.preset.label}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.secondary,
                                     maxLines = 1,
