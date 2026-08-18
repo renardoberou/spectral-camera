@@ -209,7 +209,13 @@ class MediaRepository(private val context: Context) {
                     displayName = name,
                     dateTakenMillis = dateTaken,
                     presetLabel = meta.preset.label,
-                    sensorModeLabel = meta.sensorMode.label,
+                    // Monochrome presets need the hardware/simulation disclosure;
+                    // visible-spectrum and Aerochrome presets need their actual
+                    // rendering family instead of the default simulated-IR label.
+                    sensorModeLabel = when (meta.preset.family) {
+                        com.renardoberou.spectralcamera.core.LookFamily.MONOCHROME_IR -> meta.sensorMode.label
+                        else -> meta.preset.family.label
+                    },
                     isOriginal = meta.isOriginal,
                     isUltraHdr = meta.isUltraHdr,
                     captureModeLabel = meta.captureModeLabel,

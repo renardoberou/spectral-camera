@@ -223,7 +223,7 @@ fun LiveCameraScreen(
                                         maxLines = 1,
                                     )
                                     Text(
-                                        text = "${settings.sensorMode.label} • simulated IR",
+                                        text = "${settings.preset.family.label} • ${settings.sensorMode.label}",
                                         style = MaterialTheme.typography.bodySmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
