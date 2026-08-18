@@ -117,10 +117,13 @@ uniform float uGrainBias;      // per-stock grain amplitude multiplier
 uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
 // Shared Fuji-inspired stage. w in each vector is not used; the stage is
-// enabled by uSharedDensity.w and remains identity for legacy looks.
+// enabled by uSharedDensity.w; legacy spectral families receive conservative
+// post-transform refinement values and visible profiles receive stock values.
 uniform vec4 uSharedTone;       // toe, shoulder, highlight chroma compression, reserved
 uniform vec4 uSharedProtection; // skin, foliage, sky, neutral confidence weights
 uniform vec4 uSharedDensity;    // density, chroma compression, blue density, enabled
+uniform vec4 uSharedHueA;       // red, yellow, green, cyan sector weights
+uniform vec2 uSharedHueB;       // blue, magenta sector weights
 
 float lumaOf(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
@@ -566,31 +569,53 @@ vec2 halationEnergy(vec2 uv, float threshold) {
     return vec2(tight, wide) / (8.0 * span);
 }
 
+float hueSectorWeight(float hueDegrees, float centerDegrees, float widthDegrees) {
+    float distanceDegrees = abs(mod(hueDegrees - centerDegrees + 540.0, 360.0) - 180.0);
+    float inside = 1.0 - step(widthDegrees * 0.5, distanceDegrees);
+    return inside * max(0.0, cos(3.14159265 * distanceDegrees / widthDegrees));
+}
+
+float sharedProtectionConfidence(vec3 c, float luma, float chroma) {
+    float reliability = smoothstep(0.035, 0.16, luma);
+    float warm = smoothstep(0.0, 0.12, c.r - c.b) * smoothstep(-0.04, 0.10, c.g - c.b);
+    float foliage = smoothstep(0.02, 0.16, c.g - c.b) * smoothstep(-0.02, 0.12, c.g - c.r);
+    float sky = smoothstep(0.02, 0.14, c.b - max(c.r, c.g)) * smoothstep(0.22, 0.60, luma);
+    float neutral = 1.0 - smoothstep(0.04, 0.18, chroma);
+    return reliability * clamp(max(max(warm * uSharedProtection.x, foliage * uSharedProtection.y),
+        max(sky * uSharedProtection.z, neutral * uSharedProtection.w)), 0.0, 1.0);
+}
+
 // Shared visible-spectrum refinement. It runs after presetColor(), so the
 // synthetic-NIR and mono-IR classifiers always see the unmodified source.
-// There is deliberately no hue rotation here: density acts on chroma around
-// luminance and soft material confidence only limits the strength.
+// Hue-sector density is continuous and luminance-weighted; confidence only
+// reduces the stock mapping rather than creating hard segmentation seams.
 vec3 sharedFujiStage(vec3 c) {
     if (uSharedDensity.w < 0.5) return c;
     float l = lumaOf(c);
     float chroma = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
-    float warm = smoothstep(0.0, 0.12, c.r - c.b) * smoothstep(-0.04, 0.10, c.g - c.b);
-    float foliage = smoothstep(0.02, 0.16, c.g - c.b) * smoothstep(-0.02, 0.12, c.g - c.r);
-    float sky = smoothstep(0.02, 0.14, c.b - max(c.r, c.g)) * smoothstep(0.22, 0.60, l);
-    float neutral = 1.0 - smoothstep(0.04, 0.18, chroma);
-    float protected = clamp(max(max(warm * uSharedProtection.x, foliage * uSharedProtection.y),
-        max(sky * uSharedProtection.z, neutral * uSharedProtection.w)), 0.0, 1.0);
+    float protected = sharedProtectionConfidence(c, l, chroma);
 
     float toe = uSharedTone.x * (1.0 - smoothstep(0.0, 0.34, l));
     float shoulder = uSharedTone.y * smoothstep(0.62, 1.0, l);
     c = mix(c, c + vec3(toe), 1.0 - protected);
     c = mix(c, c - (c - vec3(0.72)) * shoulder, 1.0 - protected);
 
-    float density = uSharedDensity.x * (1.0 - protected);
+    float hue = degrees(atan(c.g - lumaOf(c), c.r - lumaOf(c)));
+    float sector = hueSectorWeight(hue, 0.0, 60.0) * uSharedHueA.x
+        + hueSectorWeight(hue, 60.0, 60.0) * uSharedHueA.y
+        + hueSectorWeight(hue, 120.0, 60.0) * uSharedHueA.z
+        + hueSectorWeight(hue, 180.0, 60.0) * uSharedHueA.w
+        + hueSectorWeight(hue, 240.0, 60.0) * uSharedHueB.x
+        + hueSectorWeight(hue, 300.0, 60.0) * uSharedHueB.y;
+    float midtone = smoothstep(0.08, 0.30, l) * (1.0 - smoothstep(0.72, 0.98, l));
+    float density = uSharedDensity.x * sector * midtone * (1.0 - protected);
     float compression = clamp(uSharedDensity.y + uSharedTone.z * smoothstep(0.45, 1.0, l), 0.0, 1.0);
     vec3 chromaVector = c - vec3(l);
-    chromaVector *= (1.0 + density) * (1.0 - compression * smoothstep(0.35, 1.0, chroma));
-    chromaVector.b *= 1.0 + uSharedDensity.z * sky;
+    float highlightCompression = uSharedTone.z * smoothstep(0.62, 1.0, l);
+    chromaVector *= (1.0 + density) * (1.0 - compression * smoothstep(0.35, 1.0, chroma))
+        * (1.0 - highlightCompression * smoothstep(0.12, 0.42, chroma));
+    float blueSector = hueSectorWeight(hue, 240.0, 60.0) + hueSectorWeight(hue, 200.0, 42.0);
+    chromaVector.b *= 1.0 + uSharedDensity.z * blueSector * midtone * (1.0 - protected);
     return clamp(vec3(l) + chromaVector, 0.0, 1.0);
 }
 
@@ -1541,6 +1566,8 @@ class SpectralRenderer(
         GLES20.glUniform4f(program.uSharedTone, 0f, 0f, 0f, 0f)
         GLES20.glUniform4f(program.uSharedProtection, 0f, 0f, 0f, 0f)
         GLES20.glUniform4f(program.uSharedDensity, 0f, 0f, 0f, 0f)
+        GLES20.glUniform4f(program.uSharedHueA, 1f, 1f, 1f, 1f)
+        GLES20.glUniform2f(program.uSharedHueB, 1f, 1f)
 
         when (currentSettings.preset.family) {
             LookFamily.MONOCHROME_IR -> {
@@ -1551,6 +1578,18 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
                 GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+                GLES20.glUniform4f(program.uSharedTone, look.sharedProfile.tone.toe, look.sharedProfile.tone.shoulder,
+                    look.sharedProfile.tone.highlightChromaCompression, 0f)
+                GLES20.glUniform4f(program.uSharedProtection, look.sharedProfile.protection.skin,
+                    look.sharedProfile.protection.foliage, look.sharedProfile.protection.sky,
+                    look.sharedProfile.protection.neutral)
+                GLES20.glUniform4f(program.uSharedDensity, look.sharedProfile.density.density,
+                    look.sharedProfile.density.chromaCompression, look.sharedProfile.density.blueDensity, 1f)
+                GLES20.glUniform4f(program.uSharedHueA, look.sharedProfile.density.redWeight,
+                    look.sharedProfile.density.yellowWeight, look.sharedProfile.density.greenWeight,
+                    look.sharedProfile.density.cyanWeight)
+                GLES20.glUniform2f(program.uSharedHueB, look.sharedProfile.density.blueWeight,
+                    look.sharedProfile.density.magentaWeight)
                 GLES20.glUniform4f(program.uAeroTone, 0.55f, 1.18f, 1.0f, 1.0f)
                 GLES20.glUniform4f(program.uAeroTone2, 0f, 0f, 0f, 0f)
                 // .z = shadow-floor scale (2026-07-24, second pass); 1.0 =
@@ -1590,6 +1629,18 @@ class SpectralRenderer(
                     profile.density.blueDensity,
                     if (profile != SharedFilmProfile.IDENTITY) 1f else 0f,
                 )
+                GLES20.glUniform4f(
+                    program.uSharedHueA,
+                    profile.density.redWeight,
+                    profile.density.yellowWeight,
+                    profile.density.greenWeight,
+                    profile.density.cyanWeight,
+                )
+                GLES20.glUniform2f(
+                    program.uSharedHueB,
+                    profile.density.blueWeight,
+                    profile.density.magentaWeight,
+                )
             }
             LookFamily.AEROCHROME -> {
                 val look = FilmLookLibrary.aeroLookFor(currentSettings.preset)
@@ -1599,6 +1650,18 @@ class SpectralRenderer(
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
                 GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
+                GLES20.glUniform4f(program.uSharedTone, look.sharedProfile.tone.toe, look.sharedProfile.tone.shoulder,
+                    look.sharedProfile.tone.highlightChromaCompression, 0f)
+                GLES20.glUniform4f(program.uSharedProtection, look.sharedProfile.protection.skin,
+                    look.sharedProfile.protection.foliage, look.sharedProfile.protection.sky,
+                    look.sharedProfile.protection.neutral)
+                GLES20.glUniform4f(program.uSharedDensity, look.sharedProfile.density.density,
+                    look.sharedProfile.density.chromaCompression, look.sharedProfile.density.blueDensity, 1f)
+                GLES20.glUniform4f(program.uSharedHueA, look.sharedProfile.density.redWeight,
+                    look.sharedProfile.density.yellowWeight, look.sharedProfile.density.greenWeight,
+                    look.sharedProfile.density.cyanWeight)
+                GLES20.glUniform2f(program.uSharedHueB, look.sharedProfile.density.blueWeight,
+                    look.sharedProfile.density.magentaWeight)
                 GLES20.glUniform4f(program.uMonoCurve, 4.8f, 5.5f, 2.30f, 0.36f)
                 GLES20.glUniform4f(program.uMonoCurve2, 0.948f, 0.52f, 0.88f, 0.055f)
                 // .z = shadow-floor scale (2026-07-24, second pass); 1.0 =
@@ -1678,6 +1741,8 @@ class SpectralRenderer(
         val uSharedTone = GLES20.glGetUniformLocation(id, "uSharedTone")
         val uSharedProtection = GLES20.glGetUniformLocation(id, "uSharedProtection")
         val uSharedDensity = GLES20.glGetUniformLocation(id, "uSharedDensity")
+        val uSharedHueA = GLES20.glGetUniformLocation(id, "uSharedHueA")
+        val uSharedHueB = GLES20.glGetUniformLocation(id, "uSharedHueB")
 
         fun release() {
             if (id != 0) GLES20.glDeleteProgram(id)

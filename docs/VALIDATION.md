@@ -158,7 +158,9 @@ mandatory, consistent with the "Test status" section of the README.
 | Shared shader stage and family ordering | **PASS — CI executed** | `SharedFilmShaderContractTest.kt` checks generic uniforms, post-front-end ordering, defined toe edges, preset indices, and reset markers; exact head `8648f9f` passed CI. |
 | Visible-spectrum profiles | **PARTIAL — source implemented** | Archive Chrome, Cinematic Neutral, and Warm Negative are data-driven `STANDARD_FILM` profiles with original names and disclosure. Visual calibration is not complete. |
 | Calibration harness | **PASS — Python smoke tests** | `tools/fujifilm_calibration/` keeps tone, grain, colour, and chart metrics separate; six deterministic tests and package import smoke tests passed with the system Python. `pytest` is not installed in the Hermes venv. |
-| Aerochrome / mono-IR non-regression | **NOT RUN** | The shared stage is identity-configured for legacy looks and is placed after `presetColor`, but no Android/GL/device render was executed. Existing physical validation rows remain unchanged. |
+| Hue-sector/color-density analytic stage | **PASS — source + Python checks** | Six data-driven hue sectors are consumed by the shared shader stage for the three visible profiles; Kotlin and NumPy contracts cover wraparound, neutral stability, midtone weighting, compression, finiteness, and bounds. No LUT residual is claimed. |
+| Material-confidence analytic stage | **PASS — source + JVM test source** | `MaterialConfidenceMath.kt` provides bounded continuous fields and near-black reliability gating; the live shader uses smooth post-front-end confidence blending. Android execution remains CI-gated. |
+| Aerochrome / mono-IR shared refinements | **NOT RUN** | Shared post-spectral tone/protection/density uniforms are now wired for both families, but no Android/GL/device render was executed. Existing physical validation rows remain unchanged. |
 | Moto Edge 60 Fusion re-shoots | **NOT RUN** | No physical device connection was available from this shell. |
 
 The implementation status and exact source/build/CI evidence are tracked in

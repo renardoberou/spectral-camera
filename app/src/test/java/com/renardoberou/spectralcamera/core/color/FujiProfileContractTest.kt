@@ -49,4 +49,16 @@ class FujiProfileContractTest {
         assertNotEquals(profiles[1], profiles[2])
         assertNotEquals(profiles[0], profiles[2])
     }
+
+    @Test
+    fun spectralFamiliesReceiveTheSharedPostTransformRefinement() {
+        assertNotEquals(
+            SharedFilmProfile.IDENTITY,
+            FilmLookLibrary.aeroLookFor(SpectralPreset.AEROCHROME_FALSE_COLOR).sharedProfile,
+        )
+        assertNotEquals(
+            SharedFilmProfile.IDENTITY,
+            FilmLookLibrary.monoLookFor(SpectralPreset.B_W_INFRARED).sharedProfile,
+        )
+    }
 }

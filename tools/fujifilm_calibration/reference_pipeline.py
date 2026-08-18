@@ -78,3 +78,66 @@ def crop_fraction(image: Any, box: Sequence[float]):
 
 def read_manifest(path: str | Path) -> Mapping[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    number = float(value)
+    return number if np.isfinite(number) else default
+
+
+def hue_sector_weight(hue_degrees: Any, center_degrees: Any, width_degrees: Any = 60.0):
+    """Cosine-tapered circular weight, with zero at the sector boundary."""
+    require_numpy()
+    hue = np.nan_to_num(np.asarray(hue_degrees, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    center = _finite_float(center_degrees)
+    width = _finite_float(width_degrees)
+    if width <= 0.0:
+        result = np.zeros_like(hue, dtype=np.float64)
+    elif width >= 360.0:
+        result = np.ones_like(hue, dtype=np.float64)
+    else:
+        distance = np.abs((hue - center + 180.0) % 360.0 - 180.0)
+        result = np.where(
+            distance >= width / 2.0,
+            0.0,
+            np.cos(np.pi * distance / width),
+        )
+    result = np.clip(np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+    return float(result) if result.ndim == 0 else result.astype(np.float32)
+
+
+def luminance_weight(luminance: Any):
+    """Triangular midtone weighting: black and white get zero weight."""
+    require_numpy()
+    value = np.nan_to_num(np.asarray(luminance, dtype=np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+    result = 1.0 - np.abs(2.0 * np.clip(value, 0.0, 1.0) - 1.0)
+    return float(result) if result.ndim == 0 else result.astype(np.float32)
+
+
+def compress_density(density: Any, compression: Any = 1.0):
+    """Bound positive density with a deterministic rational compression curve."""
+    require_numpy()
+    value = np.nan_to_num(np.asarray(density, dtype=np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+    amount = max(0.0, _finite_float(compression))
+    value = np.clip(value, 0.0, 1.0)
+    result = value / (1.0 + amount * value)
+    return float(result) if result.ndim == 0 else result.astype(np.float32)
+
+
+def color_density(
+    hue_degrees: Any,
+    chroma: Any,
+    luminance: Any,
+    center_degrees: Any,
+    width_degrees: Any = 60.0,
+    density_gain: Any = 1.0,
+    compression: Any = 1.0,
+):
+    """Reference for hue-weighted, luminance-weighted chroma density."""
+    require_numpy()
+    chroma_value = np.nan_to_num(np.asarray(chroma, dtype=np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+    gain = max(0.0, _finite_float(density_gain))
+    weighted = np.clip(chroma_value, 0.0, 1.0)
+    weighted = weighted * hue_sector_weight(hue_degrees, center_degrees, width_degrees)
+    weighted = weighted * luminance_weight(luminance) * gain
+    return compress_density(weighted, compression)

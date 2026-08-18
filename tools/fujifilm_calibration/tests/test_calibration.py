@@ -10,7 +10,14 @@ sys.path.insert(0, str(HERE))
 from compare_chart import compare_chart
 from measure_grain import measure_grain
 from measure_tone import measure_tone
-from reference_pipeline import as_rgb, crop_fraction, image_digest
+from reference_pipeline import (
+    as_rgb,
+    color_density,
+    compress_density,
+    crop_fraction,
+    image_digest,
+    hue_sector_weight,
+)
 from report import markdown_report
 
 
@@ -60,3 +67,19 @@ def test_digest_and_report_are_stable():
     text = markdown_report(result)
     assert "Metrics are intentionally reported separately" in text
     assert "## Tone" in text and "## Grain" in text
+
+
+def test_hue_sector_weight_wraps_continuously_at_zero():
+    assert np.isclose(hue_sector_weight(359.0, 0.0, 60.0), hue_sector_weight(1.0, 0.0, 60.0))
+    assert hue_sector_weight(359.0, 0.0, 60.0) > 0.99
+
+
+def test_color_density_is_neutral_stable_and_luminance_weighted():
+    assert color_density(20.0, 0.0, 0.5, 20.0) == 0.0
+    assert color_density(20.0, 1.0, 0.5, 20.0) > color_density(20.0, 1.0, 0.0, 20.0)
+
+
+def test_color_density_is_finite_bounded_and_compression_monotonic():
+    value = color_density(float("nan"), 100.0, -20.0, float("inf"))
+    assert np.isfinite(value) and 0.0 <= value <= 1.0
+    assert 0.0 <= compress_density(0.25, 2.0) < compress_density(1.0, 2.0) <= 1.0

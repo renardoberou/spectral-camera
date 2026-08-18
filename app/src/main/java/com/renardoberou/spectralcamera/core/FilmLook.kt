@@ -38,6 +38,7 @@ data class MonoIRLook(
     val grainBase: Float,
     val waterFloor: Float,
     val acutanceBias: Float,
+    val sharedProfile: SharedFilmProfile = SharedFilmProfile.IDENTITY,
 )
 
 /**
@@ -71,6 +72,12 @@ data class DensityProfile(
     val density: Float = 0f,
     val chromaCompression: Float = 0f,
     val blueDensity: Float = 0f,
+    val redWeight: Float = 1f,
+    val yellowWeight: Float = 1f,
+    val greenWeight: Float = 1f,
+    val cyanWeight: Float = 1f,
+    val blueWeight: Float = 1f,
+    val magentaWeight: Float = 1f,
 )
 
 data class SharedFilmProfile(
@@ -129,6 +136,7 @@ data class AerochromeLook(
     val grainBias: Float,
     val grainBase: Float,
     val acutanceBias: Float,
+    val sharedProfile: SharedFilmProfile = SharedFilmProfile.IDENTITY,
 )
 
 /**
@@ -136,6 +144,12 @@ data class AerochromeLook(
  * stock's numbers live.
  */
 object FilmLookLibrary {
+
+    private val spectralRefinement = SharedFilmProfile(
+        tone = ToneProfile(toe = 0.02f, shoulder = 0.08f, highlightChromaCompression = 0.12f),
+        protection = ProtectionProfile(skin = 0.75f, foliage = 0.25f, sky = 0.45f, neutral = 0.75f),
+        density = DensityProfile(density = 0.06f, chromaCompression = 0.10f, blueDensity = 0.04f),
+    )
 
     private val monoLooks: Map<SpectralPreset, MonoIRLook> = mapOf(
         // Rollei Infrared 400: fine-grained, sharp, controlled halation,
@@ -326,7 +340,9 @@ object FilmLookLibrary {
             sharedProfile = SharedFilmProfile(
                 tone = ToneProfile(toe = 0.10f, shoulder = 0.18f, highlightChromaCompression = 0.18f),
                 protection = ProtectionProfile(skin = 0.72f, foliage = 0.35f, sky = 0.55f, neutral = 0.80f),
-                density = DensityProfile(density = 0.22f, chromaCompression = 0.16f, blueDensity = 0.14f),
+                density = DensityProfile(density = 0.22f, chromaCompression = 0.16f, blueDensity = 0.14f,
+                    redWeight = 0.80f, yellowWeight = 0.72f, greenWeight = 0.58f,
+                    cyanWeight = 0.74f, blueWeight = 0.84f, magentaWeight = 0.66f),
             ),
         ),
         SpectralPreset.CINEMATIC_NEUTRAL to StandardFilmLook(
@@ -340,7 +356,9 @@ object FilmLookLibrary {
             sharedProfile = SharedFilmProfile(
                 tone = ToneProfile(toe = 0.16f, shoulder = 0.24f, highlightChromaCompression = 0.24f),
                 protection = ProtectionProfile(skin = 0.80f, foliage = 0.45f, sky = 0.62f, neutral = 0.88f),
-                density = DensityProfile(density = 0.12f, chromaCompression = 0.24f, blueDensity = 0.10f),
+                density = DensityProfile(density = 0.12f, chromaCompression = 0.24f, blueDensity = 0.10f,
+                    redWeight = 0.72f, yellowWeight = 0.68f, greenWeight = 0.62f,
+                    cyanWeight = 0.70f, blueWeight = 0.76f, magentaWeight = 0.64f),
             ),
         ),
         SpectralPreset.WARM_NEGATIVE to StandardFilmLook(
@@ -354,7 +372,9 @@ object FilmLookLibrary {
             sharedProfile = SharedFilmProfile(
                 tone = ToneProfile(toe = 0.13f, shoulder = 0.20f, highlightChromaCompression = 0.22f),
                 protection = ProtectionProfile(skin = 0.90f, foliage = 0.30f, sky = 0.48f, neutral = 0.72f),
-                density = DensityProfile(density = 0.18f, chromaCompression = 0.20f, blueDensity = 0.06f),
+                density = DensityProfile(density = 0.18f, chromaCompression = 0.20f, blueDensity = 0.06f,
+                    redWeight = 0.86f, yellowWeight = 0.88f, greenWeight = 0.64f,
+                    cyanWeight = 0.58f, blueWeight = 0.62f, magentaWeight = 0.78f),
             ),
         ),
     )
@@ -413,10 +433,12 @@ object FilmLookLibrary {
     )
 
     fun monoLookFor(preset: SpectralPreset): MonoIRLook =
-        monoLooks[preset] ?: monoLooks.getValue(SpectralPreset.B_W_INFRARED)
+        (monoLooks[preset] ?: monoLooks.getValue(SpectralPreset.B_W_INFRARED))
+            .copy(sharedProfile = spectralRefinement)
 
     fun aeroLookFor(preset: SpectralPreset): AerochromeLook =
-        aeroLooks[preset] ?: aeroLooks.getValue(SpectralPreset.AEROCHROME_FALSE_COLOR)
+        (aeroLooks[preset] ?: aeroLooks.getValue(SpectralPreset.AEROCHROME_FALSE_COLOR))
+            .copy(sharedProfile = spectralRefinement)
 
     fun standardLookFor(preset: SpectralPreset): StandardFilmLook =
         standardLooks[preset] ?: standardLooks.getValue(SpectralPreset.EKTAR_100)

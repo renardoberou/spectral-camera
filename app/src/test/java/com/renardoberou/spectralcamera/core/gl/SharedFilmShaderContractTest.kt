@@ -14,6 +14,10 @@ class SharedFilmShaderContractTest {
         assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedProtection"))
         assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedDensity"))
         assertTrue(FRAGMENT_BODY.contains("vec3 sharedFujiStage"))
+        assertTrue(FRAGMENT_BODY.contains("uniform vec4 uSharedHueA"))
+        assertTrue(FRAGMENT_BODY.contains("uniform vec2 uSharedHueB"))
+        assertTrue(FRAGMENT_BODY.contains("float sharedProtectionConfidence"))
+        assertTrue(FRAGMENT_BODY.contains("float hueSectorWeight"))
         assertTrue(FRAGMENT_BODY.indexOf("vec3 c = presetColor") < FRAGMENT_BODY.indexOf("c = sharedFujiStage(c)"))
     }
 

@@ -1,49 +1,41 @@
 # Fujifilm-inspired integration implementation status
 
-Date: 2026-08-18
+Date: 2026-08-18 (continuation audit)
 Branch: `feat/fujifilm-inspired-rendering`
 
-## Completed source scope
+This document reports implementation evidence only. It does not promote source or CI results to physical-device verification.
 
-- Recorded the clean baseline and hashes of preserved repository fixtures.
-- Added Android-free working-space helpers in `core/color/WorkingSpaceMath.kt`.
-- Added monotonic toe/mid/shoulder reference math in `core/color/ToneMath.kt`.
-- Added deterministic JVM tests for finite handling, conversion round trips, headroom, monotonic tone, shoulder slope, and final bounds.
-- Added `ToneProfile`, `ProtectionProfile`, `DensityProfile`, and `SharedFilmProfile` as additive data structures in `FilmLook.kt`.
-- Added original `Archive Chrome`, `Cinematic Neutral`, and `Warm Negative` visible-spectrum profiles.
-- Added a generic GLSL shared refinement stage after `presetColor()`. Legacy profiles receive identity uniforms; the spectral front ends remain unchanged.
-- Added per-draw uniform reset and shader-contract tests for ordering and preset indices.
-- Added a deterministic Python calibration harness under `tools/fujifilm_calibration/` with separate tone, grain, colour/chart, reference, and report functions.
-- Added calibration protocol and manifest templates with no fabricated device/reference captures.
-- Updated product and release documentation with Fuji-inspired disclosure and explicit verification boundaries.
+## Phase status
 
-## Evidence
+| Phase | Status | Evidence / boundary |
+|---|---|---|
+| 0 — baseline and evidence | DONE | Baseline receipt, preserved-fixture hashes, calibration manifest, and protocol exist under `docs/fujifilm-integration/`. Live branch/worktree was re-audited before continuation. |
+| 1 — working-space and tone foundation | PARTIAL | `WorkingSpaceMath.kt` and `ToneMath.kt` have JVM tests. The live shader has a shared monotonic-style toe/shoulder/highlight refinement, but it still receives normalized 8-bit texture input and does not yet prove Kotlin/NumPy/GLSL numerical equivalence. |
+| 2 — confidence and material protection | PARTIAL | `MaterialConfidenceMath.kt` provides bounded, reliability-gated continuous fields with tests; shader protection now uses smooth confidence functions after family transforms. Debug visualization exists for legacy classifier signals, but there is no separate captureable overlay for every new confidence field. |
+| 3 — hue-sector and color density | DONE (analytic scope) | `HueSectorMath.kt`, Kotlin tests, NumPy reference functions, and nine deterministic Python checks cover circular sectors, neutral stability, midtone weighting, compression, and bounds. The live shader consumes six data-driven sector weights for the three visible profiles. LUT residual path remains intentionally not implemented. |
+| 4 — initial visible-spectrum profiles | PARTIAL | Archive Chrome, Cinematic Neutral, and Warm Negative are data-driven standard-film entries with original names and disclosure. They now carry sector weights and shared profile uniforms. UI grouping/discoverability and visual calibration remain unverified. |
+| 5 — Aerochrome shared refinements | PARTIAL | The existing synthetic-NIR/EIR front end remains unchanged and the shared tone/protection/density stage is now enabled after it with conservative profile data. No device scene re-shoot or preview/capture visual comparison has been run. Independent Aerochrome texture calibration is not complete. |
+| 6 — monochrome IR shared refinements | PARTIAL | Existing IR luminance/H&D construction remains upstream and the shared refinement stage is now enabled after it. No device scene re-shoot has been run; reflective-window confidence behavior and independent texture calibration remain open. |
+| 7 — calibration harness and paired reference data | PARTIAL | Deterministic Python harness now includes tone, grain, chart, hue-sector, and color-density primitives with nine passing checks. No paired phone/Fujifilm captures or reference reports are bundled; no numeric emulsion match is claimed. |
+| 8 — performance, memory, capability gating | BLOCKED | No physical GPU timing, memory measurement, GLES capability matrix, or Moto Edge 60 Fusion performance evidence is available from this environment. No optional LUT path was added, so no LUT capability fallback is claimed. |
+| 9 — UI, metadata, product honesty | PARTIAL | Original profile names/disclosure are present. Saved MediaStore descriptions now include `renderer_version=2` and `profile_id`. UI grouping and metadata readback still require Android/device verification. |
+| 10 — release and physical verification | NOT RUN | Local Java/Gradle remains unavailable. CI must be run for the continuation head. Moto Edge 60 Fusion launch, capture, gallery, orientation, export, and visual gates remain not run. |
 
-- `git diff --check`: PASS.
+## Current evidence
+
+- Python calibration runner: PASS, 9 deterministic checks using `/tmp/run_spectral_calibration_tests.py`.
 - Python bytecode compilation: PASS.
-- Calibration package import/chart smoke test: PASS.
-- Calibration worker's six deterministic tests: PASS using an explicit Python runner; `pytest` is unavailable in the Hermes venv.
-- `./gradlew testDebugUnitTest`: NOT RUN locally; the environment has no `java` executable and `JAVA_HOME` is unset.
-- GitHub Actions Android CI: **PASS** for head `8648f9fc9ad3ad6eb83a96604eb222e407ae8665`; run `32163202346` at `https://github.com/renardoberou/spectral-camera/actions/runs/32163202346`.
-- CI debug APK artifact: **PASS**; `/home/bernardo/.hermes/profiles/spectral-camera/artifacts/8648f9f/app-debug.apk`, 27,517,186 bytes, SHA-256 `f18b783d6743c4231fd10fe66e2b6ae0e049fc9c0465a14df196eed72a17b41c`.
-- Android lint/build: **PASS in CI**; local Gradle execution remains unavailable.
-- Physical Moto Edge 60 Fusion: NOT RUN; no device connection was available.
-
-## Interpretation
-
-The repository now contains a reviewable implementation slice: new visible
-profiles use a shared, data-driven refinement after the existing film-family
-front end, while Aerochrome synthetic-NIR/EIR and monochrome-IR construction
-remain upstream and identity-configured for legacy looks. The calibration
-harness can measure future paired captures but does not claim that any profile
-matches a Fujifilm camera.
+- `git diff --check`: PASS at audit time.
+- Local Gradle/JVM tests: NOT RUN; Java is unavailable (`JAVA_HOME` unset and no `java` executable).
+- Android shader compile/build: NOT YET VERIFIED for this continuation; GitHub Actions is the build authority.
+- Physical Moto Edge 60 Fusion: NOT RUN; no device connection is available from this shell.
 
 ## Remaining gates
 
-- Local Java 17/Android SDK installation is optional now that CI produced a
-verified artifact; local Gradle tests remain a reproducibility improvement.
-- Parent-side review inspected the full diff, corrected an undefined GLSL
-`smoothstep` edge, and verified the exact CI head SHA.
-- Install and exercise the CI APK on the Moto Edge 60 Fusion.
-- Record preview/capture/gallery/export and named failure-scene results in a
-dated validation report before calling the profiles device-verified.
+1. Run Android unit tests, lint, and debug assembly in CI for the exact continuation head.
+2. Download the exact debug APK artifact and verify its ZIP structure and SHA-256.
+3. Re-read the final diff and run independent review before commit/push.
+4. Re-shoot the named Aerochrome, monochrome-IR, and visible-profile scenes on the Moto Edge 60 Fusion, including preview/capture/gallery/export/orientation parity.
+5. Add real performance/capability measurements and paired calibration evidence when the device/reference captures exist.
+
+The continuation is intentionally not labelled complete.

@@ -23,6 +23,11 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class MediaRepository(private val context: Context) {
+    companion object {
+        /** Increment when the shared rendering stage changes saved-image meaning. */
+        const val RENDERER_VERSION = 2
+    }
+
     private val resolver = context.contentResolver
     private val currentPicturesPath = "${Environment.DIRECTORY_DCIM}/SpectralCamera"
     private val formerPicturesPath = "${Environment.DIRECTORY_PICTURES}/SpectralCamera"
@@ -333,7 +338,9 @@ class MediaRepository(private val context: Context) {
                 "$frameCount-frame sensor-linear RAW HDR • ${settings.hdrToneMap.label} tone map"
         }
         val protection = if (motionProtected) " • motion-protected fusion" else ""
-        return "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
+        return "renderer_version=$RENDERER_VERSION; profile_id=${settings.preset.name.lowercase(Locale.US)} • " +
+            "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • " +
+            "Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
     }
 
     private fun captureToken(
