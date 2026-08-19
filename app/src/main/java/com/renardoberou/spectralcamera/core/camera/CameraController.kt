@@ -180,7 +180,6 @@ class CameraController(context: Context) {
         val resolution = request.resolution
         sourceResolution = resolution
         texture.setDefaultBufferSize(resolution.width, resolution.height)
-        updateSourceGeometry(currentRelativeRotation())
         request.setTransformationInfoListener(mainExecutor) { info ->
             updateSourceGeometry(info.rotationDegrees)
         }
@@ -196,15 +195,6 @@ class CameraController(context: Context) {
         }
     }
 
-    private fun currentRelativeRotation(): Int {
-        val info = camera?.cameraInfo ?: return sourceRotation
-        val displayRotation = glView?.display?.rotation ?: Surface.ROTATION_0
-        return try {
-            info.getSensorRotationDegrees(displayRotation)
-        } catch (_: Exception) {
-            sourceRotation
-        }
-    }
 
     fun bind(
         lifecycleOwner: LifecycleOwner,
@@ -1066,10 +1056,6 @@ class CameraController(context: Context) {
         rawJpegActive = enableRawSidecar
         rawHdrActive = enableRawHdr
         imageCapture = captureUseCase
-        sourceResolution?.let { resolution ->
-            sourceRotation = currentRelativeRotation()
-            glView?.configureSource(resolution.width, resolution.height, sourceRotation)
-        }
         updateCapabilities()
     }
 

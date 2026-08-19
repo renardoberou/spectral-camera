@@ -1508,8 +1508,10 @@ class SpectralRenderer(
         }
 
         Matrix.scaleM(posMatrix, 0, sx, sy, 1f)
-        // The SurfaceTexture transform already carries the camera orientation,
-        // so the quad only needs aspect scaling and optional mirroring here.
+        // CameraX's SurfaceRequest TransformationInfo is the authoritative
+        // preview rotation. SurfaceTexture's matrix uses the opposite sign from
+        // the position transform, so compensate once here.
+        Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
     }
 
     private fun drawQuad(
