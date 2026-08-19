@@ -13,21 +13,37 @@ class CompactCameraContractsTest {
     ).readText()
 
     @Test
-    fun compactTopCameraControlsContainEssentialAdjustmentsAndMore() {
+    fun compactTopCameraControlsContainPresetsBetweenWhiteBalanceAndMore() {
         assertEquals(
-            listOf("Exposure", "Focus", "WB", "More"),
+            listOf("Exposure", "Focus", "WB", "Presets", "More"),
             compactCameraActionInventory,
         )
     }
 
     @Test
-    fun moreIsAdjacentToWhiteBalanceWithNoLowerDuplicateRow() {
+    fun compactSourceOrdersWhiteBalancePresetsAndMore() {
         val compactControls = liveCameraSource
             .substringAfter("Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {")
             .substringBefore("                if (capabilities?.exposureSupported == true && showExposure)")
 
-        assertTrue(compactControls.indexOf("Text(\"WB ") < compactControls.indexOf("Text(\"More\")"))
+        val whiteBalanceIndex = compactControls.indexOf("Text(\"WB ")
+        val presetsIndex = compactControls.indexOf("Text(\"Presets\")")
+        val moreIndex = compactControls.indexOf("Text(\"More\")")
+
+        assertTrue(whiteBalanceIndex >= 0)
+        assertTrue(whiteBalanceIndex < presetsIndex)
+        assertTrue(presetsIndex < moreIndex)
+        assertEquals(1, liveCameraSource.windowed("Text(\"Presets\")".length).count { it == "Text(\"Presets\")" })
         assertEquals(1, liveCameraSource.windowed("Text(\"More\")".length).count { it == "Text(\"More\")" })
+    }
+
+    @Test
+    fun lowerActionCentreDoesNotContainPresets() {
+        val lowerActionCentre = liveCameraSource
+            .substringAfter("                        Text(\n                            captureLabel")
+            .substringBefore("                Text(\n                    text = \"Simulated IR")
+
+        assertTrue(!lowerActionCentre.contains("Presets"))
     }
 
     @Test

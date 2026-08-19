@@ -402,6 +402,11 @@ fun LiveCameraScreen(
                     }
                     FilterChip(
                         selected = false,
+                        onClick = { showPresets = true },
+                        label = { Text("Presets") },
+                    )
+                    FilterChip(
+                        selected = false,
                         onClick = { showMore = true },
                         label = { Text("More") },
                     )
@@ -916,7 +921,7 @@ private fun MoreToolsSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("More / Tools", style = MaterialTheme.typography.headlineSmall)
-        FilterChip(selected = false, onClick = onPresets, label = { Text("Presets") })
+        FilterChip(selected = false, onClick = onPresets, label = { Text(compactCameraActionInventory[3]) })
         FilterChip(selected = false, onClick = onAdjustments, label = { Text("Look adjustments") })
         FilterChip(selected = settings.saveOriginal, onClick = onSaveOriginal, label = { Text("Save original") })
         FilterChip(selected = false, onClick = onImport, label = { Text("Import photo") })
