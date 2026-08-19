@@ -4,7 +4,6 @@ import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.OutputMode
 import com.renardoberou.spectralcamera.core.SensorMode
 import com.renardoberou.spectralcamera.core.SpectralPreset
-import java.util.Locale
 
 /**
  * Photographer-facing names for shipped UI and export metadata.
@@ -13,32 +12,29 @@ import java.util.Locale
  * that should turn a preset into customer-visible copy outside research docs.
  */
 object CommercialNaming {
-    private val labels = mapOf(
-        SpectralPreset.B_W_INFRARED to "Infrared Mono",
-        SpectralPreset.HIGH_CONTRAST_IR to "Deep Infrared",
-        SpectralPreset.WHITE_FOLIAGE_DARK_SKY to "Soft Infrared",
-        SpectralPreset.MONO_IR_MODERATE to "Balanced Infrared",
-        SpectralPreset.MONO_IR_FINE_GRAIN to "Fine Infrared",
-        SpectralPreset.MONO_IR_SOFT_VINTAGE to "Vintage Infrared",
-        SpectralPreset.AEROCHROME_FALSE_COLOR to "False Colour Classic",
-        SpectralPreset.AEROCHROME_SOFT to "False Colour Soft",
-        SpectralPreset.AEROCHROME_DENSE to "False Colour Dense",
-        SpectralPreset.AEROCHROME_GOLD to "False Colour Gold",
-        SpectralPreset.AEROCHROME_FADED to "False Colour Faded",
-        SpectralPreset.AEROCHROME_VIVID to "False Colour Vivid",
-        SpectralPreset.EKTAR_100 to "Vivid Colour",
-        SpectralPreset.CINESTILL_800T to "Tungsten Halation",
-        SpectralPreset.TRI_X_400 to "Documentary Mono",
-        SpectralPreset.PORTRA_400 to "Natural Portrait",
-        SpectralPreset.ARCHIVE_CHROME to "Archive Colour",
-        SpectralPreset.CINEMATIC_NEUTRAL to "Cinematic Neutral",
-        SpectralPreset.WARM_NEGATIVE to "Warm Negative",
+    private val metadataIds = mapOf(
+        SpectralPreset.B_W_INFRARED to "infrared_mono",
+        SpectralPreset.HIGH_CONTRAST_IR to "deep_infrared",
+        SpectralPreset.WHITE_FOLIAGE_DARK_SKY to "soft_infrared",
+        SpectralPreset.MONO_IR_MODERATE to "balanced_infrared",
+        SpectralPreset.MONO_IR_FINE_GRAIN to "fine_infrared",
+        SpectralPreset.MONO_IR_SOFT_VINTAGE to "vintage_infrared",
+        SpectralPreset.AEROCHROME_FALSE_COLOR to "false_colour_classic",
+        SpectralPreset.AEROCHROME_SOFT to "false_colour_soft",
+        SpectralPreset.AEROCHROME_DENSE to "false_colour_dense",
+        SpectralPreset.AEROCHROME_GOLD to "false_colour_gold",
+        SpectralPreset.AEROCHROME_FADED to "false_colour_faded",
+        SpectralPreset.AEROCHROME_VIVID to "false_colour_vivid",
+        SpectralPreset.EKTAR_100 to "vivid_colour",
+        SpectralPreset.CINESTILL_800T to "tungsten_halation",
+        SpectralPreset.TRI_X_400 to "documentary_mono",
+        SpectralPreset.PORTRA_400 to "natural_portrait",
+        SpectralPreset.ARCHIVE_CHROME to "archive_colour",
+        SpectralPreset.CINEMATIC_NEUTRAL to "cinematic_neutral",
+        SpectralPreset.WARM_NEGATIVE to "warm_negative",
     )
-    private val metadataIds = labels.mapValues { (_, label) ->
-        label.lowercase(Locale.US).replace("[^a-z0-9]+".toRegex(), "_").trim('_')
-    }
 
-    fun presetLabel(preset: SpectralPreset): String = labels.getValue(preset)
+    fun presetLabel(preset: SpectralPreset): String = preset.label
 
     fun familyLabel(family: LookFamily): String = when (family) {
         LookFamily.MONOCHROME_IR -> "Infrared"

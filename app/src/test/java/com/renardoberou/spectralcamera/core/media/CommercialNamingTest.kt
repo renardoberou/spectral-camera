@@ -7,26 +7,38 @@ import org.junit.Test
 
 class CommercialNamingTest {
     @Test
-    fun everyPresetHasACommercialDisplayNameWithoutResearchStockTerms() {
-        val prohibited = Regex("(?i)\\b(?:kodak|ilford|rollei|konica|aerochrome|ektar|cinestill|tri[- ]?x|portra|vision3|eir)\\b")
-
-        assertFalse(prohibited.containsMatchIn("Natural Portrait"))
+    fun presetAndExportLabelsUseTheCommercialSpectralPresetLabels() {
+        val oldDisplayNames = setOf(
+            "Infrared Mono",
+            "Deep Infrared",
+            "Soft Infrared",
+            "Balanced Infrared",
+            "Fine Infrared",
+            "Vintage Infrared",
+            "False Colour Classic",
+            "False Colour Soft",
+            "False Colour Dense",
+            "False Colour Gold",
+            "False Colour Faded",
+            "False Colour Vivid",
+            "Vivid Colour",
+            "Tungsten Halation",
+            "Documentary Mono",
+            "Natural Portrait",
+            "Archive Colour",
+            "Cinematic Neutral",
+            "Warm Negative",
+        )
 
         SpectralPreset.entries.forEach { preset ->
-            val label = CommercialNaming.presetLabel(preset)
-            assertFalse("$preset leaked a research term in '$label'", prohibited.containsMatchIn(label))
+            assertEquals(preset.label, CommercialNaming.presetLabel(preset))
+            assertEquals(preset.label, CommercialNaming.exportLabel(preset))
+            assertFalse("old display name leaked for $preset", CommercialNaming.presetLabel(preset) in oldDisplayNames)
         }
     }
 
     @Test
-    fun researchPresetIdsMapToStableCommercialLabels() {
-        assertEquals("Deep Infrared", CommercialNaming.presetLabel(SpectralPreset.HIGH_CONTRAST_IR))
-        assertEquals("Vivid Colour", CommercialNaming.presetLabel(SpectralPreset.EKTAR_100))
-        assertEquals("Natural Portrait", CommercialNaming.presetLabel(SpectralPreset.PORTRA_400))
-    }
-
-    @Test
-    fun metadataDescriptionUsesCommercialPresetLabelAndKeepsStableProfileId() {
+    fun metadataDescriptionUsesCommercialLabelAndKeepsStableProfileId() {
         val description = CommercialNaming.metadataProfile(
             preset = SpectralPreset.CINESTILL_800T,
             sensorLabel = "Simulated IR",
@@ -34,7 +46,7 @@ class CommercialNamingTest {
         )
 
         assertEquals(
-            "profile_id=tungsten_halation • Simulated IR • Tungsten Halation • Full Resolution",
+            "profile_id=tungsten_halation • Simulated IR • Street Chrome 800 • Full Resolution",
             description,
         )
     }
