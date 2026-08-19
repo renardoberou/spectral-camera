@@ -26,6 +26,7 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.DisplayOrientedMeteringPointFactory
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -83,6 +84,7 @@ import kotlinx.coroutines.sync.withLock
  * copies the native Bayer plane, and optionally writes each still-open RAW
  * image to DNG using its exact TotalCaptureResult.
  */
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class, ExperimentalGetImage::class)
 class CameraController(context: Context) {
     private val appContext = context.applicationContext
     private val cameraManager = appContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager

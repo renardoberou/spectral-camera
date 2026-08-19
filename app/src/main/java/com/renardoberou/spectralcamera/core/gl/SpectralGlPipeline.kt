@@ -250,6 +250,35 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // Large near-neutral casts (through-glass walls, haze) sit close to the
     // neutral point in the CLASSIFICATION average; real foliage never does.
     // This kills the red speckle rain without touching genuine vegetation.
+    // Confidence-aware neutral guard. The old greyC protection ran after
+    // vividBlue had already accepted small blue/cyan differences as a strong
+    // material decision. On pale walls and buildings that let JPEG/chroma
+    // noise become blue/lilac islands before the cream fallback could help.
+    // Keep the signal continuous, use the smoothed local luma only for
+    // continuity, and exempt credible foliage/water evidence so the
+    // Aerochrome signature remains authoritative where it should.
+    float neutralChromaConfidence = 1.0 - smoothstep(0.035, 0.10, chromaDistC);
+    float neutralGreenBalance = 1.0 - smoothstep(0.0, 0.05, abs(ng - 0.3333));
+    float neutralReliability = smoothstep(0.08, 0.20, luma);
+    float neutralSurfaceConfidence = neutralChromaConfidence * neutralGreenBalance
+        * neutralReliability * surfSmooth;
+    float competingMaterial = clamp(max(veg + oliveVeg, waterC), 0.0, 1.0);
+    float neutralArtifactConfidence = clamp(
+        neutralSurfaceConfidence * (1.0 - competingMaterial), 0.0, 1.0);
+    // Development-only classifier-stage diagnostic: R=neutral confidence,
+    // G=remaining blue/cyan authority, B=credible foliage authority. This is
+    // intentionally captured before the false-colour output and finishing
+    // stages so the confirmed artifact can be localized without guessing
+    // from the final JPEG.
+    gClassifierDebug = vec3(
+        neutralArtifactConfidence,
+        vividBlue * (1.0 - neutralArtifactConfidence * 0.90),
+        clamp(veg + oliveVeg, 0.0, 1.0)
+    );
+    vividBlue *= 1.0 - neutralArtifactConfidence * 0.90;
+    // Re-evaluate murky water after the neutral guard changes blue authority.
+    murky = weakGreen * lowChroma * surfSmooth * (1.0 - veg) * (1.0 - vividBlue);
+
     float chromaFloor = smoothstep(0.035, 0.058, chromaDistC);
     // ---- P1.4: water sanctity - foliage output may not bleed into water ----
     float waterStrong = clamp(max(vividBlue, murky * 1.2), 0.0, 1.0);
@@ -340,7 +369,9 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // Exclude genuine vegetation/water/murky - they can sit at similarly
     // modest chromaDistC in weakly-saturated cases (shaded olive foliage,
     // hazy pools) but must never be pulled toward neutral cream.
-    float greyC = greyWide * smoothstep(0.25, 0.60, luma) * (1.0 - vegAll) * (1.0 - vividBlue) * (1.0 - murky);
+    float greyC = max(greyWide, neutralArtifactConfidence)
+        * smoothstep(0.25, 0.60, luma)
+        * (1.0 - vegAll) * (1.0 - vividBlue) * (1.0 - murky);
     vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
     ir = mix(ir, cream, greyC * 0.85);
 

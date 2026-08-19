@@ -44,4 +44,15 @@ class SharedFilmShaderContractTest {
     fun sharedStageDoesNotPrecedeSpectralClassification() {
         assertTrue(FRAGMENT_BODY.indexOf("c = sharedFujiStage(c)") > FRAGMENT_BODY.indexOf("vec3 presetColor"))
     }
+
+    @Test
+    fun aerochromeNeutralConfidenceIsCapturedBeforeFalseColourFinishing() {
+        val neutralConfidence = FRAGMENT_BODY.indexOf("float neutralArtifactConfidence")
+        val aerochromeOutput = FRAGMENT_BODY.indexOf("vec3 ir = mix(base, folCol, vegAll);")
+        val diagnostic = FRAGMENT_BODY.indexOf("gClassifierDebug = vec3(")
+
+        assertTrue("neutral confidence stage is missing", neutralConfidence >= 0)
+        assertTrue("Aerochrome diagnostic does not expose the neutral stage", diagnostic >= 0)
+        assertTrue("neutral confidence must precede Aerochrome output", neutralConfidence < aerochromeOutput)
+    }
 }

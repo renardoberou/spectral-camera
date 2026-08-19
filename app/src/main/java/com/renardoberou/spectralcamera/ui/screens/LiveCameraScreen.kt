@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureActionResult
@@ -708,13 +709,15 @@ fun LiveCameraScreen(
                                 onClick = { viewModel.setZebra(!settings.zebraEnabled) },
                                 label = { Text("Zebra") },
                             )
-                            // Temporary diagnostic toggle - see classifierDebugView on
-                            // CameraSettings. Not a shipped feature.
-                            FilterChip(
-                                selected = settings.classifierDebugView,
-                                onClick = { viewModel.setClassifierDebugView(!settings.classifierDebugView) },
-                                label = { Text("Debug: classifiers") },
-                            )
+                            if (BuildConfig.DEBUG) {
+                                // Development-only diagnostic; never expose classifier
+                                // masks in a production build.
+                                FilterChip(
+                                    selected = settings.classifierDebugView,
+                                    onClick = { viewModel.setClassifierDebugView(!settings.classifierDebugView) },
+                                    label = { Text("Debug: classifiers") },
+                                )
+                            }
                         }
                     }
                 }

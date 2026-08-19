@@ -160,8 +160,8 @@ mandatory, consistent with the "Test status" section of the README.
 | Calibration harness | **PASS — Python smoke tests** | `tools/fujifilm_calibration/` keeps tone, grain, colour, and chart metrics separate; six deterministic tests and package import smoke tests passed with the system Python. `pytest` is not installed in the Hermes venv. |
 | Hue-sector/color-density analytic stage | **PASS — source + Python checks** | Six data-driven hue sectors are consumed by the shared shader stage for the three visible profiles; Kotlin and NumPy contracts cover wraparound, neutral stability, midtone weighting, compression, finiteness, and bounds. No LUT residual is claimed. |
 | Material-confidence analytic stage | **PASS — source + JVM test source** | `MaterialConfidenceMath.kt` provides bounded continuous fields and near-black reliability gating; the live shader uses smooth post-front-end confidence blending. Android execution remains CI-gated. |
-| Aerochrome / mono-IR shared refinements | **NOT RUN** | Shared post-spectral tone/protection/density uniforms are now wired for both families, but no Android/GL/device render was executed. Existing physical validation rows remain unchanged. |
-| Moto Edge 60 Fusion re-shoots | **NOT RUN** | No physical device connection was available from this shell. |
+| Aerochrome / mono-IR shared refinements | **PARTIAL — device matrix evidence** | Shared post-spectral tone/protection/density uniforms were exercised in the 19-preset Motorola matrix. Mechanical capture/save/gallery evidence is preserved under `.git/next-build-evidence-20260819/matrix-final2/`; visual review is recorded below. |
+| Moto Edge 60 Fusion re-shoots | **PARTIAL — connected device** | The Motorola Edge 60 Fusion completed the exposed 19-preset capture matrix with full-resolution save status, gallery navigation, and zero fatal-pattern lines. The phone was physically held sideways during this run, so the portrait dimensions do not constitute an orientation defect or an orientation PASS. |
 
 The implementation status and exact source/build/CI evidence are tracked in
 `docs/fujifilm-integration/IMPLEMENTATION_STATUS.md`. A source or CI result
@@ -280,7 +280,50 @@ grain share rose to 0.98-1.05 (Rollei) and 0.36-0.39 (Ektar); CineStill's deepes
 grain share fell from 0.95/0.90 to 0.51/0.58, confirming the reduced floor takes effect
 as sourced. Highlight protection re-confirmed bit-identical by construction (shadowLift
 itself is exactly 0 above luma 0.34, independent of the scale multiplier). Reports and
-recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
+Reports and recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
+
+---
+
+## Device matrix review — 2026-08-19
+
+The post-neutral-correction matrix contains 19 processed JPEGs: six monochrome IR,
+six Aerochrome variants, and seven visible profiles. The extraction/integrity report
+is `.git/next-build-evidence-20260819/matrix-final2/image-summary.txt`; per-file
+dimensions, byte counts, EXIF orientation values, and SHA-256 checksums are in
+`.git/next-build-evidence-20260819/matrix-final2/image-checksums.tsv`.
+
+Evidence boundary: every extracted file is a valid JPEG, all 19 are unique, all
+report `3072x4096` and EXIF orientation `1`, and the matrix rows recorded
+`Saved Standard • 1 frame • Full Resolution`, gallery navigation, and zero fatal
+pattern lines. This proves the capture/export path for that run. It does not prove
+that a portrait/landscape result is wrong: the phone was deliberately held/set
+sideways, and no fixed-position orientation reference was recorded.
+
+Visual review of the preserved full-resolution outputs:
+
+- **Aerochrome Classic and variants — PARTIAL:** the synthetic blue sky and strong
+  red/magenta foliage response are visible and remain distinct from the visible and
+  mono families. Pale railings and building surfaces are mostly cream/gray rather
+  than the old saturated magenta speckling, but blue-violet edge/patch structure is
+  still visible around some high-contrast building and railing boundaries. No clear
+  sky banding was visible at the contact-sheet scale; strong local contrast and
+  clipped dark foliage/highlight edges remain scene-dependent watch items.
+- **B&W Infrared — PASS for family separation, PARTIAL for tonal latitude:** output
+  is genuinely monochrome, with bright foliage, dark sky, and building texture
+  clearly separated from Aerochrome. The sample contains very bright foliage and
+  deep sky/shadow regions, so highlight/shadow clipping cannot be ruled out as a
+  general guarantee from this one scene; no obvious colored leakage or broad banding
+  was visible.
+- **Warm Negative — PASS for this scene:** it remains a visible-spectrum profile,
+  with green foliage, pale warm surfaces, blue sky, and restrained negative-like
+  contrast. It is visibly separate from both the magenta/blue Aerochrome route and
+  the monochrome IR route. This is a scene review, not a full calibration claim.
+
+Orientation remains **NOT CLASSIFIED** by this matrix. The current source continues
+to use CameraX JPEG EXIF orientation first and `ImageProxy.imageInfo.rotationDegrees`
+as its fallback; the temporary alternate fallback and its tests were removed after
+the physical-position correction because this run did not establish a reproducible
+orientation bug.
 
 **Correction (2026-07-24, third pass):** a real device photo of a detailed subject (camo-
 pattern bag, straps) showed Rollei reading noisy - the ratio fix above correctly matched
