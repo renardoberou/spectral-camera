@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FlashOn
-import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -401,6 +400,11 @@ fun LiveCameraScreen(
                             label = { Text("WB ${settings.whiteBalancePreset.label}") },
                         )
                     }
+                    FilterChip(
+                        selected = false,
+                        onClick = { showMore = true },
+                        label = { Text("More") },
+                    )
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
@@ -666,9 +670,6 @@ fun LiveCameraScreen(
                             }) {
                                 Icon(Icons.Outlined.FlashOn, contentDescription = "Torch")
                             }
-                            IconButton(onClick = onOpenGallery) {
-                                Icon(Icons.Outlined.PhotoLibrary, contentDescription = "Gallery")
-                            }
                         }
 
                         if (doubleExposureState.waitingForSecond) {
@@ -682,17 +683,6 @@ fun LiveCameraScreen(
                             )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            FilterChip(
-                                selected = false,
-                                onClick = { showMore = true },
-                                label = { Text("More") },
-                            )
-                        }
                     }
                 }
 

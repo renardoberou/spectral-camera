@@ -5,7 +5,7 @@ import com.renardoberou.spectralcamera.core.SpectralPreset
 
 /** Pure layout/catalog contracts for the compact live-camera surface. */
 internal val compactCameraActionInventory = listOf(
-    "Exposure", "Focus", "WB",
+    "Exposure", "Focus", "WB", "More",
 )
 
 internal val compactPresetFamilyOrder = listOf(

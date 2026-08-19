@@ -2,17 +2,37 @@ package com.renardoberou.spectralcamera.ui.screens
 
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.SpectralPreset
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompactCameraContractsTest {
+    private val liveCameraSource = File(
+        "src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
+    ).readText()
+
     @Test
-    fun compactTopCameraControlsContainOnlyEssentialAdjustments() {
+    fun compactTopCameraControlsContainEssentialAdjustmentsAndMore() {
         assertEquals(
-            listOf("Exposure", "Focus", "WB"),
+            listOf("Exposure", "Focus", "WB", "More"),
             compactCameraActionInventory,
         )
+    }
+
+    @Test
+    fun moreIsAdjacentToWhiteBalanceWithNoLowerDuplicateRow() {
+        val compactControls = liveCameraSource
+            .substringAfter("Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {")
+            .substringBefore("                if (capabilities?.exposureSupported == true && showExposure)")
+
+        assertTrue(compactControls.indexOf("Text(\"WB ") < compactControls.indexOf("Text(\"More\")"))
+        assertEquals(1, liveCameraSource.windowed("Text(\"More\")".length).count { it == "Text(\"More\")" })
+    }
+
+    @Test
+    fun cameraActionPanelHasNoDuplicateGalleryShortcut() {
+        assertTrue(!liveCameraSource.contains("PhotoLibrary"))
     }
 
     @Test
