@@ -72,6 +72,11 @@ class CompactCameraContractsTest {
     }
 
     @Test
+    fun presetThumbnailLabelsAllowThreeLinesForNarrowTiles() {
+        assertTrue(liveCameraSource.contains("maxLines = 3"))
+    }
+
+    @Test
     fun activePresetIsRevealedWithoutChangingCatalogOrder() {
         val current = SpectralPreset.AEROCHROME_DENSE
         val ordered = presetsForLazyGrid(current)

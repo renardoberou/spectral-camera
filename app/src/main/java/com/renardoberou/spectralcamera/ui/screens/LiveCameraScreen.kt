@@ -869,7 +869,7 @@ internal fun PresetSheet(
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color.White,
-                                    maxLines = 2,
+                                    maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 if (preset == current) {
