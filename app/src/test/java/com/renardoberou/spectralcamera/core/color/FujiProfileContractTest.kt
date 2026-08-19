@@ -18,7 +18,7 @@ class FujiProfileContractTest {
         )
 
         assertTrue(presets.all { it.family.name == "STANDARD_FILM" })
-        assertEquals(listOf("Archive Chrome", "Cinematic Neutral", "Warm Negative"), presets.map { it.label })
+        assertEquals(listOf("Archive Chrome —", "Cinematic Neutral —", "Warm Negative 400"), presets.map { it.label })
         assertEquals(3, presets.map { it.label }.toSet().size)
     }
 
