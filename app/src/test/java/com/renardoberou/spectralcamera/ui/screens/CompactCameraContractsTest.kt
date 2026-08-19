@@ -8,9 +8,9 @@ import org.junit.Test
 
 class CompactCameraContractsTest {
     @Test
-    fun compactEssentialsKeepCameraFirstActionInventory() {
+    fun compactTopCameraControlsContainOnlyEssentialAdjustments() {
         assertEquals(
-            listOf("Exposure", "Focus", "WB", "Capture", "Switch camera", "Torch", "Gallery", "More"),
+            listOf("Exposure", "Focus", "WB"),
             compactCameraActionInventory,
         )
     }

@@ -376,23 +376,6 @@ fun LiveCameraScreen(
                             label = { Text("WB ${settings.whiteBalancePreset.label}") },
                         )
                     }
-                    FilterChip(
-                        selected = settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED,
-                        onClick = {
-                            val next = if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
-                                DoubleExposureMode.OFF
-                            } else {
-                                DoubleExposureMode.FILM_BALANCED
-                            }
-                            viewModel.setDoubleExposureMode(next)
-                        },
-                        label = { Text("2x Exp.") },
-                    )
-                    FilterChip(
-                        selected = false,
-                        onClick = { showPresets = true },
-                        label = { Text("Presets") },
-                    )
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
                     Surface(
@@ -749,6 +732,7 @@ fun LiveCameraScreen(
                         importLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                     onDoubleExposure = {
+                        showMore = false
                         viewModel.setDoubleExposureMode(
                             if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) DoubleExposureMode.OFF
                             else DoubleExposureMode.FILM_BALANCED,
