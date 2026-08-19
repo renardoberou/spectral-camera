@@ -60,10 +60,15 @@ class CompactCameraContractsTest {
     }
 
     @Test
-    fun presetGridUsesTwoColumnsOnPortraitAndAtLeastThreeWhenWide() {
-        assertEquals(2, presetGridColumnCount(360))
-        assertEquals(3, presetGridColumnCount(600))
-        assertEquals(4, presetGridColumnCount(840))
+    fun presetGridUsesFourColumnsOnPortraitAndStaysResponsiveWhenWide() {
+        assertEquals(4, presetGridColumnCount(360))
+        assertEquals(5, presetGridColumnCount(600))
+        assertEquals(6, presetGridColumnCount(840))
+    }
+
+    @Test
+    fun presetTilesMeetMinimumTouchTarget() {
+        assertTrue(presetTileMinTouchSizeDp >= 48)
     }
 
     @Test

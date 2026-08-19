@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSizeIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -835,6 +837,7 @@ internal fun PresetSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
+                            .requiredSizeIn(minWidth = presetTileMinTouchSizeDp.dp, minHeight = presetTileMinTouchSizeDp.dp)
                             .clickable { onPick(preset) }
                             .semantics {
                                 contentDescription = "${PresetCatalog.metadataFor(preset).label}, ${preset.family.label}"
@@ -845,26 +848,33 @@ internal fun PresetSheet(
                         else MaterialTheme.colorScheme.surfaceVariant,
                         tonalElevation = if (preset == current) 5.dp else 1.dp,
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize().padding(10.dp),
-                            verticalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                preset.family.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.secondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                        val thumbnail = remember(preset) { PresetThumbnailCatalog.thumbnailFor(preset) }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Image(
+                                painter = painterResource(thumbnail.resourceId),
+                                contentDescription = "${PresetCatalog.metadataFor(preset).label} thumbnail",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
                             )
-                            Text(
-                                PresetCatalog.metadataFor(preset).label,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (preset == current) {
-                                Text("Active", style = MaterialTheme.typography.labelSmall)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000))))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    PresetCatalog.metadataFor(preset).label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (preset == current) {
+                                    Text("Active", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                }
                             }
                         }
                     }

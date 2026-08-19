@@ -17,10 +17,13 @@ internal val compactPresetFamilyOrder = listOf(
 internal val grainOptionLabels = listOf("Off", "Fine", "Medium", "Coarse", "Extreme")
 internal val grainOptionValues = listOf(0f, 0.25f, 0.5f, 0.85f, 1.25f)
 
+internal const val presetTileMinTouchSizeDp = 48
+
 internal fun presetGridColumnCount(widthDp: Int): Int = when {
-    widthDp >= 800 -> 4
-    widthDp >= 520 -> 3
-    else -> 2
+    widthDp >= 800 -> 6
+    widthDp >= 520 -> 5
+    widthDp >= 360 -> 4
+    else -> 3
 }
 
 internal fun presetsForLazyGrid(current: SpectralPreset): List<SpectralPreset> {
