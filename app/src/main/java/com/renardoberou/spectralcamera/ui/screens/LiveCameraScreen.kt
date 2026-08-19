@@ -81,6 +81,31 @@ import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 
+internal enum class MoreAction {
+    PRESETS,
+    ADJUSTMENTS,
+    SAVE_ORIGINAL,
+    IMPORT,
+    DOUBLE_EXPOSURE,
+    ZEBRA,
+}
+
+internal enum class MoreActionTransition {
+    DISMISS,
+    PRESETS,
+    ADJUSTMENTS,
+}
+
+internal fun moreActionTransition(action: MoreAction): MoreActionTransition = when (action) {
+    MoreAction.PRESETS -> MoreActionTransition.PRESETS
+    MoreAction.ADJUSTMENTS -> MoreActionTransition.ADJUSTMENTS
+    MoreAction.SAVE_ORIGINAL,
+    MoreAction.IMPORT,
+    MoreAction.DOUBLE_EXPOSURE,
+    MoreAction.ZEBRA,
+    -> MoreActionTransition.DISMISS
+}
+
 @Composable
 fun LiveCameraScreen(
     viewModel: SpectralViewModel,
@@ -703,13 +728,7 @@ fun LiveCameraScreen(
             ) {
                 AdjustmentsSheet(
                     settings = settings,
-                    capabilities = capabilities,
-                    onSettingsChange = { updated ->
-                        viewModel.setSaveOriginal(updated.saveOriginal)
-                        viewModel.setFrontFacing(updated.frontFacing)
-                    },
                     onAdjustmentsChange = { updated -> viewModel.updateAdjustments { updated } },
-                    onDismiss = { showAdjustments = false },
                 )
             }
         }
@@ -721,24 +740,34 @@ fun LiveCameraScreen(
             ) {
                 MoreToolsSheet(
                     settings = settings,
-                    onPresets = { showMore = false; showPresets = true },
-                    onAdjustments = { showMore = false; showAdjustments = true },
+                    onPresets = {
+                        showMore = moreActionTransition(MoreAction.PRESETS) == MoreActionTransition.DISMISS
+                        showPresets = true
+                    },
+                    onAdjustments = {
+                        showMore = moreActionTransition(MoreAction.ADJUSTMENTS) == MoreActionTransition.DISMISS
+                        showAdjustments = true
+                    },
                     onSaveOriginal = {
+                        showMore = moreActionTransition(MoreAction.SAVE_ORIGINAL) == MoreActionTransition.DISMISS
                         viewModel.setSaveOriginal(!settings.saveOriginal)
                         showSaveNote = true
                     },
                     onImport = {
-                        showMore = false
+                        showMore = moreActionTransition(MoreAction.IMPORT) == MoreActionTransition.DISMISS
                         importLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                     onDoubleExposure = {
-                        showMore = false
+                        showMore = moreActionTransition(MoreAction.DOUBLE_EXPOSURE) == MoreActionTransition.DISMISS
                         viewModel.setDoubleExposureMode(
                             if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) DoubleExposureMode.OFF
                             else DoubleExposureMode.FILM_BALANCED,
                         )
                     },
-                    onZebra = { viewModel.setZebra(!settings.zebraEnabled) },
+                    onZebra = {
+                        showMore = moreActionTransition(MoreAction.ZEBRA) == MoreActionTransition.DISMISS
+                        viewModel.setZebra(!settings.zebraEnabled)
+                    },
                 )
             }
         }
@@ -854,10 +883,7 @@ internal fun PresetSheet(
 @Composable
 private fun AdjustmentsSheet(
     settings: CameraSettings,
-    capabilities: CameraCapabilities?,
-    onSettingsChange: (CameraSettings) -> Unit,
     onAdjustmentsChange: (ManualAdjustments) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val current = settings.adjustments
     Column(

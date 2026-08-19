@@ -49,4 +49,14 @@ class CompactCameraContractsTest {
         assertEquals(listOf("Off", "Fine", "Medium", "Coarse", "Extreme"), grainOptionLabels)
         assertTrue(grainOptionValues.contains(1.25f))
     }
+
+    @Test
+    fun moreOneShotActionsDismissWhileSheetActionsTransitionToDedicatedSheets() {
+        assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.SAVE_ORIGINAL))
+        assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.IMPORT))
+        assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.DOUBLE_EXPOSURE))
+        assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.ZEBRA))
+        assertEquals(MoreActionTransition.PRESETS, moreActionTransition(MoreAction.PRESETS))
+        assertEquals(MoreActionTransition.ADJUSTMENTS, moreActionTransition(MoreAction.ADJUSTMENTS))
+    }
 }
