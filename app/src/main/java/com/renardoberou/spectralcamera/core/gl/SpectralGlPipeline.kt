@@ -10,7 +10,6 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
@@ -1331,9 +1330,6 @@ class SpectralRenderer(
         val program = oesProgram ?: return
         texture.updateTexImage()
         texture.getTransformMatrix(stMatrix)
-        if (BuildConfig.DEBUG && frameIndex == 0) {
-            Log.i("SpectralCameraOrientation", "SurfaceTexture matrix=${stMatrix.joinToString(",")}; srcRotation=$srcRotation")
-        }
         computePreviewPosMatrix()
         frameIndex = (frameIndex + 1) % 997
 
@@ -1512,10 +1508,6 @@ class SpectralRenderer(
         }
 
         Matrix.scaleM(posMatrix, 0, sx, sy, 1f)
-        // CameraX's SurfaceRequest TransformationInfo is the authoritative
-        // preview rotation. SurfaceTexture's matrix uses the opposite sign from
-        // the position transform, so compensate once here.
-        Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)
     }
 
     private fun drawQuad(

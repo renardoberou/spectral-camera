@@ -43,19 +43,27 @@ class PreviewOrientationContractTest {
     }
 
     @Test
-    fun previewAppliesAuthoritativeRotationOnceWithSurfaceTextureSign() {
+    fun surfaceTextureTransformIsPassedThroughWithoutManualPreviewRotation() {
+        val onDrawFrame = glPipeline.substringBetween(
+            "override fun onDrawFrame(gl: GL10?)",
+            "fun processBitmap(",
+        )
         val computePreviewPosMatrix = glPipeline.substringBetween(
             "private fun computePreviewPosMatrix()",
             "private fun drawQuad(",
         )
 
         assertTrue(
-            "GL position transform must apply the SurfaceRequest rotation",
-            computePreviewPosMatrix.contains("Matrix.rotateM(posMatrix, 0, -srcRotation.toFloat(), 0f, 0f, 1f)"),
+            "SurfaceTexture must provide the preview texture transform",
+            onDrawFrame.contains("texture.getTransformMatrix(stMatrix)"),
+        )
+        assertTrue(
+            "SurfaceTexture transform must be passed through to the preview draw",
+            onDrawFrame.contains("textureMatrix = stMatrix"),
         )
         assertFalse(
-            "preview must not describe SurfaceTexture as the sole orientation transform",
-            computePreviewPosMatrix.contains("SurfaceTexture transform already carries the camera orientation"),
+            "position matrix must not apply a second manual preview rotation",
+            computePreviewPosMatrix.contains("Matrix.rotateM"),
         )
     }
 

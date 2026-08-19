@@ -16,7 +16,6 @@ import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
 import android.util.Size
 import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -42,7 +41,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
-import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.FocusDistanceCalibration
@@ -192,9 +190,6 @@ class CameraController(context: Context) {
 
     private fun updateSourceGeometry(rotationDegrees: Int) {
         sourceRotation = rotationDegrees
-        if (BuildConfig.DEBUG) {
-            Log.i("SpectralCameraOrientation", "SurfaceRequest rotationDegrees=$rotationDegrees resolution=$sourceResolution display=${glView?.display?.rotation}")
-        }
         sourceResolution?.let { resolution ->
             glView?.configureSource(resolution.width, resolution.height, sourceRotation)
         }
