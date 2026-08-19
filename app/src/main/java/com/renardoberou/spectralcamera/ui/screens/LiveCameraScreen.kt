@@ -693,12 +693,6 @@ fun LiveCameraScreen(
                     }
                 }
 
-                Text(
-                    text = "Simulated IR only unless external IR/thermal hardware is connected.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
             }
         }
 
@@ -812,10 +806,6 @@ internal fun PresetSheet(
         }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Looks", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Simulated spectral looks, not claims of true IR capture.",
-                style = MaterialTheme.typography.bodySmall,
-            )
             Text(
                 "Film emulations  ·  AeroIR  ·  Monochrome IR",
                 style = MaterialTheme.typography.labelMedium,

@@ -1,6 +1,6 @@
 # Preset thumbnail provenance
 
-All preset thumbnails are 256px JPEG crops generated from the repository-local matrix outputs under `.git/next-build-evidence-20260819/matrix/images/`. They are downscaled for the preset grid and are not third-party images or copied film scans.
+All preset thumbnails are 256px JPEG crops generated from the repository-local matrix outputs under `.git/next-build-evidence-20260819/matrix/images/`. They are downscaled for the preset grid and are not third-party images or copied film scans. The source matrix pixels are normalized with an explicit 90-degree counterclockwise picker-only rotation before cropping; camera preview, capture, EXIF, and Gallery transforms are not involved.
 
 | Preset ID | Source filename |
 |---|---|

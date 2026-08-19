@@ -11,6 +11,9 @@ class CompactCameraContractsTest {
     private val liveCameraSource = File(
         "src/main/java/com/renardoberou/spectralcamera/ui/screens/LiveCameraScreen.kt",
     ).readText()
+    private val advancedImagingSource = File(
+        "src/main/java/com/renardoberou/spectralcamera/ui/screens/HardwareTestScreen.kt",
+    ).readText()
 
     @Test
     fun compactTopCameraControlsContainPresetsBetweenWhiteBalanceAndMore() {
@@ -74,6 +77,18 @@ class CompactCameraContractsTest {
     @Test
     fun presetThumbnailLabelsAllowThreeLinesForNarrowTiles() {
         assertTrue(liveCameraSource.contains("maxLines = 3"))
+    }
+
+    @Test
+    fun mainCameraAndPresetSheetHideTechnicalDisclosure() {
+        assertTrue(!liveCameraSource.contains("Simulated IR only unless external IR/thermal hardware is connected."))
+        assertTrue(!liveCameraSource.contains("Simulated spectral looks, not claims of true IR capture."))
+    }
+
+    @Test
+    fun advancedImagingSurfaceRetainsTechnicalDisclosure() {
+        assertTrue(advancedImagingSource.contains("simulated IR mode"))
+        assertTrue(advancedImagingSource.contains("True infrared still requires external hardware"))
     }
 
     @Test
