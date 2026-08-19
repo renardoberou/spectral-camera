@@ -30,7 +30,7 @@ class CameraSettingsRepository(context: Context) {
     val settings: Flow<CameraSettings> = dataStore.data.map { prefs ->
         CameraSettings(
             preset = prefs[PRESET]?.let { name -> runCatching { SpectralPreset.valueOf(name) }.getOrNull() }
-                ?: SpectralPreset.B_W_INFRARED,
+                ?: SpectralPreset.WARM_NEGATIVE,
             adjustments = ManualAdjustments(
                 contrast = prefs[CONTRAST] ?: 1.0f,
                 exposureCompensation = prefs[EXPOSURE] ?: 0f,
