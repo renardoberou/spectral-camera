@@ -44,7 +44,7 @@ class CompactCameraContractsTest {
     fun lowerActionCentreDoesNotContainPresets() {
         val lowerActionCentre = liveCameraSource
             .substringAfter("                        Text(\n                            captureLabel")
-            .substringBefore("                Text(\n                    text = \"Simulated IR")
+            .substringBefore("        if (showPresets)")
 
         assertTrue(!lowerActionCentre.contains("Presets"))
     }
