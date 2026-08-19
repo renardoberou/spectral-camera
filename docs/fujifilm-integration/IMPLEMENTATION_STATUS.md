@@ -28,7 +28,7 @@ This document reports implementation evidence only. It does not promote source o
 - `git diff --check`: PASS at audit time.
 - Local Gradle/JVM tests: PASS; 87 tests, 0 failures, 0 errors, 0 skipped on the cached JDK/SDK toolchain.
 - Local Android checks: PASS; `lintDebug`, `assembleDebug`, release Kotlin compilation, and release lint passed. The debug APK was installed and launched on the Motorola.
-- Android CI: the exact final head must be recorded after the post-review correction is pushed. CI evidence is separate from the local artifact and device evidence.
+- Android CI: PASS for rendering head `15eb95b590b455122cc56ee16831ecd263ab4dfa`; run `32284122988` (`https://github.com/renardoberou/spectral-camera/actions/runs/32284122988`). The workflow passed debug tests/build, unsigned release compilation, signing-material rejection, and artifact uploads. CI is separate from the local artifact and device evidence.
 - CI/local debug artifact: the current local artifact is an ephemeral debug APK, not a signed release. Its checksum and path are preserved in the local evidence directory, which is intentionally not part of a fresh checkout.
 - Physical Moto Edge 60 Fusion: PARTIAL; 19 exposed presets completed full-resolution capture/save/gallery checks with valid extracted JPEGs and zero fatal-pattern lines. Scene review is recorded in `docs/VALIDATION.md`; performance/capability qualification remains open.
 
