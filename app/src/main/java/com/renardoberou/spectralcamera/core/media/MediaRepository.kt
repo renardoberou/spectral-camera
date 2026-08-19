@@ -206,15 +206,15 @@ class MediaRepository(private val context: Context) {
                     .build()
                 items += GalleryItem(
                     uri = uri,
-                    displayName = name,
+                    displayName = CommercialNaming.exportLabel(meta.preset),
                     dateTakenMillis = dateTaken,
-                    presetLabel = meta.preset.label,
+                    presetLabel = CommercialNaming.presetLabel(meta.preset),
                     // Monochrome presets need the hardware/simulation disclosure;
                     // visible-spectrum and Aerochrome presets need their actual
                     // rendering family instead of the default simulated-IR label.
                     sensorModeLabel = when (meta.preset.family) {
                         com.renardoberou.spectralcamera.core.LookFamily.MONOCHROME_IR -> meta.sensorMode.label
-                        else -> meta.preset.family.label
+                        else -> CommercialNaming.familyLabel(meta.preset.family)
                     },
                     isOriginal = meta.isOriginal,
                     isUltraHdr = meta.isUltraHdr,
@@ -344,9 +344,11 @@ class MediaRepository(private val context: Context) {
                 "$frameCount-frame sensor-linear RAW HDR • ${settings.hdrToneMap.label} tone map"
         }
         val protection = if (motionProtected) " • motion-protected fusion" else ""
-        return "renderer_version=$RENDERER_VERSION; profile_id=${settings.preset.name.lowercase(Locale.US)} • " +
-            "${settings.sensorMode.label} • ${settings.preset.label} • ${settings.outputMode.label} • " +
-            "Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
+        return "renderer_version=$RENDERER_VERSION; ${CommercialNaming.metadataProfile(
+            preset = settings.preset,
+            sensorLabel = settings.sensorMode.label,
+            outputLabel = settings.outputMode.label,
+        )} • Focus ${settings.focusMode.label} • $capture$protection • $assetDescription"
     }
 
     private fun captureToken(
