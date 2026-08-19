@@ -10,6 +10,7 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
+import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.FilmLookLibrary
@@ -369,7 +370,7 @@ vec3 aerochrome(vec3 c, vec3 cc, float gold, float skyMask, float skyT, float sm
     // Exclude genuine vegetation/water/murky - they can sit at similarly
     // modest chromaDistC in weakly-saturated cases (shaded olive foliage,
     // hazy pools) but must never be pulled toward neutral cream.
-    float greyC = max(greyWide, neutralArtifactConfidence)
+    float greyC = max(greyWide * surfSmooth, neutralArtifactConfidence)
         * smoothstep(0.25, 0.60, luma)
         * (1.0 - vegAll) * (1.0 - vividBlue) * (1.0 - murky);
     vec3 cream = vec3(clamp(luma * 1.04, 0.0, 1.0), luma, clamp(luma * 0.92, 0.0, 1.0));
@@ -1555,7 +1556,10 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uAutoHi, autoHi)
         GLES20.glUniform1f(program.uIntensity, currentSettings.intensity)
         GLES20.glUniform1f(program.uZebra, if (zebraOverlay) 1f else 0f)
-        GLES20.glUniform1f(program.uDebugClassifier, if (classifierDebugView) 1f else 0f)
+        GLES20.glUniform1f(
+            program.uDebugClassifier,
+            if (classifierDebugEnabled(classifierDebugView, BuildConfig.DEBUG)) 1f else 0f,
+        )
         GLES20.glUniform2f(program.uSkyUp, skyUpX, skyUpY)
         GLES20.glUniform1f(program.uSharpness, adj.sharpness)
         GLES20.glUniform1f(program.uRedWeight, adj.redChannelWeight)

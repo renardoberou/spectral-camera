@@ -149,7 +149,12 @@ mandatory, consistent with the "Test status" section of the README.
 
 ---
 
-## Fujifilm-inspired integration status (2026-08-18)
+## Fujifilm-inspired integration status — historical baseline (2026-08-18)
+
+The table below is retained as the 2026-08-18 baseline snapshot. It is historical
+context, not the current final-head status; the current rendering-slice status is
+recorded in `docs/fujifilm-integration/IMPLEMENTATION_STATUS.md` and the local-only
+device-matrix review below.
 
 | Gate | Status | Evidence / boundary |
 |---|---|---|
@@ -161,7 +166,7 @@ mandatory, consistent with the "Test status" section of the README.
 | Hue-sector/color-density analytic stage | **PASS — source + Python checks** | Six data-driven hue sectors are consumed by the shared shader stage for the three visible profiles; Kotlin and NumPy contracts cover wraparound, neutral stability, midtone weighting, compression, finiteness, and bounds. No LUT residual is claimed. |
 | Material-confidence analytic stage | **PASS — source + JVM test source** | `MaterialConfidenceMath.kt` provides bounded continuous fields and near-black reliability gating; the live shader uses smooth post-front-end confidence blending. Android execution remains CI-gated. |
 | Aerochrome / mono-IR shared refinements | **PARTIAL — device matrix evidence** | Shared post-spectral tone/protection/density uniforms were exercised in the 19-preset Motorola matrix. Mechanical capture/save/gallery evidence is preserved under `.git/next-build-evidence-20260819/matrix-final2/`; visual review is recorded below. |
-| Moto Edge 60 Fusion re-shoots | **PARTIAL — connected device** | The Motorola Edge 60 Fusion completed the exposed 19-preset capture matrix with full-resolution save status, gallery navigation, and zero fatal-pattern lines. The phone was physically held sideways during this run, so the portrait dimensions do not constitute an orientation defect or an orientation PASS. |
+| Moto Edge 60 Fusion re-shoots | **PARTIAL — connected device** | The Motorola Edge 60 Fusion completed the exposed 19-preset capture matrix with full-resolution save status, gallery navigation, and zero fatal-pattern lines. |
 
 The implementation status and exact source/build/CI evidence are tracked in
 `docs/fujifilm-integration/IMPLEMENTATION_STATUS.md`. A source or CI result
@@ -288,16 +293,15 @@ Reports and recalibrated proof strip in `docs/assets/grain-verification-2026-07-
 
 The post-neutral-correction matrix contains 19 processed JPEGs: six monochrome IR,
 six Aerochrome variants, and seven visible profiles. The extraction/integrity report
-is `.git/next-build-evidence-20260819/matrix-final2/image-summary.txt`; per-file
-dimensions, byte counts, EXIF orientation values, and SHA-256 checksums are in
-`.git/next-build-evidence-20260819/matrix-final2/image-checksums.tsv`.
+is preserved as local-only evidence in `.git/next-build-evidence-20260819/matrix-final2/`;
+it is not tracked and is not required for a fresh checkout. The per-file report is
+`image-checksums.tsv`, with the summary in `image-summary.txt`.
 
 Evidence boundary: every extracted file is a valid JPEG, all 19 are unique, all
-report `3072x4096` and EXIF orientation `1`, and the matrix rows recorded
+report `3072x4096`, and the matrix rows recorded
 `Saved Standard • 1 frame • Full Resolution`, gallery navigation, and zero fatal
-pattern lines. This proves the capture/export path for that run. It does not prove
-that a portrait/landscape result is wrong: the phone was deliberately held/set
-sideways, and no fixed-position orientation reference was recorded.
+pattern lines. This proves the capture/export path for that run. The visual claims
+below are scene-specific and are not a full calibration guarantee.
 
 Visual review of the preserved full-resolution outputs:
 
@@ -318,12 +322,6 @@ Visual review of the preserved full-resolution outputs:
   with green foliage, pale warm surfaces, blue sky, and restrained negative-like
   contrast. It is visibly separate from both the magenta/blue Aerochrome route and
   the monochrome IR route. This is a scene review, not a full calibration claim.
-
-Orientation remains **NOT CLASSIFIED** by this matrix. The current source continues
-to use CameraX JPEG EXIF orientation first and `ImageProxy.imageInfo.rotationDegrees`
-as its fallback; the temporary alternate fallback and its tests were removed after
-the physical-position correction because this run did not establish a reproducible
-orientation bug.
 
 **Correction (2026-07-24, third pass):** a real device photo of a detailed subject (camo-
 pattern bag, straps) showed Rollei reading noisy - the ratio fix above correctly matched

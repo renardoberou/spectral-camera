@@ -1,6 +1,6 @@
 # Fujifilm-inspired integration implementation status
 
-Date: 2026-08-18 (continuation audit)
+Date: 2026-08-19 (continuation audit)
 Branch: `feat/fujifilm-inspired-rendering`
 
 This document reports implementation evidence only. It does not promote source or CI results to physical-device verification.
@@ -14,29 +14,27 @@ This document reports implementation evidence only. It does not promote source o
 | 2 — confidence and material protection | PARTIAL | `MaterialConfidenceMath.kt` provides bounded, reliability-gated continuous fields with tests; shader protection now uses smooth confidence functions after family transforms. Debug visualization exists for legacy classifier signals, but there is no separate captureable overlay for every new confidence field. |
 | 3 — hue-sector and color density | DONE (analytic scope) | `HueSectorMath.kt`, Kotlin tests, NumPy reference functions, and nine deterministic Python checks cover circular sectors, neutral stability, midtone weighting, compression, and bounds. The live shader consumes six data-driven sector weights for the three visible profiles. LUT residual path remains intentionally not implemented. |
 | 4 — initial visible-spectrum profiles | PARTIAL | Archive Chrome, Cinematic Neutral, and Warm Negative are data-driven standard-film entries with original names and disclosure. They now carry sector weights and shared profile uniforms. UI grouping/discoverability and visual calibration remain unverified. |
-| 5 — Aerochrome shared refinements | PARTIAL | The existing synthetic-NIR/EIR front end remains unchanged and the shared tone/protection/density stage is now enabled after it with conservative profile data. No device scene re-shoot or preview/capture visual comparison has been run. Independent Aerochrome texture calibration is not complete. |
-| 6 — monochrome IR shared refinements | PARTIAL | Existing IR luminance/H&D construction remains upstream and the shared refinement stage is now enabled after it. No device scene re-shoot has been run; reflective-window confidence behavior and independent texture calibration remain open. |
+| 5 — Aerochrome shared refinements | PARTIAL | The existing synthetic-NIR/EIR front end remains unchanged and the shared tone/protection/density stage is now enabled after it with conservative profile data. A local Motorola matrix exercised the exposed Aerochrome presets; independent texture calibration is not complete. |
+| 6 — monochrome IR shared refinements | PARTIAL | Existing IR luminance/H&D construction remains upstream and the shared refinement stage is now enabled after it. The local Motorola matrix exercised the exposed mono-IR presets; reflective-window confidence behavior and independent texture calibration remain open. |
 | 7 — calibration harness and paired reference data | PARTIAL | Deterministic Python harness now includes tone, grain, chart, hue-sector, and color-density primitives with nine passing checks. No paired phone/Fujifilm captures or reference reports are bundled; no numeric emulsion match is claimed. |
 | 8 — performance, memory, capability gating | BLOCKED | No physical GPU timing, memory measurement, GLES capability matrix, or Moto Edge 60 Fusion performance evidence is available from this environment. No optional LUT path was added, so no LUT capability fallback is claimed. |
-| 9 — UI, metadata, product honesty | PARTIAL | Original profile names/disclosure are present. Saved MediaStore descriptions now include `renderer_version=2` and `profile_id`. UI grouping and metadata readback still require Android/device verification. |
-| 10 — release and physical verification | NOT RUN | Local Java/Gradle remains unavailable. CI must be run for the continuation head. Moto Edge 60 Fusion launch, capture, gallery, orientation, export, and visual gates remain not run. |
+| 9 — UI, metadata, product honesty | PARTIAL | Original profile names/disclosure are present. Saved MediaStore descriptions now include `renderer_version=2` and `profile_id`; the local matrix confirmed full-resolution save status and gallery reopening. Full product calibration remains open. |
+| 10 — release and physical verification | PARTIAL | Local Gradle, APK installation/launch, 19-preset capture/save/gallery matrix, extraction, and scene review were completed for this rendering slice. This is not a signed release or a full performance/capability qualification. |
 
 ## Current evidence
 
 - Python calibration runner: PASS, 9 deterministic checks using `/tmp/run_spectral_calibration_tests.py`.
 - Python bytecode compilation: PASS.
 - `git diff --check`: PASS at audit time.
-- Local Gradle/JVM tests: NOT RUN; Java is unavailable (`JAVA_HOME` unset and no `java` executable).
-- Android shader compile/build: PASS in GitHub Actions for exact head `08086cd1ae5300ca673c5bf4c7ad18e9c4468667`; Android CI run `32165625606` (`https://github.com/renardoberou/spectral-camera/actions/runs/32165625606`).
-- CI debug APK artifact: PASS; `/home/bernardo/.hermes/profiles/spectral-camera/artifacts/08086cd/spectral-camera-debug-ephemeral/app-debug.apk`, 27,533,570 bytes, SHA-256 `a4d11916dd6d816551e725323124269fb138db74574dbf497c84bbf5d864ccd5`. ZIP structure was inspected and contains Android dex/resources; this is an ephemeral debug artifact, not a signed release.
-- Physical Moto Edge 60 Fusion: NOT RUN; no device connection is available from this shell.
+- Local Gradle/JVM tests: PASS; 87 tests, 0 failures, 0 errors, 0 skipped on the cached JDK/SDK toolchain.
+- Local Android checks: PASS; `lintDebug`, `assembleDebug`, release Kotlin compilation, and release lint passed. The debug APK was installed and launched on the Motorola.
+- Android CI: the exact final head must be recorded after the post-review correction is pushed. CI evidence is separate from the local artifact and device evidence.
+- CI/local debug artifact: the current local artifact is an ephemeral debug APK, not a signed release. Its checksum and path are preserved in the local evidence directory, which is intentionally not part of a fresh checkout.
+- Physical Moto Edge 60 Fusion: PARTIAL; 19 exposed presets completed full-resolution capture/save/gallery checks with valid extracted JPEGs and zero fatal-pattern lines. Scene review is recorded in `docs/VALIDATION.md`; performance/capability qualification remains open.
 
 ## Remaining gates
 
-1. Run Android unit tests, lint, and debug assembly in CI for the exact continuation head.
-2. Download the exact debug APK artifact and verify its ZIP structure and SHA-256.
-3. Re-read the final diff and run independent review before commit/push.
-4. Re-shoot the named Aerochrome, monochrome-IR, and visible-profile scenes on the Moto Edge 60 Fusion, including preview/capture/gallery/export/orientation parity.
-5. Add real performance/capability measurements and paired calibration evidence when the device/reference captures exist.
+1. Record the exact post-review CI head and artifact result.
+2. Add real performance/capability measurements and paired calibration evidence when the device/reference captures exist.
 
-The continuation is intentionally not labelled complete.
+This rendering slice is intentionally labelled partial rather than a complete product or release qualification.

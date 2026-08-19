@@ -12,10 +12,17 @@ import kotlin.math.max
  */
 data class AerochromeNeutralSignals(
     val lowChromaConfidence: Float,
+    val murkyChromaConfidence: Float,
     val greenBalanceConfidence: Float,
     val localContinuity: Float,
     val competingMaterialConfidence: Float,
     val neutralArtifactConfidence: Float,
+    val vividBlueConfidence: Float,
+    val murkyConfidence: Float,
+    val foliageAuthority: Float,
+    val waterAuthority: Float,
+    val greyWideConfidence: Float,
+    val neutralCreamConfidence: Float,
 )
 
 object AerochromeNeutralMath {
@@ -33,7 +40,7 @@ object AerochromeNeutralMath {
         smoothLuma = smoothLuma,
         foliageConfidence = foliageConfidence,
         waterConfidence = waterConfidence,
-    ).neutralArtifactConfidence
+    ).neutralCreamConfidence * 0.85f
 
     fun signals(
         source: Rgb,
@@ -53,24 +60,65 @@ object AerochromeNeutralMath {
             max(abs(nr - NEUTRAL_SHARE), abs(ng - NEUTRAL_SHARE)),
             abs(nb - NEUTRAL_SHARE),
         )
-        val lowChroma = 1f - smoothStep(0.035f, 0.10f, chromaDistance)
+        val neutralChroma = 1f - smoothStep(0.035f, 0.10f, chromaDistance)
+        val murkyLowChroma = 1f - smoothStep(0.045f, 0.10f, chromaDistance)
         val greenBalance = 1f - smoothStep(0f, 0.05f, abs(ng - NEUTRAL_SHARE))
         val reliability = smoothStep(0.08f, 0.20f, sourceLuma)
-        val continuity = 1f - smoothStep(
+        val surfSmooth = 1f - smoothStep(
             0.015f,
             0.06f,
             abs(sourceLuma - clean(smoothLuma).coerceIn(0f, 1f)),
         )
-        val competing = max(clean(foliageConfidence), clean(waterConfidence)).coerceIn(0f, 1f)
-        val neutralArtifactConfidence = (
-            lowChroma * greenBalance * reliability * continuity * (1f - competing)
+        val greenDom = smoothStep(0f, 0.05f, ng - nr)
+        val grn = smoothStep(-0.01f, 0.08f, ng - nb)
+        val notBlue = 1f - smoothStep(0f, 0.06f, nb - max(nr, ng))
+        val veg = (grn * notBlue * greenDom).coerceIn(0f, 1f)
+        val oliveGreenBlue = smoothStep(0.12f, 0.22f, ng - nb)
+        val nearNeutralRg = 1f - smoothStep(0.03f, 0.09f, abs(ng - nr))
+        val oliveVeg = (oliveGreenBlue * nearNeutralRg * notBlue * (1f - veg)).coerceIn(0f, 1f)
+        val blueC = smoothStep(0.03f, 0.10f, nb - max(nr, ng))
+        val waterC = smoothStep(0.05f, 0.14f, ng - nr) *
+            smoothStep(0.02f, 0.08f, nb - nr)
+        val cyanC = smoothStep(0.025f, 0.09f, minOf(ng, nb) - nr) * surfSmooth
+        val vividBlue = (
+            waterC * max(blueC, smoothStep(0.02f, 0.08f, nb - nr)) + cyanC * 0.6f
             ).coerceIn(0f, 1f)
+        val weakGreen = smoothStep(0.015f, 0.06f, ng - nr) *
+            smoothStep(0f, 0.04f, ng - nb)
+        val competing = (veg + oliveVeg).coerceIn(0f, 1f).coerceAtLeast(waterC).coerceIn(0f, 1f)
+        val neutralArtifactConfidence = (
+            neutralChroma * greenBalance * reliability * surfSmooth * (1f - competing)
+            ).coerceIn(0f, 1f)
+        val vividBlueAfterGuard = vividBlue * (1f - neutralArtifactConfidence * 0.90f)
+        val murky = weakGreen * murkyLowChroma * surfSmooth * (1f - veg) * (1f - vividBlueAfterGuard)
+        val chromaFloor = smoothStep(0.035f, 0.058f, chromaDistance)
+        val waterStrong = max(vividBlueAfterGuard, murky * 1.2f).coerceIn(0f, 1f)
+        val foliageAuthority = (veg + oliveVeg).coerceIn(0f, 1f) *
+            chromaFloor * (1f - waterStrong * 0.9f)
+        val greenNeutral = 1f - smoothStep(0f, 0.05f, abs(ng - NEUTRAL_SHARE))
+        val greyWide = 1f - smoothStep(
+            0.020f,
+            mix(0.075f, 0.20f, greenNeutral),
+            chromaDistance,
+        )
+        val neutralCream = max(greyWide * surfSmooth, neutralArtifactConfidence) *
+            smoothStep(0.25f, 0.60f, sourceLuma) *
+            (1f - foliageAuthority) *
+            (1f - vividBlueAfterGuard) *
+            (1f - murky)
         return AerochromeNeutralSignals(
-            lowChromaConfidence = lowChroma,
+            lowChromaConfidence = neutralChroma,
+            murkyChromaConfidence = murkyLowChroma,
             greenBalanceConfidence = greenBalance,
-            localContinuity = continuity,
+            localContinuity = surfSmooth,
             competingMaterialConfidence = competing,
             neutralArtifactConfidence = neutralArtifactConfidence,
+            vividBlueConfidence = vividBlueAfterGuard,
+            murkyConfidence = murky,
+            foliageAuthority = foliageAuthority,
+            waterAuthority = waterC,
+            greyWideConfidence = greyWide,
+            neutralCreamConfidence = neutralCream.coerceIn(0f, 1f),
         )
     }
 
@@ -89,7 +137,7 @@ object AerochromeNeutralMath {
             smoothLuma = smoothLuma,
             foliageConfidence = foliageConfidence,
             waterConfidence = waterConfidence,
-        ) * 0.85f
+        )
         val sourceLuma = luma(source)
         val neutralTone = Rgb(
             clamp(sourceLuma * 1.04f),

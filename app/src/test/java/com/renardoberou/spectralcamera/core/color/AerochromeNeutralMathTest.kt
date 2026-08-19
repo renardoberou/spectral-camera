@@ -110,6 +110,52 @@ class AerochromeNeutralMathTest {
             smoothLuma = 0.38f,
         ).b > 0.60f)
     }
+
+    @Test
+    fun referenceMatchesShaderMaterialGatesForNeutralSurface() {
+        val source = Rgb(0.54f, 0.55f, 0.57f)
+        val signals = AerochromeNeutralMath.signals(
+            source = source,
+            classification = source,
+            smoothLuma = source.luma(),
+        )
+
+        assertEquals(0.9943244f, signals.neutralArtifactConfidence, 0.0005f)
+        assertEquals(0.9431072f, signals.neutralCreamConfidence, 0.0005f)
+        assertEquals(0.8016411f, AerochromeNeutralMath.protectionWeight(
+            source = source,
+            classification = source,
+            smoothLuma = source.luma(),
+        ), 0.0005f)
+    }
+
+    @Test
+    fun referenceKeepsFoliageAndWaterMaterialAuthoritySeparate() {
+        val foliage = AerochromeNeutralMath.signals(
+            source = Rgb(0.12f, 0.42f, 0.10f),
+            classification = Rgb(0.12f, 0.42f, 0.10f),
+        )
+        val water = AerochromeNeutralMath.signals(
+            source = Rgb(0.08f, 0.40f, 0.72f),
+            classification = Rgb(0.08f, 0.40f, 0.72f),
+        )
+
+        assertTrue(foliage.foliageAuthority > 0.95f)
+        assertTrue(foliage.waterAuthority < 0.05f)
+        assertTrue(water.waterAuthority > 0.95f)
+        assertTrue(water.vividBlueConfidence > 0.95f)
+        assertTrue(water.foliageAuthority < 0.05f)
+    }
+
+    @Test
+    fun referenceKeepsNeutralAndMurkyChromaThresholdsDistinct() {
+        val signals = AerochromeNeutralMath.signals(
+            source = Rgb(0.29f, 0.38f, 0.33f),
+            classification = Rgb(0.29f, 0.38f, 0.33f),
+        )
+
+        assertTrue(signals.murkyChromaConfidence > signals.lowChromaConfidence)
+    }
 }
 
 private fun Rgb.luma(): Float = 0.299f * r + 0.587f * g + 0.114f * b

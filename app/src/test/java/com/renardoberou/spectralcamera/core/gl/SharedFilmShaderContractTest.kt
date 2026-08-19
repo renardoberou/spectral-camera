@@ -55,4 +55,11 @@ class SharedFilmShaderContractTest {
         assertTrue("Aerochrome diagnostic does not expose the neutral stage", diagnostic >= 0)
         assertTrue("neutral confidence must precede Aerochrome output", neutralConfidence < aerochromeOutput)
     }
+
+    @Test
+    fun classifierDiagnosticRequiresADevelopmentBuildAtTheRendererBoundary() {
+        assertTrue(classifierDebugEnabled(requested = true, debugBuild = true))
+        assertFalse(classifierDebugEnabled(requested = true, debugBuild = false))
+        assertFalse(classifierDebugEnabled(requested = false, debugBuild = true))
+    }
 }
