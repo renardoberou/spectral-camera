@@ -8,7 +8,9 @@ import org.junit.Test
 class CommercialNamingTest {
     @Test
     fun everyPresetHasACommercialDisplayNameWithoutResearchStockTerms() {
-        val prohibited = Regex("(?i)kodak|ilford|rollei|konica|aerochrome|ektar|cinestill|tri[- ]?x|portra|vision3|eir")
+        val prohibited = Regex("(?i)\\b(?:kodak|ilford|rollei|konica|aerochrome|ektar|cinestill|tri[- ]?x|portra|vision3|eir)\\b")
+
+        assertFalse(prohibited.containsMatchIn("Natural Portrait"))
 
         SpectralPreset.entries.forEach { preset ->
             val label = CommercialNaming.presetLabel(preset)
