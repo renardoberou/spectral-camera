@@ -10,6 +10,7 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
@@ -1330,6 +1331,9 @@ class SpectralRenderer(
         val program = oesProgram ?: return
         texture.updateTexImage()
         texture.getTransformMatrix(stMatrix)
+        if (BuildConfig.DEBUG && frameIndex == 0) {
+            Log.i("SpectralCameraOrientation", "SurfaceTexture matrix=${stMatrix.joinToString(",")}; srcRotation=$srcRotation")
+        }
         computePreviewPosMatrix()
         frameIndex = (frameIndex + 1) % 997
 
