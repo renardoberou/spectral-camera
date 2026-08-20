@@ -72,8 +72,7 @@ import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.FocusTapResult
-import com.renardoberou.spectralcamera.core.GrainPolicy
-import com.renardoberou.spectralcamera.core.gl.SpectralGrainTrace
+
 import com.renardoberou.spectralcamera.core.PresetCatalog
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.WhiteBalancePreset
@@ -84,7 +83,6 @@ import kotlin.math.abs
 import kotlinx.coroutines.launch
 
 internal enum class MoreAction {
-    PRESETS,
     ADJUSTMENTS,
     SAVE_ORIGINAL,
     IMPORT,
@@ -94,12 +92,10 @@ internal enum class MoreAction {
 
 internal enum class MoreActionTransition {
     DISMISS,
-    PRESETS,
     ADJUSTMENTS,
 }
 
 internal fun moreActionTransition(action: MoreAction): MoreActionTransition = when (action) {
-    MoreAction.PRESETS -> MoreActionTransition.PRESETS
     MoreAction.ADJUSTMENTS -> MoreActionTransition.ADJUSTMENTS
     MoreAction.SAVE_ORIGINAL,
     MoreAction.IMPORT,
@@ -721,7 +717,6 @@ fun LiveCameraScreen(
                 AdjustmentsSheet(
                     settings = settings,
                     onReset = viewModel::resetAdjustments,
-                    onGrainChange = viewModel::setGrain,
                     onContrastChange = viewModel::setContrast,
                     onSaturationChange = viewModel::setSaturation,
                 )
@@ -735,10 +730,6 @@ fun LiveCameraScreen(
             ) {
                 MoreToolsSheet(
                     settings = settings,
-                    onPresets = {
-                        showMore = moreActionTransition(MoreAction.PRESETS) == MoreActionTransition.DISMISS
-                        showPresets = true
-                    },
                     onAdjustments = {
                         showMore = moreActionTransition(MoreAction.ADJUSTMENTS) == MoreActionTransition.DISMISS
                         showAdjustments = true
@@ -883,7 +874,6 @@ internal fun PresetSheet(
 private fun AdjustmentsSheet(
     settings: CameraSettings,
     onReset: () -> Unit,
-    onGrainChange: (Float) -> Unit,
     onContrastChange: (Float) -> Unit,
     onSaturationChange: (Float) -> Unit,
 ) {
@@ -904,10 +894,6 @@ private fun AdjustmentsSheet(
         FilledTonalButton(onClick = onReset) {
             Text("Reset")
         }
-        SteppedControl("Grain", grainOptionLabels.zip(grainOptionValues), current.grain) { value ->
-            SpectralGrainTrace.uiSelection(GrainPolicy.fromPersistedValue(value))
-            onGrainChange(value)
-        }
         SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast, onContrastChange)
         SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation, onSaturationChange)
 
@@ -920,7 +906,6 @@ private fun AdjustmentsSheet(
 private fun MoreToolsSheet(
     settings: CameraSettings,
     onAdjustments: () -> Unit,
-    onPresets: () -> Unit,
     onSaveOriginal: () -> Unit,
     onImport: () -> Unit,
     onDoubleExposure: () -> Unit,
@@ -931,7 +916,6 @@ private fun MoreToolsSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("More / Tools", style = MaterialTheme.typography.headlineSmall)
-        FilterChip(selected = false, onClick = onPresets, label = { Text(compactCameraActionInventory[3]) })
         FilterChip(selected = false, onClick = onAdjustments, label = { Text("Look adjustments") })
         FilterChip(selected = settings.saveOriginal, onClick = onSaveOriginal, label = { Text("Save original") })
         FilterChip(selected = false, onClick = onImport, label = { Text("Import photo") })

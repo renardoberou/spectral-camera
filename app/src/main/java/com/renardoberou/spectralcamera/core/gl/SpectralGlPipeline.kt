@@ -14,7 +14,6 @@ import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.FilmLookLibrary
-import com.renardoberou.spectralcamera.core.GrainPolicy
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.SharedFilmProfile
@@ -930,7 +929,7 @@ void main() {
         smoothstep(0.02, 0.10, src.b - max(src.r, src.g * 0.97)));
     skyMask *= gate * (1.0 - warmSkin * 0.85);
     skyMask = clamp(skyMask * (1.0 + uSkySuppress * 0.8), 0.0, 1.0);
-    skyMask = clamp(skyMask + hashNoise(grainUv * 0.31 + vec2(uGrainSeed)) * 0.008, 0.0, 1.0);
+    // Grain feature removed; sky classification remains deterministic.
     // -----------------------------------------------------------------------
 
     vec3 c = presetColor(src, srcC, skyMask, skyT, bLuma);
@@ -1270,14 +1269,6 @@ class SpectralRenderer internal constructor(
         Matrix.scaleM(it, 0, 1f, -1f, 1f)
     }
 
-    // Grain is spatially coherent for one live-preview session. Advancing this
-    // seed every camera frame made the procedural field change constantly; on a
-    // scaled phone preview that temporal replacement was perceived as the
-    // grain disappearing even though uGrain remained Extreme. A session seed
-    // preserves the photographic texture without changing the camera/GL path.
-    private val grainSessionSeed =
-        (System.nanoTime().mod(997L).toFloat()).coerceAtLeast(0f)
-
     var maxTextureSize: Int = 2048
         private set
 
@@ -1374,7 +1365,7 @@ class SpectralRenderer internal constructor(
             settings = settings,
             viewportWidth = viewWidth,
             viewportHeight = viewHeight,
-            grainSeed = grainSessionSeed,
+            grainSeed = 0f,
         )
 
         val width = if (srcWidth > 0) srcWidth else viewWidth
@@ -1400,7 +1391,7 @@ class SpectralRenderer internal constructor(
             textureMatrix = stMatrix,
             texWidth = width,
             texHeight = height,
-            grainSeed = grainSessionSeed,
+            grainSeed = 0f,
             skyUpX = skyUpX,
             skyUpY = skyUpY,
             zebraOverlay = settings.zebraEnabled,
@@ -1500,7 +1491,7 @@ class SpectralRenderer internal constructor(
                 textureMatrix = identityMatrix,
                 texWidth = width,
                 texHeight = height,
-                grainSeed = grainSessionSeed,
+                grainSeed = 0f,
                 // Rendered content is NDC-inverted here, so image-up is -v.
                 skyUpX = 0f,
                 skyUpY = -1f,
@@ -1592,8 +1583,11 @@ class SpectralRenderer internal constructor(
         GLES20.glUniform1f(program.uBlacks, adj.blacks)
         GLES20.glUniform1f(program.uWhites, adj.whites)
         GLES20.glUniform1f(program.uBloom, adj.bloom)
-        GLES20.glUniform1f(program.uGrain, GrainPolicy.renderStrength(currentSettings))
-        GLES20.glUniform1f(program.uGrainSeed, grainSeed)
+        // Grain was removed from the product after repeated live-preview
+        // failures. Keep legacy uniforms for shader compatibility, but force
+        // the stage off for both preview and capture paths.
+        GLES20.glUniform1f(program.uGrain, 0f)
+        GLES20.glUniform1f(program.uGrainSeed, 0f)
         GLES20.glUniform1f(program.uAutoLo, autoLo)
         GLES20.glUniform1f(program.uAutoHi, autoHi)
         GLES20.glUniform1f(program.uIntensity, currentSettings.intensity)

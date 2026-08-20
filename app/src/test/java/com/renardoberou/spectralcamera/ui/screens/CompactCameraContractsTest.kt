@@ -1,7 +1,7 @@
 package com.renardoberou.spectralcamera.ui.screens
 
 import com.renardoberou.spectralcamera.core.LookFamily
-import com.renardoberou.spectralcamera.core.GrainPolicy
+
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -56,6 +56,13 @@ class CompactCameraContractsTest {
     }
 
     @Test
+    fun removedGrainControlAndMoreDrawerPresetShortcutStayAbsent() {
+        assertTrue(!liveCameraSource.contains("SteppedControl(\"Grain\""))
+        assertTrue(!liveCameraSource.contains("onPresets ="))
+        assertTrue(liveCameraSource.contains("Text(\"Presets\")"))
+    }
+
+    @Test
     fun presetFamiliesFollowApprovedCatalogOrder() {
         assertEquals(
             listOf(LookFamily.STANDARD_FILM, LookFamily.AEROCHROME, LookFamily.MONOCHROME_IR),
@@ -106,12 +113,6 @@ class CompactCameraContractsTest {
         assertEquals(ordered.size, ordered.distinct().size)
     }
 
-    @Test
-    fun grainOptionsIncludeExtremeInApprovedOrder() {
-        assertEquals(listOf("Off", "Fine", "Medium", "Coarse", "Extreme"), grainOptionLabels)
-        assertEquals(GrainPolicy.entries.map { it.strength }, grainOptionValues)
-        assertTrue(grainOptionValues.contains(GrainPolicy.EXTREME.strength))
-    }
 
     @Test
     fun moreOneShotActionsDismissWhileSheetActionsTransitionToDedicatedSheets() {
@@ -119,7 +120,6 @@ class CompactCameraContractsTest {
         assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.IMPORT))
         assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.DOUBLE_EXPOSURE))
         assertEquals(MoreActionTransition.DISMISS, moreActionTransition(MoreAction.ZEBRA))
-        assertEquals(MoreActionTransition.PRESETS, moreActionTransition(MoreAction.PRESETS))
         assertEquals(MoreActionTransition.ADJUSTMENTS, moreActionTransition(MoreAction.ADJUSTMENTS))
     }
 }
