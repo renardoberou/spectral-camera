@@ -30,6 +30,7 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * GPU spectral pipeline.
@@ -1213,12 +1214,35 @@ internal fun ChannelSwapMode.toShaderIndex(): Int = when (this) {
     ChannelSwapMode.GB_SWAP -> 3
 }
 
-class SpectralRenderer(
-    private val onSurfaceTexture: (SurfaceTexture) -> Unit,
-) : GLSurfaceView.Renderer {
+internal data class SequencedValue<T>(
+    val sequence: Long,
+    val value: T,
+)
+
+/** Thread-safe producer/main-thread to GL-thread latest-value handoff. */
+internal class LatestSettingsHandoff<T> {
+    private val nextSequence = AtomicLong(0L)
 
     @Volatile
+    private var latest: SequencedValue<T>? = null
+
+    fun publish(value: T): Long {
+        val sequence = nextSequence.incrementAndGet()
+        latest = SequencedValue(sequence, value)
+        return sequence
+    }
+
+    fun consumeNewerThan(appliedSequence: Long): SequencedValue<T>? =
+        latest?.takeIf { it.sequence > appliedSequence }
+}
+
+class SpectralRenderer(
+    private val onSurfaceTexture: (SurfaceTexture) -> Unit,
+    private val settingsHandoff: LatestSettingsHandoff<CameraSettings> = LatestSettingsHandoff(),
+) : GLSurfaceView.Renderer {
+
     private var settings: CameraSettings = CameraSettings()
+    private var appliedSettingsSequence = 0L
 
     @Volatile
     private var srcWidth = 0
@@ -1265,6 +1289,13 @@ class SpectralRenderer(
 
     fun updateSettings(newSettings: CameraSettings) {
         settings = newSettings
+    }
+
+    /** Applies the newest pending settings; must run on the GL thread. */
+    fun consumeLatestSettings() {
+        val pending = settingsHandoff.consumeNewerThan(appliedSettingsSequence) ?: return
+        settings = pending.value
+        appliedSettingsSequence = pending.sequence
     }
 
     fun setSourceSize(width: Int, height: Int) {
@@ -1322,6 +1353,7 @@ class SpectralRenderer(
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        consumeLatestSettings()
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, viewWidth, viewHeight)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -1817,6 +1849,7 @@ class SpectralGlView(context: Context) : GLSurfaceView(context) {
 
     val renderer: SpectralRenderer
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val settingsHandoff = LatestSettingsHandoff<CameraSettings>()
 
     /** Set by the camera layer; receives a fresh SurfaceTexture whenever the GL surface is (re)created. */
     var onSurfaceTextureReady: ((SurfaceTexture) -> Unit)? = null
@@ -1824,16 +1857,20 @@ class SpectralGlView(context: Context) : GLSurfaceView(context) {
     init {
         setEGLContextClientVersion(2)
         preserveEGLContextOnPause = true
-        renderer = SpectralRenderer { surfaceTexture ->
+        renderer = SpectralRenderer(
+            onSurfaceTexture = { surfaceTexture ->
             surfaceTexture.setOnFrameAvailableListener { requestRender() }
             mainHandler.post { onSurfaceTextureReady?.invoke(surfaceTexture) }
-        }
+            },
+            settingsHandoff = settingsHandoff,
+        )
         setRenderer(renderer)
         renderMode = RENDERMODE_WHEN_DIRTY
     }
 
     fun updateSettings(settings: CameraSettings) {
-        renderer.updateSettings(settings)
+        settingsHandoff.publish(settings)
+        queueEvent { renderer.consumeLatestSettings() }
         requestRender()
     }
 
