@@ -37,6 +37,7 @@ python3 scripts/validate-site.py
 ## Structure
 
 - `index.html` — long-form landing page and story
+- `privacy.html` — public privacy policy for Play Store submission
 - `styles.css` — responsive editorial design system
 - `script.js` — mobile navigation and before/after comparison slider
 - `assets/images/` — supplied Minas Gerais field frames
