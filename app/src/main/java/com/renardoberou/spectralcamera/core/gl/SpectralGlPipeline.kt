@@ -1236,7 +1236,7 @@ internal class LatestSettingsHandoff<T> {
         latest?.takeIf { it.sequence > appliedSequence }
 }
 
-class SpectralRenderer(
+class SpectralRenderer internal constructor(
     private val onSurfaceTexture: (SurfaceTexture) -> Unit,
     private val settingsHandoff: LatestSettingsHandoff<CameraSettings> = LatestSettingsHandoff(),
 ) : GLSurfaceView.Renderer {
