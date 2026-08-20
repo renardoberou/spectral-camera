@@ -1,6 +1,6 @@
 # Spectral Camera Site
 
-The blog-style landing page and development journal for [Spectral Camera](https://github.com/renardoberou/spectral-camera), an Android camera for simulated infrared, Aerochrome-style colour, and film rendering.
+The product story, infrared-photography history, and field journal for [Spectral Camera](https://github.com/renardoberou/spectral-camera), an Android camera for infrared-inspired colour, monochrome IR, and film response.
 
 ## Story
 
@@ -9,11 +9,14 @@ The site is built around the project's real origin: a roll of Rollei IR 400 boug
 The page documents:
 
 - the origin story;
+- a source-linked history of infrared photography and its pop-culture life;
 - the visible-RGB to synthetic-NIR rendering pipeline;
 - the distinction between simulated infrared and real infrared capture;
 - field failures and their engineering fixes;
 - supplied Minas Gerais before/after results;
 - the v2.0 milestone.
+
+The public page is product- and history-focused. It is not a tutorial for rebuilding the app at home and does not reproduce third-party artwork.
 
 ## Local preview
 
@@ -41,7 +44,7 @@ python3 scripts/validate-site.py
 - `scripts/validate-site.py` — local-reference and content-integrity check
 - `.github/workflows/pages.yml` — validation and GitHub Pages deployment
 
-## Image provenance
+## Image provenance and rights
 
 The three Minas Gerais photographs were supplied by the project owner for this site:
 
@@ -50,6 +53,7 @@ The three Minas Gerais photographs were supplied by the project owner for this s
 - `minas-gerais-monochrome-ir.jpg` — Spectral Camera monochrome IR result
 
 Exact device, preset, and capture-mode metadata were not supplied, so the page deliberately does not invent those labels.
+The site does not bundle album covers, film stills, celebrity portraits, or other third-party artwork. Historical artists and works are mentioned only as text references, with links to further reading.
 
 ## Deployment
 
