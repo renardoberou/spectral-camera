@@ -49,6 +49,7 @@ import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
+import com.renardoberou.spectralcamera.core.gl.SpectralGrainTrace
 import com.renardoberou.spectralcamera.core.gl.SpectralGlView
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import com.renardoberou.spectralcamera.ui.screens.GalleryScreen
@@ -80,6 +81,7 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             }
         }
         val settings by viewModel.settings.collectAsStateWithLifecycle()
+        val settingsSequence by viewModel.settingsSequence.collectAsStateWithLifecycle()
         val galleryState by viewModel.galleryState.collectAsStateWithLifecycle()
         var capabilities by remember { mutableStateOf<CameraCapabilities?>(null) }
         var permissionsGranted by remember { mutableStateOf(hasRequiredPermissions(context)) }
@@ -90,7 +92,8 @@ fun SpectralCameraApp(viewModel: SpectralViewModel) {
             permissionsGranted = hasRequiredPermissions(context)
         }
 
-        LaunchedEffect(settings) {
+        LaunchedEffect(settings, settingsSequence) {
+            SpectralGrainTrace.composeEmission(settingsSequence, settings)
             glView.updateSettings(settings)
         }
 

@@ -11,12 +11,14 @@ class LatestSettingsHandoffTest {
 
         val offSequence = handoff.publish("off")
         val extremeSequence = handoff.publish("extreme")
+        val mediumSequence = handoff.publish("medium")
 
         val pending = handoff.consumeNewerThan(0)
 
-        assertEquals(extremeSequence, pending?.sequence)
-        assertEquals("extreme", pending?.value)
+        assertEquals(mediumSequence, pending?.sequence)
+        assertEquals("medium", pending?.value)
         assertEquals(offSequence + 1, extremeSequence)
-        assertNull(handoff.consumeNewerThan(extremeSequence))
+        assertEquals(extremeSequence + 1, mediumSequence)
+        assertNull(handoff.consumeNewerThan(mediumSequence))
     }
 }

@@ -72,7 +72,8 @@ import com.renardoberou.spectralcamera.core.CaptureActionResult
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.FocusTapResult
-import com.renardoberou.spectralcamera.core.ManualAdjustments
+import com.renardoberou.spectralcamera.core.GrainPolicy
+import com.renardoberou.spectralcamera.core.gl.SpectralGrainTrace
 import com.renardoberou.spectralcamera.core.PresetCatalog
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.WhiteBalancePreset
@@ -719,7 +720,10 @@ fun LiveCameraScreen(
             ) {
                 AdjustmentsSheet(
                     settings = settings,
-                    onAdjustmentsChange = { updated -> viewModel.updateAdjustments { updated } },
+                    onReset = viewModel::resetAdjustments,
+                    onGrainChange = viewModel::setGrain,
+                    onContrastChange = viewModel::setContrast,
+                    onSaturationChange = viewModel::setSaturation,
                 )
             }
         }
@@ -878,7 +882,10 @@ internal fun PresetSheet(
 @Composable
 private fun AdjustmentsSheet(
     settings: CameraSettings,
-    onAdjustmentsChange: (ManualAdjustments) -> Unit,
+    onReset: () -> Unit,
+    onGrainChange: (Float) -> Unit,
+    onContrastChange: (Float) -> Unit,
+    onSaturationChange: (Float) -> Unit,
 ) {
     val current = settings.adjustments
     Column(
@@ -894,12 +901,15 @@ private fun AdjustmentsSheet(
             style = MaterialTheme.typography.bodySmall,
         )
 
-        FilledTonalButton(onClick = { onAdjustmentsChange(ManualAdjustments()) }) {
+        FilledTonalButton(onClick = onReset) {
             Text("Reset")
         }
-        SteppedControl("Grain", grainOptionLabels.zip(grainOptionValues), current.grain) { value -> onAdjustmentsChange(current.copy(grain = value)) }
-        SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
-        SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation) { value -> onAdjustmentsChange(current.copy(saturation = value)) }
+        SteppedControl("Grain", grainOptionLabels.zip(grainOptionValues), current.grain) { value ->
+            SpectralGrainTrace.uiSelection(GrainPolicy.fromPersistedValue(value))
+            onGrainChange(value)
+        }
+        SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast, onContrastChange)
+        SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation, onSaturationChange)
 
 
         Spacer(Modifier.height(24.dp))

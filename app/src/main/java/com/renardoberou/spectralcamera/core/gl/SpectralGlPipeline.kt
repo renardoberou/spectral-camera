@@ -1243,6 +1243,7 @@ class SpectralRenderer internal constructor(
 
     private var settings: CameraSettings = CameraSettings()
     private var appliedSettingsSequence = 0L
+    private var sourceFrameCounter = 0L
 
     @Volatile
     private var srcWidth = 0
@@ -1296,6 +1297,7 @@ class SpectralRenderer internal constructor(
         val pending = settingsHandoff.consumeNewerThan(appliedSettingsSequence) ?: return
         settings = pending.value
         appliedSettingsSequence = pending.sequence
+        SpectralGrainTrace.glConsume(appliedSettingsSequence, settings)
     }
 
     fun setSourceSize(width: Int, height: Int) {
@@ -1361,9 +1363,11 @@ class SpectralRenderer internal constructor(
         val texture = surfaceTexture ?: return
         val program = oesProgram ?: return
         texture.updateTexImage()
+        sourceFrameCounter += 1L
         texture.getTransformMatrix(stMatrix)
         computePreviewPosMatrix()
         frameIndex = (frameIndex + 1) % 997
+        SpectralGrainTrace.glDraw(appliedSettingsSequence, sourceFrameCounter, settings)
 
         val width = if (srcWidth > 0) srcWidth else viewWidth
         val height = if (srcHeight > 0) srcHeight else viewHeight
@@ -1580,7 +1584,7 @@ class SpectralRenderer internal constructor(
         GLES20.glUniform1f(program.uBlacks, adj.blacks)
         GLES20.glUniform1f(program.uWhites, adj.whites)
         GLES20.glUniform1f(program.uBloom, adj.bloom)
-        GLES20.glUniform1f(program.uGrain, GrainPolicy.captureStrength(currentSettings))
+        GLES20.glUniform1f(program.uGrain, GrainPolicy.renderStrength(currentSettings))
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
         GLES20.glUniform1f(program.uAutoLo, autoLo)
         GLES20.glUniform1f(program.uAutoHi, autoHi)
@@ -1869,7 +1873,8 @@ class SpectralGlView(context: Context) : GLSurfaceView(context) {
     }
 
     fun updateSettings(settings: CameraSettings) {
-        settingsHandoff.publish(settings)
+        val sequence = settingsHandoff.publish(settings)
+        SpectralGrainTrace.glPublish(sequence, settings)
         queueEvent { renderer.consumeLatestSettings() }
         requestRender()
     }

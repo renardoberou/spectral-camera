@@ -33,4 +33,12 @@ class GrainPolicyTest {
                 GrainPolicy.OFF.strength,
         )
     }
+
+    @Test
+    fun previewAndCaptureUseTheSameGrainStrength() {
+        val settings = CameraSettings(
+            adjustments = ManualAdjustments(grain = GrainPolicy.EXTREME.strength),
+        )
+        assertTrue(GrainPolicy.captureStrength(settings) == GrainPolicy.renderStrength(settings))
+    }
 }
