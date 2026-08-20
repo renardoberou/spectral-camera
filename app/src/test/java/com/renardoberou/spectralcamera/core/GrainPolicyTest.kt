@@ -21,4 +21,16 @@ class GrainPolicyTest {
         assertTrue(GrainPolicy.fromPersistedValue(0.72f) == GrainPolicy.COARSE)
         assertTrue(GrainPolicy.fromPersistedValue(1.10f) == GrainPolicy.EXTREME)
     }
+
+    @Test
+    fun captureSettingsCarryTheSelectedPolicyStrengthToTheRenderer() {
+        val captureSettings = CameraSettings(
+            adjustments = ManualAdjustments(grain = GrainPolicy.EXTREME.strength),
+        )
+        assertTrue(GrainPolicy.captureStrength(captureSettings) == GrainPolicy.EXTREME.strength)
+        assertTrue(
+            GrainPolicy.captureStrength(captureSettings.copy(adjustments = ManualAdjustments())) ==
+                GrainPolicy.OFF.strength,
+        )
+    }
 }

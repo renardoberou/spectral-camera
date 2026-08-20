@@ -65,7 +65,7 @@ class SharedFilmShaderContractTest {
 
     @Test
     fun photographicGrainUsesTheExplicitPolicyStrength() {
-        assertTrue(FRAGMENT_BODY.contains("float grainAmp = uGrain *"))
+        assertTrue(FRAGMENT_BODY.contains("float grainAmp = uGrain * 0.10"))
         assertFalse(FRAGMENT_BODY.contains("float effGrain = uGrain + uGrainBase;"))
     }
 

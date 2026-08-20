@@ -1042,7 +1042,10 @@ void main() {
         float shadowLift = 1.0 - smoothstep(0.02, 0.34, gLuma);
         densityWeight = max(densityWeight, 0.62 * uStdTone3.z * shadowLift);
 
-        float grainAmp = uGrain * 0.040 * densityWeight * uGrainBias;
+        // Full-resolution JPEG readback and compression attenuate very fine
+        // excursions. Keep the policy gate unchanged, but use a print-visible
+        // amplitude so Extreme reads as emulsion grain rather than dither.
+        float grainAmp = uGrain * 0.10 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
 
         // Grain-aware dither (2026-07-24). The sub-LSB IGN dither further
@@ -1545,7 +1548,7 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uBlacks, adj.blacks)
         GLES20.glUniform1f(program.uWhites, adj.whites)
         GLES20.glUniform1f(program.uBloom, adj.bloom)
-        GLES20.glUniform1f(program.uGrain, GrainPolicy.fromPersistedValue(adj.grain).strength)
+        GLES20.glUniform1f(program.uGrain, GrainPolicy.captureStrength(currentSettings))
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
         GLES20.glUniform1f(program.uAutoLo, autoLo)
         GLES20.glUniform1f(program.uAutoHi, autoHi)

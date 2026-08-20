@@ -10,6 +10,9 @@ enum class GrainPolicy(val strength: Float) {
     ;
 
     companion object {
+        fun captureStrength(settings: CameraSettings): Float =
+            fromPersistedValue(settings.adjustments.grain).strength
+
         fun fromPersistedValue(value: Float): GrainPolicy =
             entries.minBy { kotlin.math.abs(it.strength - value) }
     }
