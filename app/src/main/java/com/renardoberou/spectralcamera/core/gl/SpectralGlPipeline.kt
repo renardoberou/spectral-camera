@@ -1288,10 +1288,6 @@ class SpectralRenderer internal constructor(
         1f, 1f,
     )
 
-    fun updateSettings(newSettings: CameraSettings) {
-        settings = newSettings
-    }
-
     /** Applies the newest pending settings; must run on the GL thread. */
     fun consumeLatestSettings() {
         val pending = settingsHandoff.consumeNewerThan(appliedSettingsSequence) ?: return
