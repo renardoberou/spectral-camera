@@ -7,6 +7,7 @@ import com.renardoberou.spectralcamera.core.GrainPolicy
 
 internal object SpectralGrainTrace {
     private const val TAG = "SpectralGrainTrace"
+    private var lastDrawSequence = Long.MIN_VALUE
 
     fun uiSelection(policy: GrainPolicy) = log("ui selection grain=${policy.name} strength=${policy.strength}")
 
@@ -30,12 +31,16 @@ internal object SpectralGrainTrace {
             "strength=${settings.adjustments.grain}",
     )
 
-    fun glDraw(sequence: Long, frame: Long, settings: CameraSettings, postLookLuma: Float? = null) = log(
-        "gl draw seq=$sequence frame=$frame " +
-            "grain=${GrainPolicy.fromPersistedValue(settings.adjustments.grain).name} " +
-            "strength=${settings.adjustments.grain}" +
-            (postLookLuma?.let { " postLookLuma=$it" } ?: ""),
-    )
+    fun glDraw(sequence: Long, frame: Long, settings: CameraSettings, postLookLuma: Float? = null) {
+        if (sequence == lastDrawSequence && frame % 30L != 0L) return
+        lastDrawSequence = sequence
+        log(
+            "gl draw seq=$sequence frame=$frame " +
+                "grain=${GrainPolicy.fromPersistedValue(settings.adjustments.grain).name} " +
+                "strength=${settings.adjustments.grain}" +
+                (postLookLuma?.let { " postLookLuma=$it" } ?: ""),
+        )
+    }
 
     private fun log(message: String) {
         if (BuildConfig.DEBUG) Log.d(TAG, message)
