@@ -31,13 +31,29 @@ internal object SpectralGrainTrace {
             "strength=${settings.adjustments.grain}",
     )
 
-    fun glDraw(sequence: Long, frame: Long, settings: CameraSettings, postLookLuma: Float? = null) {
+    fun glDraw(
+        sequence: Long,
+        frame: Long,
+        settings: CameraSettings,
+        viewportWidth: Int? = null,
+        viewportHeight: Int? = null,
+        grainSeed: Float? = null,
+        postLookLuma: Float? = null,
+    ) {
         if (sequence == lastDrawSequence && frame % 30L != 0L) return
         lastDrawSequence = sequence
         log(
             "gl draw seq=$sequence frame=$frame " +
                 "grain=${GrainPolicy.fromPersistedValue(settings.adjustments.grain).name} " +
                 "strength=${settings.adjustments.grain}" +
+                (viewportWidth?.let { " viewport=${it}x${viewportHeight ?: 0}" } ?: "") +
+                (grainSeed?.let {
+                    val strength = GrainPolicy.renderStrength(settings)
+                    // Proxy is the shader's mid-tone effective amplitude before
+                    // the per-stock bias. It is deliberately labelled a proxy:
+                    // the per-pixel gLuma/density is only available in GLSL.
+                    " grainSeed=$it grainAmpProxy=${strength * 0.10f}"
+                } ?: "") +
                 (postLookLuma?.let { " postLookLuma=$it" } ?: ""),
         )
     }

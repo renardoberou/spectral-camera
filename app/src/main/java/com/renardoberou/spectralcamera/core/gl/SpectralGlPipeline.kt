@@ -1270,7 +1270,13 @@ class SpectralRenderer internal constructor(
         Matrix.scaleM(it, 0, 1f, -1f, 1f)
     }
 
-    private var frameIndex = 0
+    // Grain is spatially coherent for one live-preview session. Advancing this
+    // seed every camera frame made the procedural field change constantly; on a
+    // scaled phone preview that temporal replacement was perceived as the
+    // grain disappearing even though uGrain remained Extreme. A session seed
+    // preserves the photographic texture without changing the camera/GL path.
+    private val grainSessionSeed =
+        (System.nanoTime().mod(997L).toFloat()).coerceAtLeast(0f)
 
     var maxTextureSize: Int = 2048
         private set
@@ -1362,8 +1368,14 @@ class SpectralRenderer internal constructor(
         sourceFrameCounter += 1L
         texture.getTransformMatrix(stMatrix)
         computePreviewPosMatrix()
-        frameIndex = (frameIndex + 1) % 997
-        SpectralGrainTrace.glDraw(appliedSettingsSequence, sourceFrameCounter, settings)
+        SpectralGrainTrace.glDraw(
+            sequence = appliedSettingsSequence,
+            frame = sourceFrameCounter,
+            settings = settings,
+            viewportWidth = viewWidth,
+            viewportHeight = viewHeight,
+            grainSeed = grainSessionSeed,
+        )
 
         val width = if (srcWidth > 0) srcWidth else viewWidth
         val height = if (srcHeight > 0) srcHeight else viewHeight
@@ -1388,7 +1400,7 @@ class SpectralRenderer internal constructor(
             textureMatrix = stMatrix,
             texWidth = width,
             texHeight = height,
-            grainSeed = frameIndex.toFloat(),
+            grainSeed = grainSessionSeed,
             skyUpX = skyUpX,
             skyUpY = skyUpY,
             zebraOverlay = settings.zebraEnabled,
@@ -1488,7 +1500,7 @@ class SpectralRenderer internal constructor(
                 textureMatrix = identityMatrix,
                 texWidth = width,
                 texHeight = height,
-                grainSeed = (System.currentTimeMillis() % 997L).toFloat(),
+                grainSeed = grainSessionSeed,
                 // Rendered content is NDC-inverted here, so image-up is -v.
                 skyUpX = 0f,
                 skyUpY = -1f,
