@@ -71,20 +71,22 @@ class SharedFilmShaderContractTest {
 
     @Test
     fun zeroPolicyGatesTheEntireOptionalPhotographicGrainStage() {
-        val gate = FRAGMENT_BODY.indexOf("if (uGrain > 0.001)")
-        val end = FRAGMENT_BODY.indexOf("// channel swap")
-        assertTrue("explicit grain gate is missing", gate >= 0)
-        assertTrue("grain gate must contain the whole optional stage", end > gate)
-        assertTrue(FRAGMENT_BODY.indexOf("float nLuma = filmGrain", gate) < end)
-        assertTrue(FRAGMENT_BODY.indexOf("float chromaAmt", gate) < end)
+        val block = balancedBlockAfter("if (uGrain > 0.001)")
+        assertTrue("explicit grain gate is missing", block.isNotEmpty())
+        assertTrue(block.contains("float nLuma = filmGrain"))
+        assertTrue(block.contains("float chromaAmt"))
+        assertTrue(block.contains("float clumpMask"))
+        assertTrue(block.contains("c += grainDelta * grainAmp * 2.2 * clumpMask"))
         assertFalse(FRAGMENT_BODY.contains("uGrainBase"))
     }
 
     @Test
     fun ignDitherRemainsPresentOutsideThePhotographicGrainGate() {
-        val gate = FRAGMENT_BODY.indexOf("if (uGrain > 0.001)")
+        val gateStart = FRAGMENT_BODY.indexOf("if (uGrain > 0.001)")
+        val gate = balancedBlockEnd("if (uGrain > 0.001)")
         val ign = FRAGMENT_BODY.indexOf("float ign =")
-        assertTrue(ign > gate)
+        assertTrue(gateStart >= 0)
+        assertTrue("IGN dither must follow the complete grain block", ign > gate)
         assertTrue(FRAGMENT_BODY.contains("c += ign * 0.006 * grainDitherScale"))
     }
 
@@ -97,8 +99,33 @@ class SharedFilmShaderContractTest {
 
     @Test
     fun extremeMonoGrainRemainsLuminanceDominantWithoutDigitalColorSpeckle() {
-        assertTrue(FRAGMENT_BODY.contains("vec3 grainDelta = vec3(nLuma);"))
-        assertTrue(FRAGMENT_BODY.contains("grainDelta += chromaAmt * 0.35 *"))
-        assertFalse(FRAGMENT_BODY.contains("uGrain * 0.35"))
+        val block = balancedBlockAfter("if (uGrain > 0.001)")
+        assertTrue(block.contains("vec3 grainDelta = vec3(nLuma);"))
+        assertTrue(block.contains("float chromaAmt = (uPreset <= 5) ? 0.0 : (1.0 - uStdTone3.x);"))
+        assertTrue(block.contains("grainDelta += chromaAmt * 0.35 * vec3(nCr, nCg, nCb);"))
+        assertFalse(block.contains("uGrain * 0.35"))
+    }
+
+    private fun balancedBlockAfter(marker: String): String {
+        val start = FRAGMENT_BODY.indexOf(marker)
+        if (start < 0) return ""
+        val open = FRAGMENT_BODY.indexOf('{', start)
+        if (open < 0) return ""
+        var depth = 0
+        for (index in open until FRAGMENT_BODY.length) {
+            when (FRAGMENT_BODY[index]) {
+                '{' -> depth += 1
+                '}' -> {
+                    depth -= 1
+                    if (depth == 0) return FRAGMENT_BODY.substring(open, index + 1)
+                }
+            }
+        }
+        return ""
+    }
+
+    private fun balancedBlockEnd(marker: String): Int {
+        val block = balancedBlockAfter(marker)
+        return if (block.isEmpty()) -1 else FRAGMENT_BODY.indexOf(marker) + FRAGMENT_BODY.substring(FRAGMENT_BODY.indexOf(marker)).indexOf(block) + block.length
     }
 }

@@ -1,6 +1,7 @@
 package com.renardoberou.spectralcamera.ui.screens
 
 import com.renardoberou.spectralcamera.core.LookFamily
+import com.renardoberou.spectralcamera.core.GrainPolicy
 import com.renardoberou.spectralcamera.core.SpectralPreset
 
 /** Pure layout/catalog contracts for the compact live-camera surface. */
@@ -15,7 +16,7 @@ internal val compactPresetFamilyOrder = listOf(
 )
 
 internal val grainOptionLabels = listOf("Off", "Fine", "Medium", "Coarse", "Extreme")
-internal val grainOptionValues = listOf(0f, 0.25f, 0.5f, 0.85f, 1.25f)
+internal val grainOptionValues = GrainPolicy.entries.map { it.strength }
 
 internal const val presetTileMinTouchSizeDp = 48
 

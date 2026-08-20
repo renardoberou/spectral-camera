@@ -14,6 +14,7 @@ import com.renardoberou.spectralcamera.BuildConfig
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.FilmLookLibrary
+import com.renardoberou.spectralcamera.core.GrainPolicy
 import com.renardoberou.spectralcamera.core.LookFamily
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.SharedFilmProfile
@@ -1544,7 +1545,7 @@ class SpectralRenderer(
         GLES20.glUniform1f(program.uBlacks, adj.blacks)
         GLES20.glUniform1f(program.uWhites, adj.whites)
         GLES20.glUniform1f(program.uBloom, adj.bloom)
-        GLES20.glUniform1f(program.uGrain, adj.grain)
+        GLES20.glUniform1f(program.uGrain, GrainPolicy.fromPersistedValue(adj.grain).strength)
         GLES20.glUniform1f(program.uGrainSeed, grainSeed)
         GLES20.glUniform1f(program.uAutoLo, autoLo)
         GLES20.glUniform1f(program.uAutoHi, autoHi)

@@ -1,6 +1,7 @@
 package com.renardoberou.spectralcamera.ui.screens
 
 import com.renardoberou.spectralcamera.core.LookFamily
+import com.renardoberou.spectralcamera.core.GrainPolicy
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -108,7 +109,8 @@ class CompactCameraContractsTest {
     @Test
     fun grainOptionsIncludeExtremeInApprovedOrder() {
         assertEquals(listOf("Off", "Fine", "Medium", "Coarse", "Extreme"), grainOptionLabels)
-        assertTrue(grainOptionValues.contains(1.25f))
+        assertEquals(GrainPolicy.entries.map { it.strength }, grainOptionValues)
+        assertTrue(grainOptionValues.contains(GrainPolicy.EXTREME.strength))
     }
 
     @Test
