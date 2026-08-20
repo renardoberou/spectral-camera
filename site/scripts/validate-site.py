@@ -8,13 +8,15 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "index.html"
-REQUIRED_IDS = {"top", "story", "engine", "field-notes", "results", "honesty"}
+REQUIRED_IDS = {"top", "story", "engine", "history", "field-notes", "results", "honesty"}
 REQUIRED_TEXT = {
     "Spectral Camera",
     "Rollei IR 400",
     "Minas Gerais",
     "synthetic NIR",
     "on the device",
+    "IR history",
+    "not a tutorial",
 }
 
 

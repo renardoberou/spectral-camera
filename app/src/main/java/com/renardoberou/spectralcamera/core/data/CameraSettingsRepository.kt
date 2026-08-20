@@ -30,7 +30,7 @@ class CameraSettingsRepository(context: Context) {
     val settings: Flow<CameraSettings> = dataStore.data.map { prefs ->
         CameraSettings(
             preset = prefs[PRESET]?.let { name -> runCatching { SpectralPreset.valueOf(name) }.getOrNull() }
-                ?: SpectralPreset.B_W_INFRARED,
+                ?: SpectralPreset.WARM_NEGATIVE,
             adjustments = ManualAdjustments(
                 contrast = prefs[CONTRAST] ?: 1.0f,
                 exposureCompensation = prefs[EXPOSURE] ?: 0f,
@@ -82,6 +82,7 @@ class CameraSettingsRepository(context: Context) {
             manualFocusPosition = (prefs[MANUAL_FOCUS_POSITION] ?: 0.15f).coerceIn(0f, 1f),
             intensity = (prefs[INTENSITY] ?: 1f).coerceIn(0.25f, 1f),
             zebraEnabled = prefs[ZEBRA] ?: false,
+            classifierDebugView = prefs[CLASSIFIER_DEBUG] ?: false,
         )
     }
 
@@ -118,6 +119,7 @@ class CameraSettingsRepository(context: Context) {
             prefs[MANUAL_FOCUS_POSITION] = settings.manualFocusPosition.coerceIn(0f, 1f)
             prefs[INTENSITY] = settings.intensity
             prefs[ZEBRA] = settings.zebraEnabled
+            prefs[CLASSIFIER_DEBUG] = settings.classifierDebugView
         }
     }
 
@@ -153,5 +155,6 @@ class CameraSettingsRepository(context: Context) {
         val MANUAL_FOCUS_POSITION = floatPreferencesKey("manual_focus_position")
         val INTENSITY = floatPreferencesKey("look_intensity")
         val ZEBRA = booleanPreferencesKey("zebra_enabled")
+        val CLASSIFIER_DEBUG = booleanPreferencesKey("classifier_debug")
     }
 }

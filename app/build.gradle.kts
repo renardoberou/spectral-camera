@@ -27,9 +27,9 @@ android {
     defaultConfig {
         applicationId = "com.renardoberou.spectralcamera"
         minSdk = 26
-        targetSdk = 35
-        versionCode = (System.getenv("VERSION_CODE") ?: "56").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.21.3"
+        targetSdk = 36
+        versionCode = (System.getenv("VERSION_CODE") ?: "58").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.21.5"
     }
 
     signingConfigs {
@@ -65,6 +65,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 

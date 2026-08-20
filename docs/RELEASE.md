@@ -200,3 +200,20 @@ Separately verify the documented one-time migration for users of CI/public-test 
 - Never publish an ordinary CI artifact as a stable release.
 - Never bypass a certificate mismatch to make a release workflow pass.
 - Back up the stable key and passwords in more than one secure location.
+
+## Fujifilm-inspired integration release boundary
+
+The integration branch adds three original visible-spectrum profiles and a
+shared post-front-end refinement stage. Before a release claim, verify these
+separately:
+
+1. JVM math and shader-contract tests pass.
+2. CI builds the exact pushed commit and uploads the debug APK.
+3. The artifact checksum is recorded and the package metadata is checked.
+4. The Moto Edge 60 Fusion exercises preview, still capture, import/reprocess,
+   orientation, save/reopen, and export for the new profiles and the existing
+   Aerochrome/mono-IR families.
+
+The profiles are Fuji-inspired originals. Do not describe them as official
+Fujifilm simulations or as exact camera JPEG reproductions. Device validation
+belongs in `docs/VALIDATION.md` and must not be inferred from a green build.

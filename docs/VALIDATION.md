@@ -149,6 +149,31 @@ mandatory, consistent with the "Test status" section of the README.
 
 ---
 
+## Fujifilm-inspired integration status — historical baseline (2026-08-18)
+
+The table below is retained as the 2026-08-18 baseline snapshot. It is historical
+context, not the current final-head status; the current rendering-slice status is
+recorded in `docs/fujifilm-integration/IMPLEMENTATION_STATUS.md` and the local-only
+device-matrix review below.
+
+| Gate | Status | Evidence / boundary |
+|---|---|---|
+| Baseline and fixture manifest | **PASS — source verified** | `docs/fujifilm-integration/baseline-2026-08-04.md` records the clean `7154f6b` baseline and hashes of preserved fixtures. |
+| Pure working-space and tone math | **PASS — CI executed** | `core/color/WorkingSpaceMath.kt` and `ToneMath.kt` have JVM tests for finite handling, round trips, monotonicity, shoulder slope, and bounds; the exact pushed head passed GitHub Actions Android CI. |
+| Shared shader stage and family ordering | **PASS — CI executed** | `SharedFilmShaderContractTest.kt` checks generic uniforms, post-front-end ordering, defined toe edges, preset indices, and reset markers; exact head `8648f9f` passed CI. |
+| Visible-spectrum profiles | **PARTIAL — source implemented** | Archive Chrome, Cinematic Neutral, and Warm Negative are data-driven `STANDARD_FILM` profiles with original names and disclosure. Visual calibration is not complete. |
+| Calibration harness | **PASS — Python smoke tests** | `tools/fujifilm_calibration/` keeps tone, grain, colour, and chart metrics separate; six deterministic tests and package import smoke tests passed with the system Python. `pytest` is not installed in the Hermes venv. |
+| Hue-sector/color-density analytic stage | **PASS — source + Python checks** | Six data-driven hue sectors are consumed by the shared shader stage for the three visible profiles; Kotlin and NumPy contracts cover wraparound, neutral stability, midtone weighting, compression, finiteness, and bounds. No LUT residual is claimed. |
+| Material-confidence analytic stage | **PASS — source + JVM test source** | `MaterialConfidenceMath.kt` provides bounded continuous fields and near-black reliability gating; the live shader uses smooth post-front-end confidence blending. Android execution remains CI-gated. |
+| Aerochrome / mono-IR shared refinements | **PARTIAL — device matrix evidence** | Shared post-spectral tone/protection/density uniforms were exercised in the 19-preset Motorola matrix. Mechanical capture/save/gallery evidence is preserved under `.git/next-build-evidence-20260819/matrix-final2/`; visual review is recorded below. |
+| Moto Edge 60 Fusion re-shoots | **PARTIAL — connected device** | The Motorola Edge 60 Fusion completed the exposed 19-preset capture matrix with full-resolution save status, gallery navigation, and zero fatal-pattern lines. |
+
+The implementation status and exact source/build/CI evidence are tracked in
+`docs/fujifilm-integration/IMPLEMENTATION_STATUS.md`. A source or CI result
+must not be promoted to a device `PASS` without the named capture flows.
+
+---
+
 ## Grain quality upgrade (2026-07-23d, in progress)
 
 **Baseline verification (step 1 of 4, done):** numpy port of `grainHash`/`valueNoise`/
@@ -260,7 +285,43 @@ grain share rose to 0.98-1.05 (Rollei) and 0.36-0.39 (Ektar); CineStill's deepes
 grain share fell from 0.95/0.90 to 0.51/0.58, confirming the reduced floor takes effect
 as sourced. Highlight protection re-confirmed bit-identical by construction (shadowLift
 itself is exactly 0 above luma 0.34, independent of the scale multiplier). Reports and
-recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
+Reports and recalibrated proof strip in `docs/assets/grain-verification-2026-07-24/real-emulsion-calibration/`.
+
+---
+
+## Device matrix review — 2026-08-19
+
+The post-neutral-correction matrix contains 19 processed JPEGs: six monochrome IR,
+six Aerochrome variants, and seven visible profiles. The extraction/integrity report
+is preserved as local-only evidence in `.git/next-build-evidence-20260819/matrix-final2/`;
+it is not tracked and is not required for a fresh checkout. The per-file report is
+`image-checksums.tsv`, with the summary in `image-summary.txt`.
+
+Evidence boundary: every extracted file is a valid JPEG, all 19 are unique, all
+report `3072x4096`, and the matrix rows recorded
+`Saved Standard • 1 frame • Full Resolution`, gallery navigation, and zero fatal
+pattern lines. This proves the capture/export path for that run. The visual claims
+below are scene-specific and are not a full calibration guarantee.
+
+Visual review of the preserved full-resolution outputs:
+
+- **Aerochrome Classic and variants — PARTIAL:** the synthetic blue sky and strong
+  red/magenta foliage response are visible and remain distinct from the visible and
+  mono families. Pale railings and building surfaces are mostly cream/gray rather
+  than the old saturated magenta speckling, but blue-violet edge/patch structure is
+  still visible around some high-contrast building and railing boundaries. No clear
+  sky banding was visible at the contact-sheet scale; strong local contrast and
+  clipped dark foliage/highlight edges remain scene-dependent watch items.
+- **B&W Infrared — PASS for family separation, PARTIAL for tonal latitude:** output
+  is genuinely monochrome, with bright foliage, dark sky, and building texture
+  clearly separated from Aerochrome. The sample contains very bright foliage and
+  deep sky/shadow regions, so highlight/shadow clipping cannot be ruled out as a
+  general guarantee from this one scene; no obvious colored leakage or broad banding
+  was visible.
+- **Warm Negative — PASS for this scene:** it remains a visible-spectrum profile,
+  with green foliage, pale warm surfaces, blue sky, and restrained negative-like
+  contrast. It is visibly separate from both the magenta/blue Aerochrome route and
+  the monochrome IR route. This is a scene review, not a full calibration claim.
 
 **Correction (2026-07-24, third pass):** a real device photo of a detailed subject (camo-
 pattern bag, straps) showed Rollei reading noisy - the ratio fix above correctly matched

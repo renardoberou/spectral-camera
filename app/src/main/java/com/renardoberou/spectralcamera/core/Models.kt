@@ -5,8 +5,8 @@ import android.net.Uri
 
 enum class LookFamily(val label: String) {
     MONOCHROME_IR("Monochrome IR"),
-    AEROCHROME("Aerochrome / False Colour"),
-    STANDARD_FILM("Classic Film"),
+    AEROCHROME("AeroIR"),
+    STANDARD_FILM("Film emulations"),
 }
 
 enum class SpectralPreset(
@@ -15,83 +15,98 @@ enum class SpectralPreset(
     val family: LookFamily,
 ) {
     B_W_INFRARED(
-        label = "Rollei Infrared 400",
-        description = "Reference monochrome IR: textured glowing foliage, dense gradated skies, fine grain, restrained anti-halation glow.",
+        label = "Silver IR 400",
+        description = "A simulation with luminous foliage, deep graduated skies, fine grain, and restrained glow around bright edges.",
         family = LookFamily.MONOCHROME_IR,
     ),
     HIGH_CONTRAST_IR(
-        label = "Kodak HIE",
-        description = "Deep Wood effect, hardest contrast, near-black skies, no anti-halation backing - the famous ethereal bloom.",
+        label = "Deep IR 400",
+        description = "A simulation with the strongest foliage separation, near-black skies, hard contrast, and pronounced bloom.",
         family = LookFamily.MONOCHROME_IR,
     ),
     WHITE_FOLIAGE_DARK_SKY(
-        label = "Ilford SFX 200",
-        description = "Milder extended-red look, finer tonality, gentler foliage glow, minimal halation.",
+        label = "Extended Red 200",
+        description = "A simulation with extended-red foliage response, smooth tonality, gentle glow, and minimal halation.",
         family = LookFamily.MONOCHROME_IR,
     ),
     MONO_IR_MODERATE(
-        label = "Moderate IR (Konica-style)",
-        description = "Balanced middle ground between restrained and dramatic - a flexible, broadly usable IR grade.",
+        label = "Balanced IR 32",
+        description = "A versatile simulation balancing foliage lift, sky depth, contrast, and controlled halation.",
         family = LookFamily.MONOCHROME_IR,
     ),
     MONO_IR_FINE_GRAIN(
-        label = "Fine-Grain Infrared",
-        description = "Neutral, print-oriented IR: finest grain, mildest Wood effect, tightest halation - clean rather than moody.",
+        label = "Fine IR 400",
+        description = "A clean simulation with fine grain, mild foliage lift, tight halation, and a neutral print-like finish.",
         family = LookFamily.MONOCHROME_IR,
     ),
     MONO_IR_SOFT_VINTAGE(
-        label = "Soft Vintage IR",
-        description = "Romantic, low-contrast print look: milky highlights, dreamy wide halation, coarser grain, lifted blacks.",
+        label = "Soft IR 400",
+        description = "A soft simulation with lifted blacks, milky highlights, broad glow, and a gentle vintage atmosphere.",
         family = LookFamily.MONOCHROME_IR,
     ),
     AEROCHROME_FALSE_COLOR(
-        label = "Aerochrome Classic",
-        description = "The reference EIR grade: magenta-red foliage, deep cyan sky, filmic false-colour balance.",
+        label = "AeroIR Classic 400",
+        description = "A false-colour simulation with magenta foliage, deep cyan skies, and a balanced cinematic density.",
         family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_SOFT(
-        label = "Aerochrome Soft",
-        description = "Gentler contrast, pastel foliage magenta, paler sky, minimal glow - an easygoing everyday grade.",
+        label = "AeroIR Soft 400",
+        description = "A softer false-colour simulation with pastel foliage, pale skies, gentle contrast, and minimal glow.",
         family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_DENSE(
-        label = "Aerochrome Dense",
-        description = "Punchier contrast, deeper cyan sky, more saturation headroom, dramatic halation - the hero-shot grade.",
+        label = "AeroIR Dense 400",
+        description = "A dense false-colour simulation with punchier contrast, deeper cyan skies, saturation, and dramatic glow.",
         family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_GOLD(
-        label = "Aerochrome Gold (orange filter)",
-        description = "EIR with orange filter: golden foliage, teal sky.",
+        label = "AeroIR Amber 400",
+        description = "A warm false-colour simulation with amber foliage, teal skies, and a distinct filtered atmosphere.",
         family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_FADED(
-        label = "Aerochrome Faded / Vintage",
-        description = "Desaturated, lifted blacks, warm cast, hazy pale sky - an aged-print character.",
+        label = "AeroIR Faded 400",
+        description = "A faded false-colour simulation with lifted blacks, softened saturation, warm tone, and hazy skies.",
         family = LookFamily.AEROCHROME,
     ),
     AEROCHROME_VIVID(
-        label = "Aerochrome Vivid",
-        description = "Maximum foliage hue: pushes past Dense's density-focused character to chase the iconic hot pink/magenta canopy directly, at Classic's more neutral overall density.",
+        label = "AeroIR Vivid 400",
+        description = "A vivid false-colour simulation emphasizing hot magenta foliage while keeping overall density balanced.",
         family = LookFamily.AEROCHROME,
     ),
     EKTAR_100(
-        label = "Kodak Ektar 100",
-        description = "World's finest-grain colour negative: vivid but faithful saturation with the famous red/blue pop, punchy clean contrast, nearly invisible grain.",
+        label = "Vivid Negative 100",
+        description = "A colour-negative simulation with vivid clean saturation, crisp contrast, and exceptionally restrained grain.",
         family = LookFamily.STANDARD_FILM,
     ),
     CINESTILL_800T(
-        label = "CineStill 800T",
-        description = "Tungsten-balanced cine stock without remjet: signature red halation around lights, cool teal daylight cast, lifted cinematic blacks.",
+        label = "Street Chrome 800",
+        description = "A cinematic simulation with cool daylight shadows, warm practical lights, lifted blacks, and red edge glow.",
         family = LookFamily.STANDARD_FILM,
     ),
     TRI_X_400(
-        label = "Kodak Tri-X 400",
-        description = "The photojournalism classic: punchy panchromatic B&W, rich textured blacks, forgiving highlights, honest gritty grain.",
+        label = "Grit Monochrome 400",
+        description = "A monochrome simulation with punchy contrast, textured blacks, forgiving highlights, and visible grain.",
         family = LookFamily.STANDARD_FILM,
     ),
     PORTRA_400(
-        label = "Kodak Portra 400",
-        description = "The professional portrait standard: natural, restrained skin tones (never oversaturated like Ektar), wide exposure latitude, gentle shadows and highlight rolloff. Genuinely grainier than Ektar 100 - real, published Kodak data confirms it, not a design choice.",
+        label = "Portrait Negative 400",
+        description = "A portrait-oriented simulation with restrained colour, gentle shadows, natural skin tones, and smooth highlights.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    ARCHIVE_CHROME(
+        label = "Archive Chrome —",
+        description = "An original simulation with restrained density, protected highlights, quiet colour, and an archival finish.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    CINEMATIC_NEUTRAL(
+        label = "Cinematic Neutral —",
+        description = "An original simulation with neutral colour density, a controlled shoulder, and gentle highlight protection.",
+        family = LookFamily.STANDARD_FILM,
+    ),
+    WARM_NEGATIVE(
+        label = "Warm Negative 400",
+        description = "An original simulation with warm midtones, soft highlight density, protected chroma, and an easy everyday balance.",
         family = LookFamily.STANDARD_FILM,
     ),
 }
@@ -281,7 +296,7 @@ data class ManualAdjustments(
 )
 
 data class CameraSettings(
-    val preset: SpectralPreset = SpectralPreset.B_W_INFRARED,
+    val preset: SpectralPreset = SpectralPreset.WARM_NEGATIVE,
     val adjustments: ManualAdjustments = ManualAdjustments(),
     val saveOriginal: Boolean = false,
     val frontFacing: Boolean = false,

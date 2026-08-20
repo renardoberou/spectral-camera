@@ -114,7 +114,7 @@ jobs:
           verify_output=$("$APKSIGNER" verify --verbose --print-certs "$apk")
           printf '%s\n' "$verify_output"
           apk_cert=$(printf '%s\n' "$verify_output" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | sed -n 's/^V2 Signer: certificate SHA-256 digest: //p' \
             | head -1 \
             | tr -d ':[:space:]' \
             | tr '[:upper:]' '[:lower:]')

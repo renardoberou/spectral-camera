@@ -30,6 +30,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.renardoberou.spectralcamera.core.CameraSettings
+import com.renardoberou.spectralcamera.core.media.CommercialNaming
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlinx.coroutines.launch
 
@@ -124,7 +125,7 @@ fun ImportPreviewScreen(
                 FilterChip(
                     selected = showPresets,
                     onClick = { showPresets = !showPresets },
-                    label = { Text("Preset: ${current.settings.preset.label}") },
+                    label = { Text("Preset: ${CommercialNaming.presetLabel(current.settings.preset)}") },
                 )
             }
 

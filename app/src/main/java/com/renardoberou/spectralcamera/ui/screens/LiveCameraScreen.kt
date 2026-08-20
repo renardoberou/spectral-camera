@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -19,9 +20,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSizeIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FlashOn
@@ -50,6 +56,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,13 +69,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.renardoberou.spectralcamera.core.CameraCapabilities
 import com.renardoberou.spectralcamera.core.CameraSettings
 import com.renardoberou.spectralcamera.core.CaptureActionResult
-import com.renardoberou.spectralcamera.core.CaptureResult
-import com.renardoberou.spectralcamera.core.ChannelSwapMode
 import com.renardoberou.spectralcamera.core.DoubleExposureMode
 import com.renardoberou.spectralcamera.core.FocusMode
 import com.renardoberou.spectralcamera.core.FocusTapResult
-import com.renardoberou.spectralcamera.core.LookFamily
-import com.renardoberou.spectralcamera.core.ManualAdjustments
+
+import com.renardoberou.spectralcamera.core.PresetCatalog
 import com.renardoberou.spectralcamera.core.SpectralPreset
 import com.renardoberou.spectralcamera.core.WhiteBalancePreset
 import com.renardoberou.spectralcamera.core.camera.CameraController
@@ -73,6 +81,28 @@ import com.renardoberou.spectralcamera.core.focus.FocusMath
 import com.renardoberou.spectralcamera.core.state.SpectralViewModel
 import kotlin.math.abs
 import kotlinx.coroutines.launch
+
+internal enum class MoreAction {
+    ADJUSTMENTS,
+    SAVE_ORIGINAL,
+    IMPORT,
+    DOUBLE_EXPOSURE,
+    ZEBRA,
+}
+
+internal enum class MoreActionTransition {
+    DISMISS,
+    ADJUSTMENTS,
+}
+
+internal fun moreActionTransition(action: MoreAction): MoreActionTransition = when (action) {
+    MoreAction.ADJUSTMENTS -> MoreActionTransition.ADJUSTMENTS
+    MoreAction.SAVE_ORIGINAL,
+    MoreAction.IMPORT,
+    MoreAction.DOUBLE_EXPOSURE,
+    MoreAction.ZEBRA,
+    -> MoreActionTransition.DISMISS
+}
 
 @Composable
 fun LiveCameraScreen(
@@ -92,6 +122,7 @@ fun LiveCameraScreen(
     var showFocus by remember { mutableStateOf(false) }
     var showWhiteBalance by remember { mutableStateOf(false) }
     var showAdjustments by remember { mutableStateOf(false) }
+    var showMore by remember { mutableStateOf(false) }
     var showSaveNote by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var captureLabel by remember { mutableStateOf("Ready for capture") }
@@ -223,7 +254,7 @@ fun LiveCameraScreen(
                                         maxLines = 1,
                                     )
                                     Text(
-                                        text = "${settings.sensorMode.label} • simulated IR",
+                                        text = "${settings.preset.family.label} • ${settings.sensorMode.label}",
                                         style = MaterialTheme.typography.bodySmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -290,7 +321,7 @@ fun LiveCameraScreen(
                                     )
                                 }
                                 Text(
-                                    text = "${settings.sensorMode.label} • ${settings.preset.label}",
+                                    text = "${settings.preset.family.label} • ${settings.preset.label}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.secondary,
                                     maxLines = 1,
@@ -326,9 +357,7 @@ fun LiveCameraScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (capabilities?.exposureSupported == true) {
@@ -371,21 +400,14 @@ fun LiveCameraScreen(
                         )
                     }
                     FilterChip(
-                        selected = settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED,
-                        onClick = {
-                            val next = if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
-                                DoubleExposureMode.OFF
-                            } else {
-                                DoubleExposureMode.FILM_BALANCED
-                            }
-                            viewModel.setDoubleExposureMode(next)
-                        },
-                        label = { Text("2x Exp.") },
-                    )
-                    FilterChip(
                         selected = false,
                         onClick = { showPresets = true },
                         label = { Text("Presets") },
+                    )
+                    FilterChip(
+                        selected = false,
+                        onClick = { showMore = true },
+                        label = { Text("More") },
                     )
                 }
                 if (capabilities?.exposureSupported == true && showExposure) {
@@ -665,66 +687,9 @@ fun LiveCameraScreen(
                             )
                         }
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            FilterChip(
-                                selected = settings.saveOriginal,
-                                enabled = settings.hdrCaptureMode != com.renardoberou.spectralcamera.core.HdrCaptureMode.RAW_THREE_FRAME,
-                                onClick = {
-                                    viewModel.setSaveOriginal(!settings.saveOriginal)
-                                    showSaveNote = true
-                                },
-                                label = {
-                                    Text(
-                                        if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) {
-                                            "Save sources"
-                                        } else {
-                                            "Save original"
-                                        },
-                                    )
-                                },
-                            )
-                            FilterChip(
-                                selected = false,
-                                onClick = { showAdjustments = true },
-                                label = { Text("Manual panel") },
-                            )
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    importLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                    )
-                                },
-                                label = { Text("Import photo") },
-                            )
-                            FilterChip(
-                                selected = settings.zebraEnabled,
-                                onClick = { viewModel.setZebra(!settings.zebraEnabled) },
-                                label = { Text("Zebra") },
-                            )
-                            // Temporary diagnostic toggle - see classifierDebugView on
-                            // CameraSettings. Not a shipped feature.
-                            FilterChip(
-                                selected = settings.classifierDebugView,
-                                onClick = { viewModel.setClassifierDebugView(!settings.classifierDebugView) },
-                                label = { Text("Debug: classifiers") },
-                            )
-                        }
                     }
                 }
 
-                Text(
-                    text = "Simulated IR only unless external IR/thermal hardware is connected.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
             }
         }
 
@@ -751,13 +716,44 @@ fun LiveCameraScreen(
             ) {
                 AdjustmentsSheet(
                     settings = settings,
-                    capabilities = capabilities,
-                    onSettingsChange = { updated ->
-                        viewModel.setSaveOriginal(updated.saveOriginal)
-                        viewModel.setFrontFacing(updated.frontFacing)
+                    onReset = viewModel::resetAdjustments,
+                    onContrastChange = viewModel::setContrast,
+                    onSaturationChange = viewModel::setSaturation,
+                )
+            }
+        }
+
+        if (showMore) {
+            ModalBottomSheet(
+                onDismissRequest = { showMore = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            ) {
+                MoreToolsSheet(
+                    settings = settings,
+                    onAdjustments = {
+                        showMore = moreActionTransition(MoreAction.ADJUSTMENTS) == MoreActionTransition.DISMISS
+                        showAdjustments = true
                     },
-                    onAdjustmentsChange = { updated -> viewModel.updateAdjustments { updated } },
-                    onDismiss = { showAdjustments = false },
+                    onSaveOriginal = {
+                        showMore = moreActionTransition(MoreAction.SAVE_ORIGINAL) == MoreActionTransition.DISMISS
+                        viewModel.setSaveOriginal(!settings.saveOriginal)
+                        showSaveNote = true
+                    },
+                    onImport = {
+                        showMore = moreActionTransition(MoreAction.IMPORT) == MoreActionTransition.DISMISS
+                        importLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onDoubleExposure = {
+                        showMore = moreActionTransition(MoreAction.DOUBLE_EXPOSURE) == MoreActionTransition.DISMISS
+                        viewModel.setDoubleExposureMode(
+                            if (settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED) DoubleExposureMode.OFF
+                            else DoubleExposureMode.FILM_BALANCED,
+                        )
+                    },
+                    onZebra = {
+                        showMore = moreActionTransition(MoreAction.ZEBRA) == MoreActionTransition.DISMISS
+                        viewModel.setZebra(!settings.zebraEnabled)
+                    },
                 )
             }
         }
@@ -794,53 +790,92 @@ internal fun PresetSheet(
     current: SpectralPreset,
     onPick: (SpectralPreset) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
-        Text("Filter preset drawer", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "These are simulated spectral looks inspired by infrared film behavior, not claims of true IR capture.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        val grouped = SpectralPreset.values().groupBy { it.family }
-        listOf(LookFamily.MONOCHROME_IR, LookFamily.AEROCHROME, LookFamily.STANDARD_FILM).forEach { family ->
-            val presets = grouped[family].orEmpty()
-            if (presets.isEmpty()) return@forEach
+        val columns = presetGridColumnCount(maxWidth.value.toInt())
+        val presets = remember(current) { presetsForLazyGrid(current) }
+        val gridState = rememberLazyGridState()
+        LaunchedEffect(current, presets) {
+            gridState.animateScrollToItem(presets.indexOf(current).coerceAtLeast(0))
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Looks", style = MaterialTheme.typography.headlineSmall)
             Text(
-                text = family.label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 4.dp),
+                "Film emulations  ·  AeroIR  ·  Monochrome IR",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.secondary,
             )
-            presets.forEach { preset ->
-                FilterChip(
-                    selected = preset == current,
-                    onClick = { onPick(preset) },
-                    label = {
-                        Column(Modifier.padding(vertical = 8.dp)) {
-                            Text(preset.label, fontWeight = FontWeight.SemiBold)
-                            Text(preset.description, style = MaterialTheme.typography.bodySmall)
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(
+                    items = presets,
+                    key = { it.name },
+                ) { preset ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .requiredSizeIn(minWidth = presetTileMinTouchSizeDp.dp, minHeight = presetTileMinTouchSizeDp.dp)
+                            .clickable { onPick(preset) }
+                            .semantics {
+                                contentDescription = "${PresetCatalog.metadataFor(preset).label}, ${preset.family.label}"
+                                selected = preset == current
+                            },
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (preset == current) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        tonalElevation = if (preset == current) 5.dp else 1.dp,
+                    ) {
+                        val thumbnail = remember(preset) { PresetThumbnailCatalog.thumbnailFor(preset) }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Image(
+                                painter = painterResource(thumbnail.resourceId),
+                                contentDescription = "${PresetCatalog.metadataFor(preset).label} thumbnail",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000))))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    PresetCatalog.metadataFor(preset).label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (preset == current) {
+                                    Text("Active", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                }
+                            }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    }
+                }
             }
         }
-        Spacer(Modifier.height(16.dp))
     }
 }
+
 
 @Composable
 private fun AdjustmentsSheet(
     settings: CameraSettings,
-    capabilities: CameraCapabilities?,
-    onSettingsChange: (CameraSettings) -> Unit,
-    onAdjustmentsChange: (ManualAdjustments) -> Unit,
-    onDismiss: () -> Unit,
+    onReset: () -> Unit,
+    onContrastChange: (Float) -> Unit,
+    onSaturationChange: (Float) -> Unit,
 ) {
     val current = settings.adjustments
     Column(
@@ -850,58 +885,42 @@ private fun AdjustmentsSheet(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Manual adjustment panel", style = MaterialTheme.typography.headlineSmall)
+        Text("Look adjustments", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Tune the simulated IR character, not the claim. The app labels the output as simulated unless external hardware is detected.",
+            "Tune the simulated look. Rendering algorithms are unchanged.",
             style = MaterialTheme.typography.bodySmall,
         )
 
-        FilledTonalButton(onClick = { onAdjustmentsChange(ManualAdjustments()) }) {
-            Text("Reset to film defaults")
+        FilledTonalButton(onClick = onReset) {
+            Text("Reset")
         }
-        SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast) { value -> onAdjustmentsChange(current.copy(contrast = value)) }
-        StopsRow("Digital exposure (stops)", listOf(-2f, -1.5f, -1f, -0.5f, 0f, 0.5f, 1f, 1.5f, 2f).map { formatStops(it) to it }, current.exposureCompensation) { value -> onAdjustmentsChange(current.copy(exposureCompensation = value)) }
-        SteppedControl("Blacks", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.blacks) { value -> onAdjustmentsChange(current.copy(blacks = value)) }
-        SteppedControl("Whites", listOf("-1" to -1f, "-0.5" to -0.5f, "0" to 0f, "+0.5" to 0.5f, "+1" to 1f), current.whites) { value -> onAdjustmentsChange(current.copy(whites = value)) }
-        SteppedControl("Bloom", listOf("Off" to 0f, "Low" to 0.3f, "Medium" to 0.6f, "High" to 1.0f), current.bloom) { value -> onAdjustmentsChange(current.copy(bloom = value)) }
-        SteppedControl("Film grain", listOf("Off" to 0f, "Fine" to 0.25f, "Medium" to 0.5f, "Coarse" to 0.85f), current.grain) { value -> onAdjustmentsChange(current.copy(grain = value)) }
-        SteppedControl("Sharpness", listOf("Off" to 0f, "Low" to 0.4f, "Medium" to 0.8f, "High" to 1.2f), current.sharpness) { value -> onAdjustmentsChange(current.copy(sharpness = value)) }
-        SteppedControl("Red channel weight", listOf("Low" to 0.7f, "Normal" to 1.0f, "High" to 1.5f, "Max" to 2.0f), current.redChannelWeight) { value -> onAdjustmentsChange(current.copy(redChannelWeight = value)) }
-        SteppedControl("Green foliage lift", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.greenFoliageLift) { value -> onAdjustmentsChange(current.copy(greenFoliageLift = value)) }
-        SteppedControl("Blue sky suppression", listOf("Off" to 0f, "Low" to 0.33f, "Medium" to 0.66f, "High" to 1.0f), current.blueSkySuppression) { value -> onAdjustmentsChange(current.copy(blueSkySuppression = value)) }
-        SteppedControl("Hue rotation", listOf("-90°" to -90f, "-45°" to -45f, "-15°" to -15f, "0°" to 0f, "+15°" to 15f, "+45°" to 45f, "+90°" to 90f), current.hueRotation) { value -> onAdjustmentsChange(current.copy(hueRotation = value)) }
-        SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation) { value -> onAdjustmentsChange(current.copy(saturation = value)) }
+        SteppedControl("Contrast", listOf("Low" to 0.7f, "Normal" to 1.0f, "Medium" to 1.25f, "High" to 1.6f, "Max" to 2.0f), current.contrast, onContrastChange)
+        SteppedControl("Saturation", listOf("B&W" to 0f, "Muted" to 0.6f, "Normal" to 1.0f, "Rich" to 1.4f, "Max" to 2.0f), current.saturation, onSaturationChange)
 
-        Text("RGB channel swap", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            ChannelSwapMode.values().forEach { mode ->
-                FilterChip(
-                    selected = current.channelSwapMode == mode,
-                    onClick = { onAdjustmentsChange(current.copy(channelSwapMode = mode)) },
-                    label = { Text(mode.label) },
-                )
-            }
-        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = settings.saveOriginal,
-                onClick = { onSettingsChange(settings.copy(saveOriginal = !settings.saveOriginal)) },
-                label = { Text("Save original") },
-            )
-            FilterChip(
-                selected = settings.frontFacing,
-                onClick = { onSettingsChange(settings.copy(frontFacing = !settings.frontFacing)) },
-                label = { Text("Front camera") },
-            )
-        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
 
-        if (capabilities?.exposureSupported == true) {
-            Text(
-                "Camera exposure range: ${capabilities.exposureRange.first} to ${capabilities.exposureRange.last}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+@Composable
+private fun MoreToolsSheet(
+    settings: CameraSettings,
+    onAdjustments: () -> Unit,
+    onSaveOriginal: () -> Unit,
+    onImport: () -> Unit,
+    onDoubleExposure: () -> Unit,
+    onZebra: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("More / Tools", style = MaterialTheme.typography.headlineSmall)
+        FilterChip(selected = false, onClick = onAdjustments, label = { Text("Look adjustments") })
+        FilterChip(selected = settings.saveOriginal, onClick = onSaveOriginal, label = { Text("Save original") })
+        FilterChip(selected = false, onClick = onImport, label = { Text("Import photo") })
+        FilterChip(selected = settings.doubleExposureMode == DoubleExposureMode.FILM_BALANCED, onClick = onDoubleExposure, label = { Text("Double exposure") })
+        FilterChip(selected = settings.zebraEnabled, onClick = onZebra, label = { Text("Zebra") })
         Spacer(Modifier.height(24.dp))
     }
 }

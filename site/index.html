@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0d0d">
-  <meta name="description" content="The story and engine behind Spectral Camera: an on-device Android camera for simulated infrared, Aerochrome-style colour, and film rendering.">
+  <meta name="description" content="Spectral Camera is an on-device Android camera for infrared-inspired colour, monochrome IR, and film response—plus the history that made these images compelling.">
   <meta property="og:title" content="The roll I never developed — Spectral Camera">
-  <meta property="og:description" content="From a forgotten roll of Rollei IR 400 to a scene-aware spectral camera engine for Android.">
+  <meta property="og:description" content="A product story, visual history, and field journal for an Android camera exploring infrared-inspired photography.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="assets/images/minas-gerais-colour-result.jpg">
   <title>The roll I never developed — Spectral Camera</title>
@@ -30,9 +30,10 @@
       <nav id="site-nav" class="site-nav" aria-label="Main navigation">
         <a href="#story">Story</a>
         <a href="#engine">Engine</a>
+        <a href="#history">IR history</a>
         <a href="#field-notes">Field notes</a>
         <a href="#results">Results</a>
-        <a class="nav-cta" href="https://github.com/renardoberou/spectral-camera" target="_blank" rel="noreferrer">Source <span aria-hidden="true">↗</span></a>
+        <a class="nav-cta" href="#results">See the work <span aria-hidden="true">↓</span></a>
       </nav>
     </div>
   </header>
@@ -42,7 +43,7 @@
       <div class="hero-copy page-shell">
         <p class="eyebrow">A photographic experiment, continued</p>
         <h1>The roll<br><em>I never developed.</em></h1>
-        <p class="hero-lede">Spectral Camera began with a forgotten roll of Rollei IR 400, bought in 2009 and carried through a lifetime of analogue photography.</p>
+        <p class="hero-lede">Spectral Camera is an Android camera for exploring infrared-inspired colour, monochrome IR, and film response—born from a forgotten roll of infrared film.</p>
         <div class="hero-actions">
           <a class="button button-primary" href="#story">Read the story <span aria-hidden="true">↓</span></a>
           <a class="text-link" href="#engine">See the engine <span aria-hidden="true">↗</span></a>
@@ -115,9 +116,39 @@
       </div>
     </section>
 
+    <section id="history" class="history section-paper section-padding section-rule">
+      <div class="page-shell">
+        <div class="section-intro section-intro-wide">
+          <div class="section-marker"><span>03</span><span>IR history</span></div>
+          <div>
+            <p class="eyebrow">A visual culture outside ordinary colour</p>
+            <h2>Infrared photography has always been both instrument and imagination.</h2>
+            <p class="intro-lede">Near-infrared photography is not thermal imaging. It records a neighbouring part of the spectrum, where foliage, sky, water, skin, and built surfaces can relate to one another in unfamiliar ways.</p>
+          </div>
+        </div>
+        <div class="notes-grid history-grid">
+          <article class="note-card">
+            <div class="note-card-body"><span class="card-kicker">Before the aesthetic</span><h3>Science, mapping, and conservation</h3><p>Infrared methods were used to inspect vegetation, reveal material differences, and help conservators see underdrawings and changes hidden in visible light. The technique first earned trust as a way to investigate what ordinary colour could not show.</p></div>
+          </article>
+          <article class="note-card">
+            <div class="note-card-body"><span class="card-kicker">False colour</span><h3>When foliage turned the image inside out</h3><p>Colour-infrared film made healthy vegetation shift toward vivid red and magenta while skies and water could move into cyan and blue. Those results were designed for practical interpretation before photographers adopted them as a visual language.</p></div>
+          </article>
+          <article class="note-card note-card-featured">
+            <div class="note-card-body"><span class="card-kicker">Pop culture / the 1960s</span><h3>From album covers to visual shorthand</h3><p>Infrared images entered popular culture through the record sleeve and the portrait: music artists including Jimi Hendrix, Donovan, Frank Zappa, the Grateful Dead, and Bob Dylan were associated with the period’s surreal IR look. The effect became shorthand for altered perception, psychedelia, and a world just beyond ordinary sight.</p><p class="source-note">This section names artists as historical references, not as endorsements or product associations.</p></div>
+          </article>
+          <article class="note-card">
+            <div class="note-card-body"><span class="card-kicker">Cinema and contemporary work</span><h3>A tool for making the invisible visible</h3><p>Infrared also travelled through cinema, video art, computer imaging, and documentary practice. It can suggest night, memory, surveillance, otherness, or ecological change—but the meaning comes from the work, not from a preset label.</p></div>
+          </article>
+        </div>
+        <div class="history-sources prose">
+          <p><strong>Further reading:</strong> <a href="https://necsus-ejms.org/beyond-human-vision-towards-an-archaeology-of-infrared-images/" target="_blank" rel="noreferrer">NECSUS, “Beyond human vision”</a>; <a href="https://airandspace.si.edu/stories/editorial/preserving-flak-bait-reversing-1970s-restoration" target="_blank" rel="noreferrer">Smithsonian conservation work using infrared</a>; <a href="https://kolarivision.com/history-of-infrared-photography/" target="_blank" rel="noreferrer">Kolari’s historical overview</a>. These links are references, not copied content.</p>
+        </div>
+      </div>
+    </section>
+
     <section class="return section-dark section-padding">
       <div class="page-shell return-grid">
-        <div class="section-marker section-marker-dark"><span>02</span><span>The return</span></div>
+        <div class="section-marker section-marker-dark"><span>03</span><span>The return</span></div>
         <div class="return-copy prose prose-dark">
           <p class="eyebrow">Minas Gerais / 2026</p>
           <h2>“This would look amazing in Aerochrome.”</h2>
@@ -131,7 +162,7 @@
     <section id="engine" class="engine section-paper section-padding">
       <div class="page-shell">
         <div class="section-intro section-intro-wide">
-          <div class="section-marker"><span>03</span><span>The engine</span></div>
+          <div class="section-marker"><span>04</span><span>The engine</span></div>
           <div>
             <p class="eyebrow">From sensor data to film response</p>
             <h2>A film camera built from a missing roll.</h2>
@@ -150,7 +181,7 @@
           <div class="pipeline-arrow" aria-hidden="true">→</div>
           <div class="pipeline-step"><span class="pipeline-number">05</span><strong>Estimate</strong><small>Synthetic NIR response</small></div>
           <div class="pipeline-arrow" aria-hidden="true">→</div>
-          <div class="pipeline-step"><span class="pipeline-number">06</span><strong>Render</strong><small>Film response / grain / halation</small></div>
+          <div class="pipeline-step"><span class="pipeline-number">06</span><strong>Render</strong><small>Film response / halation</small></div>
           <div class="pipeline-arrow" aria-hidden="true">→</div>
           <div class="pipeline-step"><span class="pipeline-number">07</span><strong>Export</strong><small>Same logic as preview</small></div>
         </div>
@@ -177,7 +208,7 @@
 
     <section id="honesty" class="honesty section-dark section-padding">
       <div class="page-shell honesty-grid">
-        <div class="section-marker section-marker-dark"><span>04</span><span>The boundary</span></div>
+        <div class="section-marker section-marker-dark"><span>05</span><span>The boundary</span></div>
         <div class="honesty-copy prose prose-dark">
           <p class="eyebrow">Honest by design</p>
           <h2>It does not turn a phone into an infrared sensor.</h2>
@@ -191,11 +222,11 @@
     <section id="field-notes" class="field-notes section-paper section-padding">
       <div class="page-shell">
         <div class="section-intro">
-          <div class="section-marker"><span>05</span><span>Field notes</span></div>
+          <div class="section-marker"><span>06</span><span>Field notes</span></div>
           <div>
             <p class="eyebrow">Built by finding what went wrong</p>
             <h2>The best fixes began as failures.</h2>
-            <p class="intro-lede">The engine was not tuned only on perfect photographs. It was tested against the scenes that made it fail.</p>
+            <p class="intro-lede">The product was not judged only on perfect photographs. It was tested against the scenes that made it fail.</p>
           </div>
         </div>
 
@@ -223,7 +254,7 @@
     <section id="results" class="results section-dark section-padding">
       <div class="page-shell">
         <div class="section-intro section-intro-dark">
-          <div class="section-marker section-marker-dark"><span>06</span><span>The results</span></div>
+          <div class="section-marker section-marker-dark"><span>07</span><span>The results</span></div>
           <div>
             <p class="eyebrow">Minas Gerais / real field frames</p>
             <h2>The output is the argument.</h2>
@@ -252,11 +283,11 @@
     <section class="journal section-paper section-padding">
       <div class="page-shell">
         <div class="section-intro">
-          <div class="section-marker"><span>07</span><span>Journal</span></div>
+          <div class="section-marker"><span>08</span><span>Journal</span></div>
           <div>
             <p class="eyebrow">The work continues</p>
-            <h2>Notes from the build.</h2>
-            <p class="intro-lede">A living record of the ideas, failures, and field tests behind Spectral Camera.</p>
+            <h2>Notes from the work.</h2>
+            <p class="intro-lede">A living record of the ideas, failures, history, and field tests behind Spectral Camera—not a tutorial for recreating the app.</p>
           </div>
         </div>
         <div class="journal-list">
@@ -276,8 +307,8 @@
         <h2>The experiment continues.</h2>
         <p>One lost roll led to a question. The question became an engine. The engine is now becoming a camera.</p>
         <div class="hero-actions closing-actions">
-          <a class="button button-primary" href="https://github.com/renardoberou/spectral-camera" target="_blank" rel="noreferrer">Read the Android source <span aria-hidden="true">↗</span></a>
-          <a class="text-link text-link-light" href="https://github.com/renardoberou/spectral-camera" target="_blank" rel="noreferrer">Follow the project <span aria-hidden="true">↗</span></a>
+          <a class="button button-primary" href="#history">Read the IR history <span aria-hidden="true">↓</span></a>
+          <a class="text-link text-link-light" href="#results">Review the field frames <span aria-hidden="true">↓</span></a>
         </div>
       </div>
     </section>
@@ -286,8 +317,8 @@
   <footer class="site-footer section-dark">
     <div class="page-shell footer-inner">
       <span>© 2026 Spectral Camera</span>
-      <span>Simulated infrared / on-device / Android</span>
-      <a href="https://github.com/renardoberou/Spectral-Camera-site" target="_blank" rel="noreferrer">Site source ↗</a>
+      <span>Infrared-inspired / on-device / Android</span>
+      <span>Images supplied by the project owner; no third-party artwork reproduced.</span>
     </div>
   </footer>
 </body>

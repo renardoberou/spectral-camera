@@ -26,6 +26,7 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.DisplayOrientedMeteringPointFactory
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -83,6 +84,7 @@ import kotlinx.coroutines.sync.withLock
  * copies the native Bayer plane, and optionally writes each still-open RAW
  * image to DNG using its exact TotalCaptureResult.
  */
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class, ExperimentalGetImage::class)
 class CameraController(context: Context) {
     private val appContext = context.applicationContext
     private val cameraManager = appContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -178,7 +180,6 @@ class CameraController(context: Context) {
         val resolution = request.resolution
         sourceResolution = resolution
         texture.setDefaultBufferSize(resolution.width, resolution.height)
-        updateSourceGeometry(currentRelativeRotation())
         request.setTransformationInfoListener(mainExecutor) { info ->
             updateSourceGeometry(info.rotationDegrees)
         }
@@ -194,15 +195,6 @@ class CameraController(context: Context) {
         }
     }
 
-    private fun currentRelativeRotation(): Int {
-        val info = camera?.cameraInfo ?: return sourceRotation
-        val displayRotation = glView?.display?.rotation ?: Surface.ROTATION_0
-        return try {
-            info.getSensorRotationDegrees(displayRotation)
-        } catch (_: Exception) {
-            sourceRotation
-        }
-    }
 
     fun bind(
         lifecycleOwner: LifecycleOwner,
@@ -1064,10 +1056,6 @@ class CameraController(context: Context) {
         rawJpegActive = enableRawSidecar
         rawHdrActive = enableRawHdr
         imageCapture = captureUseCase
-        sourceResolution?.let { resolution ->
-            sourceRotation = currentRelativeRotation()
-            glView?.configureSource(resolution.width, resolution.height, sourceRotation)
-        }
         updateCapabilities()
     }
 
