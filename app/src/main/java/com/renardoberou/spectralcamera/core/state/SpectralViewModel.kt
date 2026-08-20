@@ -40,17 +40,20 @@ import com.renardoberou.spectralcamera.core.media.MediaRepository
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow as VmMutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class GalleryUiState(
     val items: List<GalleryItem> = emptyList(),
@@ -69,14 +72,51 @@ private data class DoubleExposureSession(
     val frontFacing: Boolean,
 )
 
+/**
+ * Serializes optimistic settings changes so delayed UI/effect setters always
+ * merge against the latest owned snapshot instead of an older repository flow
+ * emission. Persistence remains ordered, while [current] updates immediately.
+ */
+internal class SettingsUpdateCoordinator(
+    initial: CameraSettings,
+    private val persist: suspend (CameraSettings) -> Unit = {},
+) {
+    private val mutex = Mutex()
+    private val initialized = CompletableDeferred<Unit>()
+    private val _current = MutableStateFlow(initial)
+    val current: StateFlow<CameraSettings> = _current.asStateFlow()
+
+    suspend fun initialize(persisted: CameraSettings) {
+        mutex.withLock {
+            if (!initialized.isCompleted) {
+                _current.value = persisted
+                initialized.complete(Unit)
+            }
+        }
+    }
+
+    suspend fun update(transform: (CameraSettings) -> CameraSettings): CameraSettings {
+        initialized.await()
+        return mutex.withLock {
+            val updated = transform(_current.value)
+            _current.value = updated
+            persist(updated)
+            updated
+        }
+    }
+}
+
 class SpectralViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepository = CameraSettingsRepository(application)
     private val mediaRepository = MediaRepository(application)
     private val hardwareAnalyzer = HardwareTestAnalyzer()
     private val manualModeSession = MutableStateFlow(false)
+    private val settingsCoordinator = SettingsUpdateCoordinator(CameraSettings()) {
+        settingsRepository.save(it)
+    }
 
-    val settings: StateFlow<CameraSettings> = settingsRepository.settings
-        .combine(manualModeSession) { persisted, manual -> persisted.copy(manualMode = manual) }.stateIn(
+    val settings: StateFlow<CameraSettings> = settingsCoordinator.current
+        .combine(manualModeSession) { owned, manual -> owned.copy(manualMode = manual) }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,
             initialValue = CameraSettings(),
@@ -93,6 +133,9 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     private var doubleExposureSession: DoubleExposureSession? = null
 
     init {
+        viewModelScope.launch {
+            settingsCoordinator.initialize(settingsRepository.settings.first())
+        }
         refreshGallery()
     }
 
@@ -105,8 +148,7 @@ class SpectralViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateSettings(transform: (CameraSettings) -> CameraSettings) {
-        val updated = transform(settings.value)
-        viewModelScope.launch { settingsRepository.save(updated) }
+        viewModelScope.launch { settingsCoordinator.update(transform) }
     }
 
     fun setPreset(preset: SpectralPreset) = updateSettings { it.copy(preset = preset) }
