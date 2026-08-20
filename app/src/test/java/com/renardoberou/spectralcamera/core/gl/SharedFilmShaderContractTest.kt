@@ -62,4 +62,43 @@ class SharedFilmShaderContractTest {
         assertFalse(classifierDebugEnabled(requested = true, debugBuild = false))
         assertFalse(classifierDebugEnabled(requested = false, debugBuild = true))
     }
+
+    @Test
+    fun photographicGrainUsesTheExplicitPolicyStrength() {
+        assertTrue(FRAGMENT_BODY.contains("float grainAmp = uGrain *"))
+        assertFalse(FRAGMENT_BODY.contains("float effGrain = uGrain + uGrainBase;"))
+    }
+
+    @Test
+    fun zeroPolicyGatesTheEntireOptionalPhotographicGrainStage() {
+        val gate = FRAGMENT_BODY.indexOf("if (uGrain > 0.001)")
+        val end = FRAGMENT_BODY.indexOf("// channel swap")
+        assertTrue("explicit grain gate is missing", gate >= 0)
+        assertTrue("grain gate must contain the whole optional stage", end > gate)
+        assertTrue(FRAGMENT_BODY.indexOf("float nLuma = filmGrain", gate) < end)
+        assertTrue(FRAGMENT_BODY.indexOf("float chromaAmt", gate) < end)
+        assertFalse(FRAGMENT_BODY.contains("uGrainBase"))
+    }
+
+    @Test
+    fun ignDitherRemainsPresentOutsideThePhotographicGrainGate() {
+        val gate = FRAGMENT_BODY.indexOf("if (uGrain > 0.001)")
+        val ign = FRAGMENT_BODY.indexOf("float ign =")
+        assertTrue(ign > gate)
+        assertTrue(FRAGMENT_BODY.contains("c += ign * 0.006 * grainDitherScale"))
+    }
+
+    @Test
+    fun stockClumpScaleAndMonoChromaGateRemainIntact() {
+        assertTrue(FRAGMENT_BODY.contains("grainUv / max(uHaloGrain.w, 0.05)"))
+        assertTrue(FRAGMENT_BODY.contains("float chromaAmt = (uPreset <= 5) ? 0.0 : (1.0 - uStdTone3.x);"))
+        assertTrue(FRAGMENT_BODY.contains("if (chromaAmt > 0.001)"))
+    }
+
+    @Test
+    fun extremeMonoGrainRemainsLuminanceDominantWithoutDigitalColorSpeckle() {
+        assertTrue(FRAGMENT_BODY.contains("vec3 grainDelta = vec3(nLuma);"))
+        assertTrue(FRAGMENT_BODY.contains("grainDelta += chromaAmt * 0.35 *"))
+        assertFalse(FRAGMENT_BODY.contains("uGrain * 0.35"))
+    }
 }

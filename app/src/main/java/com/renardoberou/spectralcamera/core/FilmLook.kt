@@ -14,9 +14,9 @@ package com.renardoberou.spectralcamera.core
  *  - woodLift / skyStrength: synthetic-NIR magnitude (Wood effect, sky
  *    suppression) - how hard the film "sees" infrared.
  *  - haloThreshold/Tight/Wide: halation - anti-halation backing strength.
- *  - grainClump / grainBias / grainBase: grain clump scale, density
- *    multiplier, and the small always-on baseline amount (film is never
- *    grainless; the user's Grain dial adds on top of grainBase).
+ *  - grainClump / grainBias / grainBase: stock grain clump scale and density
+ *    metadata. Photographic grain itself is enabled explicitly by the user's
+ *    Grain policy; grainBase is retained for persisted look-data compatibility.
  *  - waterFloor: how far off pure black IR-dark water is allowed to sit
  *    (anti-halation stocks show more shadow life than none-backed ones).
  *  - acutanceBias: baked-in structure/microcontrast bias, additive to the
@@ -35,6 +35,7 @@ data class MonoIRLook(
     val haloWide: Float,
     val grainClump: Float,
     val grainBias: Float,
+    /** Legacy stock metadata; policy strength comes from ManualAdjustments.grain. */
     val grainBase: Float,
     val waterFloor: Float,
     val acutanceBias: Float,
@@ -107,7 +108,9 @@ data class StandardFilmLook(
     val panRed: Float,        // red weight of the panchromatic mix
     val haloR: Float, val haloG: Float, val haloB: Float,  // halation dye colour
     val haloThreshold: Float, val haloTight: Float, val haloWide: Float,
-    val grainClump: Float, val grainBias: Float, val grainBase: Float,
+    val grainClump: Float, val grainBias: Float,
+    /** Legacy stock metadata; policy strength comes from ManualAdjustments.grain. */
+    val grainBase: Float,
     val acutanceBias: Float,
     // Shadow-floor scale for the deep-shadow density-floor fix (2026-07-24,
     // second pass). Default 1.0 = unchanged from the universal floor. Real
@@ -134,6 +137,7 @@ data class AerochromeLook(
     val haloWide: Float,
     val grainClump: Float,
     val grainBias: Float,
+    /** Legacy stock metadata; policy strength comes from ManualAdjustments.grain. */
     val grainBase: Float,
     val acutanceBias: Float,
     val sharedProfile: SharedFilmProfile = SharedFilmProfile.IDENTITY,

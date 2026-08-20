@@ -115,7 +115,6 @@ uniform vec4 uStdTone2;    // toeLift, ceiling, redBias, blueBias
 uniform vec4 uStdTone3;    // monoMix, panRed, -, -
 uniform vec3 uHaloTint;    // halation dye colour (CineStill = red)
 uniform float uGrainBias;      // per-stock grain amplitude multiplier
-uniform float uGrainBase;      // per-stock always-on baseline grain (film is never grainless)
 uniform float uAcutanceBias;   // per-stock structure bias, adds to uSharpness
 // Shared Fuji-inspired stage. w in each vector is not used; the stage is
 // enabled by uSharedDensity.w; legacy spectral families receive conservative
@@ -1007,20 +1006,17 @@ void main() {
     }
 
     // film grain
-    // Film is never grainless: every stock carries a small always-on
-    // baseline (uGrainBase, per-look from FilmLookLibrary) so the per-stock
-    // grain personality is visible at default settings; the user's Grain
-    // slider adds on top of it. grainBias/grainClump are the per-stock
+    // Optional photographic grain. uGrain is the explicit policy strength;
+    // zero disables this whole stage. grainBias/grainClump remain per-stock
     // amplitude and clump-scale dials - HIE and Soft Vintage read coarser,
-    // Fine-Grain reads tighter, independent of the user's Grain slider.
+    // Fine-Grain reads tighter, without adding a hidden baseline.
     //
     // Exposure-dependent density (Poisson-like: strongest in midtones,
     // tapering toward both deep shadow and bright highlight - the same
     // curve real grain visibility follows in a print) is universal across
     // every preset family (2026-07-23e).
-    float effGrain = uGrain + uGrainBase;
     float grainDitherScale = 1.0;
-    if (effGrain > 0.001) {
+    if (uGrain > 0.001) {
         float gLuma = lumaOf(c);
         float d = (gLuma - 0.42) / 0.30;
         float densityWeight = exp(-d * d);
@@ -1045,7 +1041,7 @@ void main() {
         float shadowLift = 1.0 - smoothstep(0.02, 0.34, gLuma);
         densityWeight = max(densityWeight, 0.62 * uStdTone3.z * shadowLift);
 
-        float grainAmp = effGrain * 0.040 * densityWeight * uGrainBias;
+        float grainAmp = uGrain * 0.040 * densityWeight * uGrainBias;
         vec2 gUv = grainUv / max(uHaloGrain.w, 0.05);
 
         // Grain-aware dither (2026-07-24). The sub-LSB IGN dither further
@@ -1077,14 +1073,14 @@ void main() {
         // opponent-color axis (R vs. B, G holding the balancing term) so
         // the noise reads as chroma speckle rather than RGB misregistration,
         // and stays zero-mean so it introduces no systematic color cast.
-        // Gated by chromaAmt, not a preset-family switch: mono-IR is always
+        // Gated by chromaAmt, not by grain strength: mono-IR is always
         // fully achromatic (uPreset<=5 forces 0 - chroma noise on a B&W
         // stock would be a real regression). Classic Film blends this out
         // through its own monoMix uniform, so Tri-X (monoMix=1) falls back
         // to scalar-only automatically, with no special case needed.
-        // Aerochrome has no monoMix of its own and is always false-color,
-        // so it always gets full chroma grain. Verified in
-        // docs/assets/grain-baseline-2026-07-23/step3-4/.
+        // Aerochrome has no monoMix of its own and remains family-gated
+        // false-colour grain; raising uGrain does not introduce chroma into
+        // the monochrome path.
         float chromaAmt = (uPreset <= 5) ? 0.0 : (1.0 - uStdTone3.x);
         if (chromaAmt > 0.001) {
             // Chroma grain is COARSER than the luma grain (2026-07-24, was
@@ -1592,7 +1588,6 @@ class SpectralRenderer(
         GLES20.glUniform3f(program.uHaloTint, 1.0f, 0.55f, 0.35f)
         GLES20.glUniform4f(program.uHaloGrain, 0.90f, 0.10f, 0.05f, 1.0f)
         GLES20.glUniform1f(program.uGrainBias, 1.0f)
-        GLES20.glUniform1f(program.uGrainBase, 0f)
         GLES20.glUniform1f(program.uAcutanceBias, 0f)
         // Identity defaults preserve all existing presets. Only the three new
         // visible-spectrum stocks opt into the shared refinement stage.
@@ -1609,7 +1604,6 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uMonoCurve2, look.ceiling, look.woodLift, look.skyStrength, look.waterFloor)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
-                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uSharedTone, look.sharedProfile.tone.toe, look.sharedProfile.tone.shoulder,
                     look.sharedProfile.tone.highlightChromaCompression, 0f)
@@ -1638,7 +1632,6 @@ class SpectralRenderer(
                 GLES20.glUniform3f(program.uHaloTint, look.haloR, look.haloG, look.haloB)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
-                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 val profile = look.sharedProfile
                 GLES20.glUniform4f(
@@ -1681,7 +1674,6 @@ class SpectralRenderer(
                 GLES20.glUniform4f(program.uAeroTone2, look.gold, look.fade, 0f, 0f)
                 GLES20.glUniform4f(program.uHaloGrain, look.haloThreshold, look.haloTight, look.haloWide, look.grainClump)
                 GLES20.glUniform1f(program.uGrainBias, look.grainBias)
-                GLES20.glUniform1f(program.uGrainBase, look.grainBase)
                 GLES20.glUniform1f(program.uAcutanceBias, look.acutanceBias)
                 GLES20.glUniform4f(program.uSharedTone, look.sharedProfile.tone.toe, look.sharedProfile.tone.shoulder,
                     look.sharedProfile.tone.highlightChromaCompression, 0f)
@@ -1769,7 +1761,6 @@ class SpectralRenderer(
         val uStdTone3 = GLES20.glGetUniformLocation(id, "uStdTone3")
         val uHaloTint = GLES20.glGetUniformLocation(id, "uHaloTint")
         val uGrainBias = GLES20.glGetUniformLocation(id, "uGrainBias")
-        val uGrainBase = GLES20.glGetUniformLocation(id, "uGrainBase")
         val uAcutanceBias = GLES20.glGetUniformLocation(id, "uAcutanceBias")
         val uSharedTone = GLES20.glGetUniformLocation(id, "uSharedTone")
         val uSharedProtection = GLES20.glGetUniformLocation(id, "uSharedProtection")
